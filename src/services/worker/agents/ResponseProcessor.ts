@@ -71,8 +71,8 @@ export async function processAgentResponse(
   // Convert nullable fields to empty strings for storeSummary (if summary exists)
   const summaryForStore = normalizeSummaryForStorage(summary);
 
-  // Get session store for atomic transaction
-  const sessionStore = dbManager.getSessionStore();
+  // Get session store for atomic transaction (use per-session dbPath if available)
+  const sessionStore = dbManager.getSessionStore(session.dbPath || undefined);
 
   // CRITICAL: Must use memorySessionId (not contentSessionId) for FK constraint
   if (!session.memorySessionId) {
