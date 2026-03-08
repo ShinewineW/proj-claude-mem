@@ -11,7 +11,7 @@ import { logger } from '../../utils/logger.js';
 import { HOOK_EXIT_CODES } from '../../shared/hook-constants.js';
 import { isProjectExcluded } from '../../utils/project-filter.js';
 import { SettingsDefaultsManager } from '../../shared/SettingsDefaultsManager.js';
-import { USER_SETTINGS_PATH } from '../../shared/paths.js';
+import { USER_SETTINGS_PATH, resolveProjectDbPath } from '../../shared/paths.js';
 
 export const sessionInitHandler: EventHandler = {
   async execute(input: NormalizedHookInput): Promise<HookResult> {
@@ -42,6 +42,7 @@ export const sessionInitHandler: EventHandler = {
     const prompt = (!rawPrompt || !rawPrompt.trim()) ? '[media prompt]' : rawPrompt;
 
     const project = getProjectName(cwd);
+    const dbPath = resolveProjectDbPath(cwd);
     const port = getWorkerPort();
 
     logger.debug('HOOK', 'session-init: Calling /api/sessions/init', { contentSessionId: sessionId, project });
@@ -53,7 +54,8 @@ export const sessionInitHandler: EventHandler = {
       body: JSON.stringify({
         contentSessionId: sessionId,
         project,
-        prompt
+        prompt,
+        dbPath
       })
       // Note: Removed signal to avoid Windows Bun cleanup issue (libuv assertion)
     });

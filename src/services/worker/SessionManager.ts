@@ -48,7 +48,7 @@ export class SessionManager {
   /**
    * Initialize a new session or return existing one
    */
-  initializeSession(sessionDbId: number, currentUserPrompt?: string, promptNumber?: number): ActiveSession {
+  initializeSession(sessionDbId: number, currentUserPrompt?: string, promptNumber?: number, dbPath?: string): ActiveSession {
     logger.debug('SESSION', 'initializeSession called', {
       sessionDbId,
       promptNumber,
@@ -155,6 +155,7 @@ export class SessionManager {
       conversationHistory: [],  // Initialize empty - will be populated by agents
       currentProvider: null,  // Will be set when generator starts
       consecutiveRestarts: 0,  // Track consecutive restart attempts to prevent infinite loops
+      dbPath: dbPath || '',  // Project-specific SQLite DB path
       processingMessageIds: [],  // CLAIM-CONFIRM: Track message IDs for confirmProcessed()
       lastGeneratorActivity: Date.now()  // Initialize for stale detection (Issue #1099)
     };

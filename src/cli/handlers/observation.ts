@@ -10,7 +10,7 @@ import { logger } from '../../utils/logger.js';
 import { HOOK_EXIT_CODES } from '../../shared/hook-constants.js';
 import { isProjectExcluded } from '../../utils/project-filter.js';
 import { SettingsDefaultsManager } from '../../shared/SettingsDefaultsManager.js';
-import { USER_SETTINGS_PATH } from '../../shared/paths.js';
+import { USER_SETTINGS_PATH, resolveProjectDbPath } from '../../shared/paths.js';
 
 export const observationHandler: EventHandler = {
   async execute(input: NormalizedHookInput): Promise<HookResult> {
@@ -48,6 +48,9 @@ export const observationHandler: EventHandler = {
       return { continue: true, suppressOutput: true };
     }
 
+    // Compute project-specific DB path
+    const dbPath = resolveProjectDbPath(cwd);
+
     // Send to worker - worker handles privacy check and database operations
     try {
       const response = await fetch(`http://127.0.0.1:${port}/api/sessions/observations`, {
@@ -58,7 +61,8 @@ export const observationHandler: EventHandler = {
           tool_name: toolName,
           tool_input: toolInput,
           tool_response: toolResponse,
-          cwd
+          cwd,
+          dbPath
         })
         // Note: Removed signal to avoid Windows Bun cleanup issue (libuv assertion)
       });
