@@ -1,10 +1,11 @@
 import { join, dirname, basename, sep } from 'path';
 import { homedir } from 'os';
-import { existsSync, mkdirSync } from 'fs';
+import { existsSync, mkdirSync, statSync } from 'fs';
 import { execSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import { SettingsDefaultsManager } from './SettingsDefaultsManager.js';
 import { logger } from '../utils/logger.js';
+import { detectWorktree } from '../utils/worktree.js';
 
 // Get __dirname that works in both ESM (hooks) and CJS (worker) contexts
 function getDirname(): string {
@@ -150,4 +151,58 @@ export function createBackupFilename(originalPath: string): string {
     .slice(0, 19);
 
   return `${originalPath}.backup.${timestamp}`;
+}
+
+/**
+ * Walk up from startDir looking for a .git file or directory.
+ *
+ * Returns the directory containing .git, or null if none found.
+ */
+function findGitRoot(startDir: string): string | null {
+  let dir = startDir;
+  while (true) {
+    try {
+      statSync(join(dir, '.git'));
+      return dir;
+    } catch {
+      // not found, keep walking up
+    }
+    const parent = dirname(dir);
+    if (parent === dir) return null;
+    dir = parent;
+  }
+}
+
+/**
+ * Resolve the per-project SQLite DB path for claude-mem.
+ *
+ * Resolution order:
+ *   1. CLAUDE_MEM_PROJECT_DB_PATH env var (explicit override)
+ *   2. Git worktree -> <parentRepo>/.claude/mem.db
+ *   3. Git main repo -> <gitRoot>/.claude/mem.db
+ *   4. Non-git directory -> <cwd>/.claude/mem.db
+ *
+ * Args:
+ *     cwd: Working directory to resolve from. Defaults to process.cwd().
+ *
+ * Returns:
+ *     Absolute path to the project-specific mem.db file.
+ */
+export function resolveProjectDbPath(cwd?: string): string {
+  const override = process.env.CLAUDE_MEM_PROJECT_DB_PATH;
+  if (override) return override;
+
+  const effectiveCwd = cwd || process.cwd();
+  const gitRoot = findGitRoot(effectiveCwd);
+
+  if (!gitRoot) {
+    return join(effectiveCwd, '.claude', 'mem.db');
+  }
+
+  const worktreeInfo = detectWorktree(gitRoot);
+  if (worktreeInfo.isWorktree && worktreeInfo.parentRepoPath) {
+    return join(worktreeInfo.parentRepoPath, '.claude', 'mem.db');
+  }
+
+  return join(gitRoot, '.claude', 'mem.db');
 }
