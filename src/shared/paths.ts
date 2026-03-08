@@ -1,4 +1,4 @@
-import { join, dirname, basename, sep } from 'path';
+import { join, dirname, basename, sep, resolve } from 'path';
 import { homedir } from 'os';
 import { existsSync, mkdirSync, statSync } from 'fs';
 import { execSync } from 'child_process';
@@ -190,9 +190,9 @@ function findGitRoot(startDir: string): string | null {
  */
 export function resolveProjectDbPath(cwd?: string): string {
   const override = process.env.CLAUDE_MEM_PROJECT_DB_PATH;
-  if (override) return override;
+  if (override) return resolve(override);
 
-  const effectiveCwd = cwd || process.cwd();
+  const effectiveCwd = resolve(cwd || process.cwd());
   const gitRoot = findGitRoot(effectiveCwd);
 
   if (!gitRoot) {
