@@ -45,10 +45,14 @@ const VERSION_MARKER_PATH = path.join(
 
 /**
  * Initialize database connection with error handling
+ *
+ * Args:
+ *   dbPath: Optional path to a project-specific database file.
+ *           When omitted, uses the global default DB_PATH.
  */
-function initializeDatabase(): SessionStore | null {
+function initializeDatabase(dbPath?: string): SessionStore | null {
   try {
-    return new SessionStore();
+    return dbPath ? new SessionStore(dbPath) : new SessionStore();
   } catch (error: any) {
     if (error.code === 'ERR_DLOPEN_FAILED') {
       try {
@@ -134,8 +138,8 @@ export async function generateContext(
   // Use provided projects array (for worktree support) or fall back to single project
   const projects = input?.projects || [project];
 
-  // Initialize database
-  const db = initializeDatabase();
+  // Initialize database (use project-specific DB if dbPath provided)
+  const db = initializeDatabase(input?.dbPath);
   if (!db) {
     return '';
   }

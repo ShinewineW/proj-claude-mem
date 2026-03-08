@@ -3,18 +3,49 @@
  *
  * Handles all search operations via SearchManager.
  * All endpoints call SearchManager methods directly.
+ *
+ * Supports per-project database isolation via ?dbPath= query parameter.
+ * When dbPath is provided, a project-specific SearchManager is created
+ * using the DatabaseManager pool. Without dbPath, falls back to the
+ * default (last-active) SearchManager.
  */
 
 import express, { Request, Response } from 'express';
 import { SearchManager } from '../../SearchManager.js';
+import { DatabaseManager } from '../../DatabaseManager.js';
+import { FormattingService } from '../../FormattingService.js';
+import { TimelineService } from '../../TimelineService.js';
 import { BaseRouteHandler } from '../BaseRouteHandler.js';
 import { logger } from '../../../../utils/logger.js';
 
 export class SearchRoutes extends BaseRouteHandler {
   constructor(
-    private searchManager: SearchManager
+    private defaultSearchManager: SearchManager,
+    private dbManager: DatabaseManager
   ) {
     super();
+  }
+
+  /**
+   * Get a SearchManager for the given request.
+   *
+   * If dbPath is present in query params, creates a project-specific
+   * SearchManager backed by that database. Otherwise returns the default.
+   */
+  private getSearchManager(req: Request): SearchManager {
+    const dbPath = (req.query.dbPath as string) || undefined;
+    if (!dbPath) {
+      return this.defaultSearchManager;
+    }
+
+    // Create a per-request SearchManager targeting the project DB
+    return new SearchManager(
+      this.dbManager.getSessionSearch(dbPath),
+      this.dbManager.getSessionStore(dbPath),
+      this.dbManager.getChromaSync(),
+      new FormattingService(),
+      new TimelineService()
+    );
   }
 
   setupRoutes(app: express.Application): void {
@@ -49,7 +80,7 @@ export class SearchRoutes extends BaseRouteHandler {
    * GET /api/search?query=...&type=observations&limit=20
    */
   private handleUnifiedSearch = this.wrapHandler(async (req: Request, res: Response): Promise<void> => {
-    const result = await this.searchManager.search(req.query);
+    const result = await this.getSearchManager(req).search(req.query);
     res.json(result);
   });
 
@@ -58,7 +89,7 @@ export class SearchRoutes extends BaseRouteHandler {
    * GET /api/timeline?anchor=123 OR GET /api/timeline?query=...
    */
   private handleUnifiedTimeline = this.wrapHandler(async (req: Request, res: Response): Promise<void> => {
-    const result = await this.searchManager.timeline(req.query);
+    const result = await this.getSearchManager(req).timeline(req.query);
     res.json(result);
   });
 
@@ -67,7 +98,7 @@ export class SearchRoutes extends BaseRouteHandler {
    * GET /api/decisions?limit=20
    */
   private handleDecisions = this.wrapHandler(async (req: Request, res: Response): Promise<void> => {
-    const result = await this.searchManager.decisions(req.query);
+    const result = await this.getSearchManager(req).decisions(req.query);
     res.json(result);
   });
 
@@ -76,7 +107,7 @@ export class SearchRoutes extends BaseRouteHandler {
    * GET /api/changes?limit=20
    */
   private handleChanges = this.wrapHandler(async (req: Request, res: Response): Promise<void> => {
-    const result = await this.searchManager.changes(req.query);
+    const result = await this.getSearchManager(req).changes(req.query);
     res.json(result);
   });
 
@@ -85,7 +116,7 @@ export class SearchRoutes extends BaseRouteHandler {
    * GET /api/how-it-works?limit=20
    */
   private handleHowItWorks = this.wrapHandler(async (req: Request, res: Response): Promise<void> => {
-    const result = await this.searchManager.howItWorks(req.query);
+    const result = await this.getSearchManager(req).howItWorks(req.query);
     res.json(result);
   });
 
@@ -94,7 +125,7 @@ export class SearchRoutes extends BaseRouteHandler {
    * GET /api/search/observations?query=...&limit=20&project=...
    */
   private handleSearchObservations = this.wrapHandler(async (req: Request, res: Response): Promise<void> => {
-    const result = await this.searchManager.searchObservations(req.query);
+    const result = await this.getSearchManager(req).searchObservations(req.query);
     res.json(result);
   });
 
@@ -103,7 +134,7 @@ export class SearchRoutes extends BaseRouteHandler {
    * GET /api/search/sessions?query=...&limit=20
    */
   private handleSearchSessions = this.wrapHandler(async (req: Request, res: Response): Promise<void> => {
-    const result = await this.searchManager.searchSessions(req.query);
+    const result = await this.getSearchManager(req).searchSessions(req.query);
     res.json(result);
   });
 
@@ -112,7 +143,7 @@ export class SearchRoutes extends BaseRouteHandler {
    * GET /api/search/prompts?query=...&limit=20
    */
   private handleSearchPrompts = this.wrapHandler(async (req: Request, res: Response): Promise<void> => {
-    const result = await this.searchManager.searchUserPrompts(req.query);
+    const result = await this.getSearchManager(req).searchUserPrompts(req.query);
     res.json(result);
   });
 
@@ -121,7 +152,7 @@ export class SearchRoutes extends BaseRouteHandler {
    * GET /api/search/by-concept?concept=discovery&limit=5
    */
   private handleSearchByConcept = this.wrapHandler(async (req: Request, res: Response): Promise<void> => {
-    const result = await this.searchManager.findByConcept(req.query);
+    const result = await this.getSearchManager(req).findByConcept(req.query);
     res.json(result);
   });
 
@@ -130,7 +161,7 @@ export class SearchRoutes extends BaseRouteHandler {
    * GET /api/search/by-file?filePath=...&limit=10
    */
   private handleSearchByFile = this.wrapHandler(async (req: Request, res: Response): Promise<void> => {
-    const result = await this.searchManager.findByFile(req.query);
+    const result = await this.getSearchManager(req).findByFile(req.query);
     res.json(result);
   });
 
@@ -139,7 +170,7 @@ export class SearchRoutes extends BaseRouteHandler {
    * GET /api/search/by-type?type=bugfix&limit=10
    */
   private handleSearchByType = this.wrapHandler(async (req: Request, res: Response): Promise<void> => {
-    const result = await this.searchManager.findByType(req.query);
+    const result = await this.getSearchManager(req).findByType(req.query);
     res.json(result);
   });
 
@@ -148,7 +179,7 @@ export class SearchRoutes extends BaseRouteHandler {
    * GET /api/context/recent?project=...&limit=3
    */
   private handleGetRecentContext = this.wrapHandler(async (req: Request, res: Response): Promise<void> => {
-    const result = await this.searchManager.getRecentContext(req.query);
+    const result = await this.getSearchManager(req).getRecentContext(req.query);
     res.json(result);
   });
 
@@ -157,16 +188,17 @@ export class SearchRoutes extends BaseRouteHandler {
    * GET /api/context/timeline?anchor=123&depth_before=10&depth_after=10&project=...
    */
   private handleGetContextTimeline = this.wrapHandler(async (req: Request, res: Response): Promise<void> => {
-    const result = await this.searchManager.getContextTimeline(req.query);
+    const result = await this.getSearchManager(req).getContextTimeline(req.query);
     res.json(result);
   });
 
   /**
    * Generate context preview for settings modal
-   * GET /api/context/preview?project=...
+   * GET /api/context/preview?project=...&dbPath=...
    */
   private handleContextPreview = this.wrapHandler(async (req: Request, res: Response): Promise<void> => {
     const projectName = req.query.project as string;
+    const dbPath = (req.query.dbPath as string) || undefined;
 
     if (!projectName) {
       this.badRequest(res, 'Project parameter is required');
@@ -183,7 +215,8 @@ export class SearchRoutes extends BaseRouteHandler {
     const contextText = await generateContext(
       {
         session_id: 'preview-' + Date.now(),
-        cwd: cwd
+        cwd: cwd,
+        dbPath: dbPath
       },
       true  // useColors=true for ANSI terminal output
     );
@@ -195,7 +228,7 @@ export class SearchRoutes extends BaseRouteHandler {
 
   /**
    * Context injection endpoint for hooks
-   * GET /api/context/inject?projects=...&colors=true
+   * GET /api/context/inject?projects=...&colors=true&dbPath=...
    * GET /api/context/inject?project=...&colors=true (legacy, single project)
    *
    * Returns pre-formatted context string ready for display.
@@ -208,6 +241,7 @@ export class SearchRoutes extends BaseRouteHandler {
     // Support both legacy `project` and new `projects` parameter
     const projectsParam = (req.query.projects as string) || (req.query.project as string);
     const useColors = req.query.colors === 'true';
+    const dbPath = (req.query.dbPath as string) || undefined;
 
     if (!projectsParam) {
       this.badRequest(res, 'Project(s) parameter is required');
@@ -229,12 +263,13 @@ export class SearchRoutes extends BaseRouteHandler {
     const primaryProject = projects[projects.length - 1]; // Last is the current/primary project
     const cwd = `/context/${primaryProject}`;
 
-    // Generate context with all projects
+    // Generate context with all projects, targeting project-specific DB if provided
     const contextText = await generateContext(
       {
         session_id: 'context-inject-' + Date.now(),
         cwd: cwd,
-        projects: projects
+        projects: projects,
+        dbPath: dbPath
       },
       useColors
     );
@@ -249,7 +284,7 @@ export class SearchRoutes extends BaseRouteHandler {
    * GET /api/timeline/by-query?query=...&mode=auto&depth_before=10&depth_after=10
    */
   private handleGetTimelineByQuery = this.wrapHandler(async (req: Request, res: Response): Promise<void> => {
-    const result = await this.searchManager.getTimelineByQuery(req.query);
+    const result = await this.getSearchManager(req).getTimelineByQuery(req.query);
     res.json(result);
   });
 
