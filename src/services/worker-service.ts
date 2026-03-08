@@ -20,6 +20,8 @@ import { getAuthMethodDescription } from '../shared/EnvManager.js';
 import { logger } from '../utils/logger.js';
 import { ChromaMcpManager } from './sync/ChromaMcpManager.js';
 import { ChromaSync } from './sync/ChromaSync.js';
+import { DbConnectionPool } from '../shared/project-db.js';
+import { DB_PATH } from '../shared/paths.js';
 
 // Windows: avoid repeated spawn popups when startup fails (issue #921)
 const WINDOWS_SPAWN_COOLDOWN_MS = 2 * 60 * 1000;
@@ -202,8 +204,9 @@ export class WorkerService {
       this.resolveInitialization = resolve;
     });
 
-    // Initialize service layer
-    this.dbManager = new DatabaseManager();
+    // Initialize service layer (pool manages per-project DB connections)
+    const pool = new DbConnectionPool();
+    this.dbManager = new DatabaseManager(pool);
     this.sessionManager = new SessionManager(this.dbManager);
     this.sseBroadcaster = new SSEBroadcaster();
     this.sdkAgent = new SDKAgent(this.dbManager, this.sessionManager);
@@ -404,7 +407,7 @@ export class WorkerService {
       ModeManager.getInstance().loadMode(modeId);
       logger.info('SYSTEM', `Mode loaded: ${modeId}`);
 
-      await this.dbManager.initialize();
+      await this.dbManager.initialize(DB_PATH);
 
       // Reset any messages that were processing when worker died
       const { PendingMessageStore } = await import('./sqlite/PendingMessageStore.js');
