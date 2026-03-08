@@ -330,17 +330,17 @@ export class SessionRoutes extends BaseRouteHandler {
     const sessionDbId = this.parseIntParam(req, res, 'sessionDbId');
     if (sessionDbId === null) return;
 
-    const { userPrompt, promptNumber } = req.body;
+    const { userPrompt, promptNumber, dbPath } = req.body;
     logger.info('HTTP', 'SessionRoutes: handleSessionInit called', {
       sessionDbId,
       promptNumber,
       has_userPrompt: !!userPrompt
     });
 
-    const session = this.sessionManager.initializeSession(sessionDbId, userPrompt, promptNumber);
+    const session = this.sessionManager.initializeSession(sessionDbId, userPrompt, promptNumber, dbPath);
 
     // Get the latest user_prompt for this session to sync to Chroma
-    const latestPrompt = this.dbManager.getSessionStore().getLatestUserPrompt(session.contentSessionId);
+    const latestPrompt = this.dbManager.getSessionStore(dbPath).getLatestUserPrompt(session.contentSessionId);
 
     // Broadcast new prompt to SSE clients (for web UI)
     if (latestPrompt) {
@@ -496,7 +496,7 @@ export class SessionRoutes extends BaseRouteHandler {
    * Body: { contentSessionId, tool_name, tool_input, tool_response, cwd }
    */
   private handleObservationsByClaudeId = this.wrapHandler((req: Request, res: Response): void => {
-    const { contentSessionId, tool_name, tool_input, tool_response, cwd } = req.body;
+    const { contentSessionId, tool_name, tool_input, tool_response, cwd, dbPath } = req.body;
 
     if (!contentSessionId) {
       return this.badRequest(res, 'Missing contentSessionId');
@@ -528,7 +528,7 @@ export class SessionRoutes extends BaseRouteHandler {
     }
 
     try {
-      const store = this.dbManager.getSessionStore();
+      const store = this.dbManager.getSessionStore(dbPath);
 
       // Get or create session
       const sessionDbId = store.createSDKSession(contentSessionId, '', '');
@@ -594,13 +594,13 @@ export class SessionRoutes extends BaseRouteHandler {
    * Checks privacy, queues summarize request for SDK agent
    */
   private handleSummarizeByClaudeId = this.wrapHandler((req: Request, res: Response): void => {
-    const { contentSessionId, last_assistant_message } = req.body;
+    const { contentSessionId, last_assistant_message, dbPath } = req.body;
 
     if (!contentSessionId) {
       return this.badRequest(res, 'Missing contentSessionId');
     }
 
-    const store = this.dbManager.getSessionStore();
+    const store = this.dbManager.getSessionStore(dbPath);
 
     // Get or create session
     const sessionDbId = store.createSDKSession(contentSessionId, '', '');
@@ -642,7 +642,7 @@ export class SessionRoutes extends BaseRouteHandler {
    * Fixes Issue #842: Sessions stay in map forever, reaper thinks all active.
    */
   private handleCompleteByClaudeId = this.wrapHandler(async (req: Request, res: Response): Promise<void> => {
-    const { contentSessionId } = req.body;
+    const { contentSessionId, dbPath } = req.body;
 
     logger.info('HTTP', '→ POST /api/sessions/complete', { contentSessionId });
 
@@ -650,7 +650,7 @@ export class SessionRoutes extends BaseRouteHandler {
       return this.badRequest(res, 'Missing contentSessionId');
     }
 
-    const store = this.dbManager.getSessionStore();
+    const store = this.dbManager.getSessionStore(dbPath);
 
     // Look up sessionDbId from contentSessionId (createSDKSession is idempotent)
     // Pass empty strings - we only need the ID lookup, not to create a new session
@@ -692,7 +692,7 @@ export class SessionRoutes extends BaseRouteHandler {
    * Returns: { sessionDbId, promptNumber, skipped: boolean, reason?: string }
    */
   private handleSessionInitByClaudeId = this.wrapHandler((req: Request, res: Response): void => {
-    const { contentSessionId } = req.body;
+    const { contentSessionId, dbPath } = req.body;
 
     // Only contentSessionId is truly required — Cursor and other platforms
     // may omit prompt/project in their payload (#838, #1049)
@@ -712,7 +712,7 @@ export class SessionRoutes extends BaseRouteHandler {
       return;
     }
 
-    const store = this.dbManager.getSessionStore();
+    const store = this.dbManager.getSessionStore(dbPath);
 
     // Step 1: Create/get SDK session (idempotent INSERT OR IGNORE)
     const sessionDbId = store.createSDKSession(contentSessionId, project, prompt, customTitle);

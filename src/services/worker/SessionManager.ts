@@ -67,7 +67,7 @@ export class SessionManager {
       // Refresh project from database in case it was updated by new-hook
       // This fixes the bug where sessions created with empty project get updated
       // in the database but the in-memory session still has the stale empty value
-      const dbSession = this.dbManager.getSessionById(sessionDbId);
+      const dbSession = this.dbManager.getSessionById(sessionDbId, dbPath);
       if (dbSession.project && dbSession.project !== session.project) {
         logger.debug('SESSION', 'Updating project from database', {
           sessionDbId,
@@ -98,7 +98,7 @@ export class SessionManager {
     }
 
     // Fetch from database
-    const dbSession = this.dbManager.getSessionById(sessionDbId);
+    const dbSession = this.dbManager.getSessionById(sessionDbId, dbPath);
 
     logger.debug('SESSION', 'Fetched session from database', {
       sessionDbId,
@@ -147,7 +147,7 @@ export class SessionManager {
       pendingMessages: [],
       abortController: new AbortController(),
       generatorPromise: null,
-      lastPromptNumber: promptNumber || this.dbManager.getSessionStore().getPromptNumberFromUserPrompts(dbSession.content_session_id),
+      lastPromptNumber: promptNumber || this.dbManager.getSessionStore(dbPath).getPromptNumberFromUserPrompts(dbSession.content_session_id),
       startTime: Date.now(),
       cumulativeInputTokens: 0,
       cumulativeOutputTokens: 0,
@@ -165,7 +165,7 @@ export class SessionManager {
       contentSessionId: dbSession.content_session_id,
       dbMemorySessionId: dbSession.memory_session_id || '(none in DB)',
       memorySessionId: '(cleared - will capture fresh from SDK)',
-      lastPromptNumber: promptNumber || this.dbManager.getSessionStore().getPromptNumberFromUserPrompts(dbSession.content_session_id)
+      lastPromptNumber: promptNumber || this.dbManager.getSessionStore(dbPath).getPromptNumberFromUserPrompts(dbSession.content_session_id)
     });
 
     this.sessions.set(sessionDbId, session);
