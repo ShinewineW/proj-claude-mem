@@ -1,4 +1,5 @@
 import { Database } from 'bun:sqlite';
+import { dirname } from 'path';
 import { TableNameRow } from '../../types/database.js';
 import { DATA_DIR, DB_PATH, ensureDir } from '../../shared/paths.js';
 import { logger } from '../../utils/logger.js';
@@ -26,6 +27,8 @@ export class SessionSearch {
     if (!dbPath) {
       ensureDir(DATA_DIR);
       dbPath = DB_PATH;
+    } else {
+      ensureDir(dirname(dbPath));
     }
     this.db = new Database(dbPath);
     this.db.run('PRAGMA journal_mode = WAL');
