@@ -28,10 +28,12 @@ import {
   ListToolsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 import { getWorkerPort, getWorkerHost } from '../shared/worker-utils.js';
+import { resolveProjectRoot } from '../shared/paths.js';
+import { isProjectEnabled } from '../shared/project-allowlist.js';
 import { searchCodebase, formatSearchResults } from '../services/smart-file-read/search.js';
 import { parseFile, formatFoldedView, unfoldSymbol } from '../services/smart-file-read/parser.js';
 import { readFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { resolve, join } from 'node:path';
 
 /**
  * Worker HTTP API configuration
@@ -39,6 +41,19 @@ import { resolve } from 'node:path';
 const WORKER_PORT = getWorkerPort();
 const WORKER_HOST = getWorkerHost();
 const WORKER_BASE_URL = `http://${WORKER_HOST}:${WORKER_PORT}`;
+
+/**
+ * Per-project database path resolution via allowlist.
+ *
+ * MCP server runs in the project's cwd. We resolve the project root,
+ * check the allowlist, and derive the dbPath. This is the single source
+ * of truth — no heuristic guessing.
+ */
+const PROJECT_ROOT = resolveProjectRoot(process.cwd());
+const PROJECT_ENABLED = isProjectEnabled(PROJECT_ROOT);
+const PROJECT_DB_PATH = PROJECT_ENABLED ? join(PROJECT_ROOT, '.claude', 'mem.db') : null;
+
+const NOT_ENABLED_MESSAGE = `claude-mem is not enabled for this project.\n\nDetected project root: ${PROJECT_ROOT}\nRun /mem-enable to start recording and searching memory.`;
 
 /**
  * Map tool names to Worker HTTP endpoints
@@ -49,7 +64,8 @@ const TOOL_ENDPOINT_MAP: Record<string, string> = {
 };
 
 /**
- * Call Worker HTTP API endpoint
+ * Call Worker HTTP API endpoint.
+ * Automatically injects dbPath from allowlist-resolved project DB.
  */
 async function callWorkerAPI(
   endpoint: string,
@@ -59,6 +75,11 @@ async function callWorkerAPI(
 
   try {
     const searchParams = new URLSearchParams();
+
+    // Inject project-specific dbPath so Worker queries the right database
+    if (PROJECT_DB_PATH) {
+      searchParams.append('dbPath', PROJECT_DB_PATH);
+    }
 
     // Convert params to query string
     for (const [key, value] of Object.entries(params)) {
@@ -94,7 +115,8 @@ async function callWorkerAPI(
 }
 
 /**
- * Call Worker HTTP API with POST body
+ * Call Worker HTTP API with POST body.
+ * Automatically injects dbPath from allowlist-resolved project DB.
  */
 async function callWorkerAPIPost(
   endpoint: string,
@@ -103,13 +125,15 @@ async function callWorkerAPIPost(
   logger.debug('HTTP', 'Worker API request (POST)', undefined, { endpoint });
 
   try {
+    // Inject project-specific dbPath into POST body
+    const enrichedBody = PROJECT_DB_PATH ? { ...body, dbPath: PROJECT_DB_PATH } : body;
     const url = `${WORKER_BASE_URL}${endpoint}`;
     const response = await fetch(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify(body)
+      body: JSON.stringify(enrichedBody)
     });
 
     if (!response.ok) {
@@ -202,6 +226,9 @@ NEVER fetch full details without filtering first. 10x token savings.`,
       additionalProperties: true
     },
     handler: async (args: any) => {
+      if (!PROJECT_DB_PATH) {
+        return { content: [{ type: 'text' as const, text: NOT_ENABLED_MESSAGE }] };
+      }
       const endpoint = TOOL_ENDPOINT_MAP['search'];
       return await callWorkerAPI(endpoint, args);
     }
@@ -215,6 +242,9 @@ NEVER fetch full details without filtering first. 10x token savings.`,
       additionalProperties: true
     },
     handler: async (args: any) => {
+      if (!PROJECT_DB_PATH) {
+        return { content: [{ type: 'text' as const, text: NOT_ENABLED_MESSAGE }] };
+      }
       const endpoint = TOOL_ENDPOINT_MAP['timeline'];
       return await callWorkerAPI(endpoint, args);
     }
@@ -235,6 +265,9 @@ NEVER fetch full details without filtering first. 10x token savings.`,
       additionalProperties: true
     },
     handler: async (args: any) => {
+      if (!PROJECT_DB_PATH) {
+        return { content: [{ type: 'text' as const, text: NOT_ENABLED_MESSAGE }] };
+      }
       return await callWorkerAPIPost('/api/observations/batch', args);
     }
   },

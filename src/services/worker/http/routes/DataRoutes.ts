@@ -66,8 +66,8 @@ export class DataRoutes extends BaseRouteHandler {
    * Get paginated observations
    */
   private handleGetObservations = this.wrapHandler((req: Request, res: Response): void => {
-    const { offset, limit, project } = this.parsePaginationParams(req);
-    const result = this.paginationHelper.getObservations(offset, limit, project);
+    const { offset, limit, project, dbPath } = this.parsePaginationParams(req);
+    const result = this.paginationHelper.getObservations(offset, limit, project, dbPath);
     res.json(result);
   });
 
@@ -75,8 +75,8 @@ export class DataRoutes extends BaseRouteHandler {
    * Get paginated summaries
    */
   private handleGetSummaries = this.wrapHandler((req: Request, res: Response): void => {
-    const { offset, limit, project } = this.parsePaginationParams(req);
-    const result = this.paginationHelper.getSummaries(offset, limit, project);
+    const { offset, limit, project, dbPath } = this.parsePaginationParams(req);
+    const result = this.paginationHelper.getSummaries(offset, limit, project, dbPath);
     res.json(result);
   });
 
@@ -84,8 +84,8 @@ export class DataRoutes extends BaseRouteHandler {
    * Get paginated user prompts
    */
   private handleGetPrompts = this.wrapHandler((req: Request, res: Response): void => {
-    const { offset, limit, project } = this.parsePaginationParams(req);
-    const result = this.paginationHelper.getPrompts(offset, limit, project);
+    const { offset, limit, project, dbPath } = this.parsePaginationParams(req);
+    const result = this.paginationHelper.getPrompts(offset, limit, project, dbPath);
     res.json(result);
   });
 
@@ -137,7 +137,8 @@ export class DataRoutes extends BaseRouteHandler {
       return;
     }
 
-    const store = this.dbManager.getSessionStore();
+    const dbPath = (req.body.dbPath as string) || undefined;
+    const store = this.dbManager.getSessionStore(dbPath);
     const observations = store.getObservationsByIds(ids, { orderBy, limit, project });
 
     res.json(observations);
@@ -206,9 +207,11 @@ export class DataRoutes extends BaseRouteHandler {
 
   /**
    * Get database statistics (with worker metadata)
+   * Supports ?dbPath= to query a specific project database.
    */
   private handleGetStats = this.wrapHandler((req: Request, res: Response): void => {
-    const db = this.dbManager.getSessionStore().db;
+    const requestDbPath = (req.query.dbPath as string) || undefined;
+    const db = this.dbManager.getSessionStore(requestDbPath).db;
 
     // Read version from package.json
     const packageRoot = getPackageRoot();
@@ -221,11 +224,11 @@ export class DataRoutes extends BaseRouteHandler {
     const totalSessions = db.prepare('SELECT COUNT(*) as count FROM sdk_sessions').get() as { count: number };
     const totalSummaries = db.prepare('SELECT COUNT(*) as count FROM session_summaries').get() as { count: number };
 
-    // Get database file size and path
-    const dbPath = path.join(homedir(), '.claude-mem', 'claude-mem.db');
+    // Get database file size and path from the actual DB being queried
+    const actualDbPath = requestDbPath || path.join(homedir(), '.claude-mem', 'claude-mem.db');
     let dbSize = 0;
-    if (existsSync(dbPath)) {
-      dbSize = statSync(dbPath).size;
+    if (existsSync(actualDbPath)) {
+      dbSize = statSync(actualDbPath).size;
     }
 
     // Worker metadata
@@ -242,7 +245,7 @@ export class DataRoutes extends BaseRouteHandler {
         port: getWorkerPort()
       },
       database: {
-        path: dbPath,
+        path: actualDbPath,
         size: dbSize,
         observations: totalObservations.count,
         sessions: totalSessions.count,
@@ -254,21 +257,80 @@ export class DataRoutes extends BaseRouteHandler {
   /**
    * Get list of distinct projects from observations
    * GET /api/projects
+   *
+   * Per-project isolation: reads allowlist to discover all enabled project DBs,
+   * queries each for distinct project names, and returns with dbPath for the frontend.
    */
   private handleGetProjects = this.wrapHandler((req: Request, res: Response): void => {
-    const db = this.dbManager.getSessionStore().db;
+    const dbPath = req.query.dbPath as string | undefined;
 
-    const rows = db.prepare(`
-      SELECT DISTINCT project
-      FROM observations
-      WHERE project IS NOT NULL
-      GROUP BY project
-      ORDER BY MAX(created_at_epoch) DESC
-    `).all() as Array<{ project: string }>;
+    // If dbPath specified, query that specific DB
+    if (dbPath) {
+      const db = this.dbManager.getSessionStore(dbPath).db;
+      const rows = db.prepare(`
+        SELECT DISTINCT project
+        FROM observations
+        WHERE project IS NOT NULL
+        GROUP BY project
+        ORDER BY MAX(created_at_epoch) DESC
+      `).all() as Array<{ project: string }>;
+      res.json({ projects: rows.map(row => row.project) });
+      return;
+    }
 
-    const projects = rows.map(row => row.project);
+    // No dbPath: aggregate from allowlist + global DB
+    const allProjects: Array<{ project: string; dbPath: string }> = [];
 
-    res.json({ projects });
+    // 1. Query global DB
+    try {
+      const globalDb = this.dbManager.getSessionStore().db;
+      const globalRows = globalDb.prepare(`
+        SELECT DISTINCT project FROM observations WHERE project IS NOT NULL
+        GROUP BY project ORDER BY MAX(created_at_epoch) DESC
+      `).all() as Array<{ project: string }>;
+      for (const row of globalRows) {
+        allProjects.push({ project: row.project, dbPath: '' });
+      }
+    } catch { /* global DB may be empty */ }
+
+    // 2. Query each enabled project from allowlist
+    try {
+      const { listEnabledProjects } = require('../../../../shared/project-allowlist.js');
+      const { resolveProjectDbPath } = require('../../../../shared/paths.js');
+      const enabled = listEnabledProjects();
+      for (const projectRoot of Object.keys(enabled)) {
+        try {
+          const projDbPath = resolveProjectDbPath(projectRoot);
+          const projDb = this.dbManager.getSessionStore(projDbPath).db;
+
+          // Try observations first, fall back to sdk_sessions for projects with no observations yet
+          let rows = projDb.prepare(`
+            SELECT DISTINCT project FROM observations WHERE project IS NOT NULL
+            GROUP BY project ORDER BY MAX(created_at_epoch) DESC
+          `).all() as Array<{ project: string }>;
+
+          if (rows.length === 0) {
+            rows = projDb.prepare(`
+              SELECT DISTINCT project FROM sdk_sessions
+              WHERE project IS NOT NULL AND project != ''
+              ORDER BY project ASC
+            `).all() as Array<{ project: string }>;
+          }
+
+          for (const row of rows) {
+            if (!allProjects.some(p => p.project === row.project && p.dbPath === projDbPath)) {
+              allProjects.push({ project: row.project, dbPath: projDbPath });
+            }
+          }
+        } catch { /* skip inaccessible project DBs */ }
+      }
+    } catch { /* allowlist module may not be available */ }
+
+    // Return both flat list (backward compat) and enriched list
+    res.json({
+      projects: allProjects.map(p => p.project),
+      projectDatabases: allProjects
+    });
   });
 
   /**
@@ -299,12 +361,13 @@ export class DataRoutes extends BaseRouteHandler {
   /**
    * Parse pagination parameters from request query
    */
-  private parsePaginationParams(req: Request): { offset: number; limit: number; project?: string } {
+  private parsePaginationParams(req: Request): { offset: number; limit: number; project?: string; dbPath?: string } {
     const offset = parseInt(req.query.offset as string, 10) || 0;
     const limit = Math.min(parseInt(req.query.limit as string, 10) || 20, 100); // Max 100
     const project = req.query.project as string | undefined;
+    const dbPath = req.query.dbPath as string | undefined;
 
-    return { offset, limit, project };
+    return { offset, limit, project, dbPath };
   }
 
   /**

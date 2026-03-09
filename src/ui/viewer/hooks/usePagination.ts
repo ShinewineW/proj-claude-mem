@@ -14,7 +14,7 @@ type DataItem = Observation | Summary | UserPrompt;
 /**
  * Generic pagination hook for observations, summaries, and prompts
  */
-function usePaginationFor(endpoint: string, dataType: DataType, currentFilter: string) {
+function usePaginationFor(endpoint: string, dataType: DataType, currentFilter: string, currentDbPath: string) {
   const [state, setState] = useState<PaginationState>({
     isLoading: false,
     hasMore: true
@@ -57,9 +57,12 @@ function usePaginationFor(endpoint: string, dataType: DataType, currentFilter: s
       limit: UI.PAGINATION_PAGE_SIZE.toString()
     });
 
-    // Add project filter if present
+    // Add project filter and dbPath if present
     if (currentFilter) {
       params.append('project', currentFilter);
+    }
+    if (currentDbPath) {
+      params.append('dbPath', currentDbPath);
     }
 
     const response = await fetch(`${endpoint}?${params}`);
@@ -80,7 +83,7 @@ function usePaginationFor(endpoint: string, dataType: DataType, currentFilter: s
     offsetRef.current += UI.PAGINATION_PAGE_SIZE;
 
     return data.items;
-  }, [currentFilter, endpoint, dataType]);
+  }, [currentFilter, currentDbPath, endpoint, dataType]);
 
   return {
     ...state,
@@ -91,10 +94,10 @@ function usePaginationFor(endpoint: string, dataType: DataType, currentFilter: s
 /**
  * Hook for paginating observations
  */
-export function usePagination(currentFilter: string) {
-  const observations = usePaginationFor(API_ENDPOINTS.OBSERVATIONS, 'observations', currentFilter);
-  const summaries = usePaginationFor(API_ENDPOINTS.SUMMARIES, 'summaries', currentFilter);
-  const prompts = usePaginationFor(API_ENDPOINTS.PROMPTS, 'prompts', currentFilter);
+export function usePagination(currentFilter: string, dbPath: string = '') {
+  const observations = usePaginationFor(API_ENDPOINTS.OBSERVATIONS, 'observations', currentFilter, dbPath);
+  const summaries = usePaginationFor(API_ENDPOINTS.SUMMARIES, 'summaries', currentFilter, dbPath);
+  const prompts = usePaginationFor(API_ENDPOINTS.PROMPTS, 'prompts', currentFilter, dbPath);
 
   return {
     observations,

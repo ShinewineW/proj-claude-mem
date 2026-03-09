@@ -5,11 +5,11 @@ import { join } from "path";
 import { tmpdir } from "os";
 
 describe("resolveProjectRoot", () => {
-  it("returns git root for a path inside a git repo", () => {
-    // Use the current repo (proj-claude-mem) as a real git repo
+  it("applies workspace parent heuristic: git repo whose parent has CLAUDE.md returns parent", () => {
+    // proj-claude-mem is a git repo; its parent ClaudeMem-ProjIso has CLAUDE.md and is not a git repo.
+    // The heuristic should return ClaudeMem-ProjIso as the workspace root.
     const result = resolveProjectRoot(process.cwd());
-    // Should end with proj-claude-mem (the git root)
-    expect(result).toMatch(/proj-claude-mem$/);
+    expect(result).toMatch(/ClaudeMem-ProjIso$/);
   });
 
   it("returns cwd for a non-git directory", () => {

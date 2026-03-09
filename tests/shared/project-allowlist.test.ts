@@ -14,19 +14,19 @@ import {
   enableProject,
   disableProject,
   listEnabledProjects,
-  ENABLED_PROJECTS_PATH,
+  getEnabledProjectsPath,
 } from "../../src/shared/project-allowlist.js";
 
 describe("project-allowlist", () => {
   beforeEach(() => {
-    if (existsSync(ENABLED_PROJECTS_PATH)) {
-      rmSync(ENABLED_PROJECTS_PATH);
+    if (existsSync(getEnabledProjectsPath())) {
+      rmSync(getEnabledProjectsPath());
     }
   });
 
   afterEach(() => {
-    if (existsSync(ENABLED_PROJECTS_PATH)) {
-      rmSync(ENABLED_PROJECTS_PATH);
+    if (existsSync(getEnabledProjectsPath())) {
+      rmSync(getEnabledProjectsPath());
     }
   });
 
@@ -46,12 +46,12 @@ describe("project-allowlist", () => {
     });
 
     it("returns false for empty allowlist file", () => {
-      writeFileSync(ENABLED_PROJECTS_PATH, "{}");
+      writeFileSync(getEnabledProjectsPath(), "{}");
       expect(isProjectEnabled("/some/project")).toBe(false);
     });
 
     it("returns false gracefully when allowlist file is corrupt JSON", () => {
-      writeFileSync(ENABLED_PROJECTS_PATH, "not-json{{{");
+      writeFileSync(getEnabledProjectsPath(), "not-json{{{");
       expect(isProjectEnabled("/some/project")).toBe(false);
     });
   });
@@ -76,9 +76,9 @@ describe("project-allowlist", () => {
     });
 
     it("creates allowlist file if it does not exist", () => {
-      expect(existsSync(ENABLED_PROJECTS_PATH)).toBe(false);
+      expect(existsSync(getEnabledProjectsPath())).toBe(false);
       enableProject("/my/project");
-      expect(existsSync(ENABLED_PROJECTS_PATH)).toBe(true);
+      expect(existsSync(getEnabledProjectsPath())).toBe(true);
     });
 
     it("preserves existing entries when adding new one", () => {

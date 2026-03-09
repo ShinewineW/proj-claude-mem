@@ -71,13 +71,14 @@ export class PaginationHelper {
   /**
    * Get paginated observations
    */
-  getObservations(offset: number, limit: number, project?: string): PaginatedResult<Observation> {
+  getObservations(offset: number, limit: number, project?: string, dbPath?: string): PaginatedResult<Observation> {
     const result = this.paginate<Observation>(
       'observations',
       'id, memory_session_id, project, type, title, subtitle, narrative, text, facts, concepts, files_read, files_modified, prompt_number, created_at, created_at_epoch',
       offset,
       limit,
-      project
+      project,
+      dbPath
     );
 
     // Strip project paths from file paths before returning
@@ -90,8 +91,8 @@ export class PaginationHelper {
   /**
    * Get paginated summaries
    */
-  getSummaries(offset: number, limit: number, project?: string): PaginatedResult<Summary> {
-    const db = this.dbManager.getSessionStore().db;
+  getSummaries(offset: number, limit: number, project?: string, dbPath?: string): PaginatedResult<Summary> {
+    const db = this.dbManager.getSessionStore(dbPath).db;
 
     let query = `
       SELECT
@@ -132,8 +133,8 @@ export class PaginationHelper {
   /**
    * Get paginated user prompts
    */
-  getPrompts(offset: number, limit: number, project?: string): PaginatedResult<UserPrompt> {
-    const db = this.dbManager.getSessionStore().db;
+  getPrompts(offset: number, limit: number, project?: string, dbPath?: string): PaginatedResult<UserPrompt> {
+    const db = this.dbManager.getSessionStore(dbPath).db;
 
     let query = `
       SELECT up.id, up.content_session_id, s.project, up.prompt_number, up.prompt_text, up.created_at, up.created_at_epoch
@@ -169,9 +170,10 @@ export class PaginationHelper {
     columns: string,
     offset: number,
     limit: number,
-    project?: string
+    project?: string,
+    dbPath?: string
   ): PaginatedResult<T> {
-    const db = this.dbManager.getSessionStore().db;
+    const db = this.dbManager.getSessionStore(dbPath).db;
 
     let query = `SELECT ${columns} FROM ${table}`;
     const params: any[] = [];

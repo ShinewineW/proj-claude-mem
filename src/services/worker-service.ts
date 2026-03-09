@@ -22,6 +22,7 @@ import { ChromaMcpManager } from './sync/ChromaMcpManager.js';
 import { ChromaSync } from './sync/ChromaSync.js';
 import { DbConnectionPool } from '../shared/project-db.js';
 import { DB_PATH } from '../shared/paths.js';
+import { listEnabledProjects } from '../shared/project-allowlist.js';
 
 // Windows: avoid repeated spawn popups when startup fails (issue #921)
 const WINDOWS_SPAWN_COOLDOWN_MS = 2 * 60 * 1000;
@@ -645,9 +646,9 @@ export class WorkerService {
           return;
         }
 
-        // Store for pending-count check below
+        // Store for pending-count check below (must use session's project DB)
         const { PendingMessageStore } = require('./sqlite/PendingMessageStore.js');
-        const pendingStore = new PendingMessageStore(this.dbManager.getSessionStore().db, 3);
+        const pendingStore = new PendingMessageStore(this.dbManager.getSessionStore(session.dbPath || undefined).db, 3);
 
         // Idle timeout means no new work arrived for 3 minutes - don't restart
         // No need to reset stale processing messages here — claimNextMessage() self-heals
@@ -738,7 +739,7 @@ export class WorkerService {
     }
 
     // No fallback or both failed: mark messages abandoned and remove session so queue doesn't grow
-    const pendingStore = this.sessionManager.getPendingMessageStore();
+    const pendingStore = this.sessionManager.getPendingMessageStore(session.dbPath || undefined);
     const abandoned = pendingStore.markAllSessionMessagesAbandoned(sessionDbId);
     if (abandoned > 0) {
       logger.warn('SDK', 'No fallback available; marked pending messages abandoned', {
@@ -760,48 +761,68 @@ export class WorkerService {
     startedSessionIds: number[];
   }> {
     const { PendingMessageStore } = await import('./sqlite/PendingMessageStore.js');
-    const pendingStore = new PendingMessageStore(this.dbManager.getSessionStore().db, 3);
-    const sessionStore = this.dbManager.getSessionStore();
+    const { join } = await import('path');
 
-    // Clean up stale 'active' sessions before processing
-    // Sessions older than 6 hours without activity are likely orphaned
-    const STALE_SESSION_THRESHOLD_MS = 6 * 60 * 60 * 1000;
-    const staleThreshold = Date.now() - STALE_SESSION_THRESHOLD_MS;
-
+    // Collect all DB paths to scan: default DB + all enabled project DBs
+    const dbPaths = new Set<string>([DB_PATH]);
     try {
-      const staleSessionIds = sessionStore.db.prepare(`
-        SELECT id FROM sdk_sessions
-        WHERE status = 'active' AND started_at_epoch < ?
-      `).all(staleThreshold) as { id: number }[];
-
-      if (staleSessionIds.length > 0) {
-        const ids = staleSessionIds.map(r => r.id);
-        const placeholders = ids.map(() => '?').join(',');
-
-        sessionStore.db.prepare(`
-          UPDATE sdk_sessions
-          SET status = 'failed', completed_at_epoch = ?
-          WHERE id IN (${placeholders})
-        `).run(Date.now(), ...ids);
-
-        logger.info('SYSTEM', `Marked ${ids.length} stale sessions as failed`);
-
-        const msgResult = sessionStore.db.prepare(`
-          UPDATE pending_messages
-          SET status = 'failed', failed_at_epoch = ?
-          WHERE status = 'pending'
-          AND session_db_id IN (${placeholders})
-        `).run(Date.now(), ...ids);
-
-        if (msgResult.changes > 0) {
-          logger.info('SYSTEM', `Marked ${msgResult.changes} pending messages from stale sessions as failed`);
-        }
+      const enabled = listEnabledProjects();
+      for (const projectRoot of Object.keys(enabled)) {
+        dbPaths.add(join(projectRoot, '.claude', 'mem.db'));
       }
     } catch (error) {
-      logger.error('SYSTEM', 'Failed to clean up stale sessions', {}, error as Error);
+      logger.debug('SYSTEM', 'Failed to read enabled projects, scanning default DB only', {}, error as Error);
     }
 
-    const orphanedSessionIds = pendingStore.getSessionsWithPendingMessages();
+    // Clean up stale 'active' sessions and collect orphaned sessions across all DBs
+    const STALE_SESSION_THRESHOLD_MS = 6 * 60 * 60 * 1000;
+    const staleThreshold = Date.now() - STALE_SESSION_THRESHOLD_MS;
+    const allOrphanedSessionIds: number[] = [];
+
+    for (const dbPath of dbPaths) {
+      try {
+        const sessionStore = this.dbManager.getSessionStore(dbPath);
+        const pendingStore = new PendingMessageStore(sessionStore.db, 3);
+
+        // Clean up stale 'active' sessions
+        const staleSessionIds = sessionStore.db.prepare(`
+          SELECT id FROM sdk_sessions
+          WHERE status = 'active' AND started_at_epoch < ?
+        `).all(staleThreshold) as { id: number }[];
+
+        if (staleSessionIds.length > 0) {
+          const ids = staleSessionIds.map(r => r.id);
+          const placeholders = ids.map(() => '?').join(',');
+
+          sessionStore.db.prepare(`
+            UPDATE sdk_sessions
+            SET status = 'failed', completed_at_epoch = ?
+            WHERE id IN (${placeholders})
+          `).run(Date.now(), ...ids);
+
+          logger.info('SYSTEM', `Marked ${ids.length} stale sessions as failed`, { dbPath });
+
+          const msgResult = sessionStore.db.prepare(`
+            UPDATE pending_messages
+            SET status = 'failed', failed_at_epoch = ?
+            WHERE status = 'pending'
+            AND session_db_id IN (${placeholders})
+          `).run(Date.now(), ...ids);
+
+          if (msgResult.changes > 0) {
+            logger.info('SYSTEM', `Marked ${msgResult.changes} pending messages from stale sessions as failed`, { dbPath });
+          }
+        }
+
+        // Collect orphaned session IDs from this DB
+        const orphaned = pendingStore.getSessionsWithPendingMessages();
+        allOrphanedSessionIds.push(...orphaned);
+      } catch (error) {
+        logger.error('SYSTEM', 'Failed to process pending queue for DB', { dbPath }, error as Error);
+      }
+    }
+
+    const orphanedSessionIds = allOrphanedSessionIds;
 
     const result = {
       totalPendingSessions: orphanedSessionIds.length,

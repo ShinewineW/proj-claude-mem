@@ -193,7 +193,7 @@ export class SessionRoutes extends BaseRouteHandler {
         }, error);
 
         // Mark all processing messages as failed so they can be retried or abandoned
-        const pendingStore = this.sessionManager.getPendingMessageStore();
+        const pendingStore = this.sessionManager.getPendingMessageStore(session.dbPath || undefined);
         try {
           const failedCount = pendingStore.markSessionMessagesFailed(session.sessionDbId);
           if (failedCount > 0) {

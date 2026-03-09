@@ -8,9 +8,20 @@
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { dirname, join } from 'path';
-import { DATA_DIR } from './paths.js';
+import { homedir } from 'os';
 
-export const ENABLED_PROJECTS_PATH = join(DATA_DIR, 'enabled-projects.json');
+/**
+ * Resolve the allowlist path at call time (not module load time).
+ *
+ * This avoids the ES-module hoisting problem: top-level `import` statements
+ * execute before any inline `process.env` assignments, so a module-level
+ * constant would always see the default value.  Reading process.env lazily
+ * lets test files override CLAUDE_MEM_DATA_DIR before the first access.
+ */
+export function getEnabledProjectsPath(): string {
+  const dataDir = process.env.CLAUDE_MEM_DATA_DIR || join(homedir(), '.claude-mem');
+  return join(dataDir, 'enabled-projects.json');
+}
 
 interface AllowlistEntry {
   enabledAt: string;
@@ -21,17 +32,19 @@ interface Allowlist {
 }
 
 function readAllowlist(): Allowlist {
-  if (!existsSync(ENABLED_PROJECTS_PATH)) return {};
+  const path = getEnabledProjectsPath();
+  if (!existsSync(path)) return {};
   try {
-    return JSON.parse(readFileSync(ENABLED_PROJECTS_PATH, 'utf-8')) as Allowlist;
+    return JSON.parse(readFileSync(path, 'utf-8')) as Allowlist;
   } catch {
     return {};
   }
 }
 
 function writeAllowlist(data: Allowlist): void {
-  mkdirSync(dirname(ENABLED_PROJECTS_PATH), { recursive: true });
-  writeFileSync(ENABLED_PROJECTS_PATH, JSON.stringify(data, null, 2));
+  const path = getEnabledProjectsPath();
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, JSON.stringify(data, null, 2));
 }
 
 export function isProjectEnabled(projectRoot: string): boolean {

@@ -113,7 +113,7 @@ export async function processAgentResponse(
 
   // CLAIM-CONFIRM: Now that storage succeeded, confirm all processing messages (delete from queue)
   // This is the critical step that prevents message loss on generator crash
-  const pendingStore = sessionManager.getPendingMessageStore();
+  const pendingStore = sessionManager.getPendingMessageStore(session.dbPath || undefined);
   for (const messageId of session.processingMessageIds) {
     pendingStore.confirmProcessed(messageId);
   }

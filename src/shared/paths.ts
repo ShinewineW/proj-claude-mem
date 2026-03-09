@@ -25,7 +25,7 @@ const _dirname = getDirname();
  */
 
 // Base directories
-export const DATA_DIR = SettingsDefaultsManager.get('CLAUDE_MEM_DATA_DIR');
+export const DATA_DIR = process.env.CLAUDE_MEM_DATA_DIR || SettingsDefaultsManager.get('CLAUDE_MEM_DATA_DIR');
 // Note: CLAUDE_CONFIG_DIR is a Claude Code setting, not claude-mem, so leave as env var
 export const CLAUDE_CONFIG_DIR = process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude');
 
@@ -174,6 +174,29 @@ function findGitRoot(startDir: string): string | null {
 }
 
 /**
+ * Workspace parent heuristic: if gitRoot's parent has CLAUDE.md or .claude/,
+ * and the parent is NOT itself a git repo, treat the parent as the workspace root.
+ *
+ * This handles CC workspaces that contain a nested git repo
+ * (e.g., ClaudeMem-ProjIso/ contains proj-claude-mem/ which is a git repo).
+ *
+ * Returns the workspace root if heuristic matches, otherwise returns gitRoot.
+ */
+function resolveWorkspaceRoot(gitRoot: string): string {
+  const parent = dirname(gitRoot);
+  if (parent === gitRoot) return gitRoot;
+
+  const parentHasClaude =
+    existsSync(join(parent, 'CLAUDE.md')) || existsSync(join(parent, '.claude'));
+  const parentIsGitRepo = findGitRoot(parent) !== null && findGitRoot(parent) === parent;
+
+  if (parentHasClaude && !parentIsGitRepo) {
+    return parent;
+  }
+  return gitRoot;
+}
+
+/**
  * Resolve the per-project SQLite DB path for claude-mem.
  *
  * Resolution order:
@@ -204,7 +227,7 @@ export function resolveProjectDbPath(cwd?: string): string {
     return join(worktreeInfo.parentRepoPath, '.claude', 'mem.db');
   }
 
-  return join(gitRoot, '.claude', 'mem.db');
+  return join(resolveWorkspaceRoot(gitRoot), '.claude', 'mem.db');
 }
 
 /**
@@ -214,9 +237,11 @@ export function resolveProjectDbPath(cwd?: string): string {
  * parent repo root so all worktrees share the same enablement state.
  *
  * Resolution order:
- *   1. Git main repo -> <gitRoot>
- *   2. Git worktree -> <parentRepo>
- *   3. Non-git directory -> <cwd>
+ *   1. Git worktree -> <parentRepo>
+ *   2. Git repo whose parent has CLAUDE.md or .claude/ (and parent is not a git repo)
+ *      -> <parent> (workspace root heuristic for nested-repo workspaces)
+ *   3. Git main repo -> <gitRoot>
+ *   4. Non-git directory -> <cwd>
  */
 export function resolveProjectRoot(cwd?: string): string {
   const effectiveCwd = resolve(cwd || process.cwd());
@@ -229,5 +254,5 @@ export function resolveProjectRoot(cwd?: string): string {
     return resolve(worktreeInfo.parentRepoPath);
   }
 
-  return gitRoot;
+  return resolveWorkspaceRoot(gitRoot);
 }

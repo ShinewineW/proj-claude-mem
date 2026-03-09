@@ -21,21 +21,28 @@ export class SessionManager {
   private sessions: Map<number, ActiveSession> = new Map();
   private sessionQueues: Map<number, EventEmitter> = new Map();
   private onSessionDeletedCallback?: () => void;
-  private pendingStore: PendingMessageStore | null = null;
+  private pendingStores: Map<string, PendingMessageStore> = new Map();
 
   constructor(dbManager: DatabaseManager) {
     this.dbManager = dbManager;
   }
 
   /**
-   * Get or create PendingMessageStore (lazy initialization to avoid circular dependency)
+   * Get or create PendingMessageStore for a specific database path.
+   *
+   * Per-project isolation requires separate PendingMessageStore instances
+   * because pending_messages has a FK on sdk_sessions(id) — the session must
+   * exist in the SAME database where the message is enqueued.
    */
-  private getPendingStore(): PendingMessageStore {
-    if (!this.pendingStore) {
-      const sessionStore = this.dbManager.getSessionStore();
-      this.pendingStore = new PendingMessageStore(sessionStore.db, 3);
+  private getPendingStore(dbPath?: string): PendingMessageStore {
+    const key = dbPath || '';
+    let store = this.pendingStores.get(key);
+    if (!store) {
+      const sessionStore = this.dbManager.getSessionStore(dbPath);
+      store = new PendingMessageStore(sessionStore.db, 3);
+      this.pendingStores.set(key, store);
     }
-    return this.pendingStore;
+    return store;
   }
 
   /**
@@ -217,8 +224,9 @@ export class SessionManager {
     };
 
     try {
-      const messageId = this.getPendingStore().enqueue(sessionDbId, session.contentSessionId, message);
-      const queueDepth = this.getPendingStore().getPendingCount(sessionDbId);
+      const pendingStore = this.getPendingStore(session.dbPath || undefined);
+      const messageId = pendingStore.enqueue(sessionDbId, session.contentSessionId, message);
+      const queueDepth = pendingStore.getPendingCount(sessionDbId);
       const toolSummary = logger.formatTool(data.tool_name, data.tool_input);
       logger.info('QUEUE', `ENQUEUED | sessionDbId=${sessionDbId} | messageId=${messageId} | type=observation | tool=${toolSummary} | depth=${queueDepth}`, {
         sessionId: sessionDbId
@@ -257,8 +265,9 @@ export class SessionManager {
     };
 
     try {
-      const messageId = this.getPendingStore().enqueue(sessionDbId, session.contentSessionId, message);
-      const queueDepth = this.getPendingStore().getPendingCount(sessionDbId);
+      const pendingStore = this.getPendingStore(session.dbPath || undefined);
+      const messageId = pendingStore.enqueue(sessionDbId, session.contentSessionId, message);
+      const queueDepth = pendingStore.getPendingCount(sessionDbId);
       logger.info('QUEUE', `ENQUEUED | sessionDbId=${sessionDbId} | messageId=${messageId} | type=summarize | depth=${queueDepth}`, {
         sessionId: sessionDbId
       });
@@ -364,7 +373,7 @@ export class SessionManager {
       if (session.generatorPromise) continue;
 
       // Skip sessions with pending work
-      const pendingCount = this.getPendingStore().getPendingCount(sessionDbId);
+      const pendingCount = this.getPendingStore(session.dbPath || undefined).getPendingCount(sessionDbId);
       if (pendingCount > 0) continue;
 
       // No generator + no pending work + old enough = stale
@@ -394,7 +403,12 @@ export class SessionManager {
    * Check if any session has pending messages (for spinner tracking)
    */
   hasPendingMessages(): boolean {
-    return this.getPendingStore().hasAnyPendingWork();
+    for (const session of this.sessions.values()) {
+      if (this.getPendingStore(session.dbPath || undefined).getPendingCount(session.sessionDbId) > 0) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /**
@@ -409,9 +423,8 @@ export class SessionManager {
    */
   getTotalQueueDepth(): number {
     let total = 0;
-    // We can iterate over active sessions to get their pending count
     for (const session of this.sessions.values()) {
-      total += this.getPendingStore().getPendingCount(session.sessionDbId);
+      total += this.getPendingStore(session.dbPath || undefined).getPendingCount(session.sessionDbId);
     }
     return total;
   }
@@ -430,8 +443,12 @@ export class SessionManager {
    * Used for activity indicator to prevent spinner from stopping while SDK is processing
    */
   isAnySessionProcessing(): boolean {
-    // hasAnyPendingWork checks for 'pending' OR 'processing'
-    return this.getPendingStore().hasAnyPendingWork();
+    for (const session of this.sessions.values()) {
+      if (this.getPendingStore(session.dbPath || undefined).getPendingCount(session.sessionDbId) > 0) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /**
@@ -454,7 +471,7 @@ export class SessionManager {
       throw new Error(`No emitter for session ${sessionDbId}`);
     }
 
-    const processor = new SessionQueueProcessor(this.getPendingStore(), emitter);
+    const processor = new SessionQueueProcessor(this.getPendingStore(session.dbPath || undefined), emitter);
 
     // Use the robust iterator - messages are deleted on claim (no tracking needed)
     // CRITICAL: Pass onIdleTimeout callback that triggers abort to kill the subprocess
@@ -484,9 +501,10 @@ export class SessionManager {
   }
 
   /**
-   * Get the PendingMessageStore (for SDKAgent to mark messages as processed)
+   * Get the PendingMessageStore for a specific database path
+   * (for SDKAgent to mark messages as processed)
    */
-  getPendingMessageStore(): PendingMessageStore {
-    return this.getPendingStore();
+  getPendingMessageStore(dbPath?: string): PendingMessageStore {
+    return this.getPendingStore(dbPath);
   }
 }

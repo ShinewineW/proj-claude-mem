@@ -38,13 +38,13 @@ mock.module("../../src/shared/hook-constants.js", () => ({
 }));
 
 import { hookCommand } from "../../src/cli/hook-command.js";
-import { enableProject, disableProject, ENABLED_PROJECTS_PATH } from "../../src/shared/project-allowlist.js";
+import { enableProject, disableProject, getEnabledProjectsPath } from "../../src/shared/project-allowlist.js";
 import { resolveProjectRoot } from "../../src/shared/paths.js";
 
 describe("hookCommand allowlist guard", () => {
   afterEach(() => {
     handlerCallCount = 0;
-    if (existsSync(ENABLED_PROJECTS_PATH)) rmSync(ENABLED_PROJECTS_PATH);
+    if (existsSync(getEnabledProjectsPath())) rmSync(getEnabledProjectsPath());
   });
 
   it("returns 0 and skips handler when project is NOT in allowlist", async () => {
