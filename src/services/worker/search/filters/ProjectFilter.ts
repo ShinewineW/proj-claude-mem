@@ -4,14 +4,19 @@
  * Provides utilities for filtering search results by project.
  */
 
-import { basename } from 'path';
 import { logger } from '../../../../utils/logger.js';
+import { getProjectName } from '../../../../utils/project-name.js';
 
 /**
- * Get the current project name from cwd
+ * Get the current project name from cwd.
+ * Cached because the worker daemon's cwd never changes after startup.
  */
+let cachedProjectName: string | null = null;
 export function getCurrentProject(): string {
-  return basename(process.cwd());
+  if (!cachedProjectName) {
+    cachedProjectName = getProjectName(process.cwd());
+  }
+  return cachedProjectName;
 }
 
 /**

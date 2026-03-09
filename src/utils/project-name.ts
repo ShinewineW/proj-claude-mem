@@ -1,10 +1,13 @@
 import path from 'path';
 import { logger } from './logger.js';
 import { detectWorktree } from './worktree.js';
+import { resolveProjectRoot } from '../shared/paths.js';
 
 /**
- * Extract project name from working directory path
- * Handles edge cases: null/undefined cwd, drive roots, trailing slashes
+ * Extract project name from working directory path.
+ *
+ * Uses resolveProjectRoot() to handle workspace root detection (nested git repos)
+ * and worktree detection, then returns basename of the resolved root.
  *
  * @param cwd - Current working directory (absolute path)
  * @returns Project name or "unknown-project" if extraction fails
@@ -15,8 +18,9 @@ export function getProjectName(cwd: string | null | undefined): string {
     return 'unknown-project';
   }
 
-  // Extract basename (handles trailing slashes automatically)
-  const basename = path.basename(cwd);
+  // Resolve the canonical project root (handles workspace root + worktree detection)
+  const projectRoot = resolveProjectRoot(cwd);
+  const basename = path.basename(projectRoot);
 
   // Edge case: Drive roots on Windows (C:\, J:\) or Unix root (/)
   // path.basename('C:\') returns '' (empty string)
@@ -24,7 +28,7 @@ export function getProjectName(cwd: string | null | undefined): string {
     // Extract drive letter on Windows, or use 'root' on Unix
     const isWindows = process.platform === 'win32';
     if (isWindows) {
-      const driveMatch = cwd.match(/^([A-Z]):\\/i);
+      const driveMatch = projectRoot.match(/^([A-Z]):\\/i);
       if (driveMatch) {
         const driveLetter = driveMatch[1].toUpperCase();
         const projectName = `drive-${driveLetter}`;
@@ -56,8 +60,9 @@ export interface ProjectContext {
 /**
  * Get project context with worktree detection.
  *
- * When in a worktree, returns both the worktree project name and parent project name
- * for unified timeline queries.
+ * getProjectName() already resolves through resolveProjectRoot(), which handles
+ * both workspace root detection and worktree detection. Worktree observations
+ * are stored under the parent project name, so allProjects is always [primary].
  *
  * @param cwd - Current working directory (absolute path)
  * @returns ProjectContext with worktree info
@@ -72,12 +77,11 @@ export function getProjectContext(cwd: string | null | undefined): ProjectContex
   const worktreeInfo = detectWorktree(cwd);
 
   if (worktreeInfo.isWorktree && worktreeInfo.parentProjectName) {
-    // In a worktree: include parent first for chronological ordering
     return {
       primary,
       parent: worktreeInfo.parentProjectName,
       isWorktree: true,
-      allProjects: [worktreeInfo.parentProjectName, primary]
+      allProjects: [primary]
     };
   }
 

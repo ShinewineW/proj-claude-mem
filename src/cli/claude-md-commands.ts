@@ -13,6 +13,7 @@
 import { Database } from 'bun:sqlite';
 import path from 'path';
 import os from 'os';
+import { getProjectName } from '../utils/project-name.js';
 import {
   existsSync,
   writeFileSync,
@@ -365,7 +366,7 @@ export async function generateClaudeMd(dryRun: boolean): Promise<number> {
       observationLimit
     });
 
-    const project = path.basename(workingDir);
+    const project = getProjectName(workingDir);
     const trackedFolders = getTrackedFolders(workingDir);
 
     if (trackedFolders.size === 0) {

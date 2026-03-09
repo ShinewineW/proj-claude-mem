@@ -100,9 +100,9 @@ export function ensureAllClaudeDirs(): void {
 }
 
 /**
- * Get current project name from git root or cwd.
- * Includes parent directory to avoid collisions when repos share a folder name
- * (e.g., ~/work/monorepo → "work/monorepo" vs ~/personal/monorepo → "personal/monorepo").
+ * @deprecated Use getProjectName() from utils/project-name.ts instead.
+ * This function returns "parent/basename" format which is inconsistent with
+ * the canonical project name used in observations and search.
  */
 export function getCurrentProjectName(): string {
   try {
@@ -174,6 +174,28 @@ function findGitRoot(startDir: string): string | null {
 }
 
 /**
+ * Walk up from startDir looking for a directory with CLAUDE.md or .claude/.
+ * Checks startDir itself first (it may be the workspace root), then ancestors.
+ * Returns the nearest workspace root, or null if none found.
+ * Stops at filesystem root. Skips home directory to avoid false matches from ~/.claude/.
+ */
+function findWorkspaceAncestor(startDir: string): string | null {
+  const homeDir = homedir();
+  let dir = startDir;
+  while (true) {
+    // Skip home directory — ~/.claude/ is user config, not a workspace marker
+    if (dir !== homeDir) {
+      if (existsSync(join(dir, 'CLAUDE.md')) || existsSync(join(dir, '.claude'))) {
+        return dir;
+      }
+    }
+    const parent = dirname(dir);
+    if (parent === dir) return null;
+    dir = parent;
+  }
+}
+
+/**
  * Workspace parent heuristic: if gitRoot's parent has CLAUDE.md or .claude/,
  * and the parent is NOT itself a git repo, treat the parent as the workspace root.
  *
@@ -188,7 +210,8 @@ function resolveWorkspaceRoot(gitRoot: string): string {
 
   const parentHasClaude =
     existsSync(join(parent, 'CLAUDE.md')) || existsSync(join(parent, '.claude'));
-  const parentIsGitRepo = findGitRoot(parent) !== null && findGitRoot(parent) === parent;
+  const parentGitRoot = findGitRoot(parent);
+  const parentIsGitRepo = parentGitRoot !== null && parentGitRoot === parent;
 
   if (parentHasClaude && !parentIsGitRepo) {
     return parent;
@@ -219,7 +242,9 @@ export function resolveProjectDbPath(cwd?: string): string {
   const gitRoot = findGitRoot(effectiveCwd);
 
   if (!gitRoot) {
-    return join(effectiveCwd, '.claude', 'mem.db');
+    // Non-git directory: walk up looking for a workspace root (CLAUDE.md or .claude/)
+    const wsRoot = findWorkspaceAncestor(effectiveCwd);
+    return join(wsRoot ?? effectiveCwd, '.claude', 'mem.db');
   }
 
   const worktreeInfo = detectWorktree(gitRoot);
@@ -247,7 +272,10 @@ export function resolveProjectRoot(cwd?: string): string {
   const effectiveCwd = resolve(cwd || process.cwd());
   const gitRoot = findGitRoot(effectiveCwd);
 
-  if (!gitRoot) return effectiveCwd;
+  if (!gitRoot) {
+    // Non-git directory: walk up looking for a workspace root (CLAUDE.md or .claude/)
+    return findWorkspaceAncestor(effectiveCwd) ?? effectiveCwd;
+  }
 
   const worktreeInfo = detectWorktree(gitRoot);
   if (worktreeInfo.isWorktree && worktreeInfo.parentRepoPath) {
