@@ -206,3 +206,28 @@ export function resolveProjectDbPath(cwd?: string): string {
 
   return join(gitRoot, '.claude', 'mem.db');
 }
+
+/**
+ * Resolve the canonical root path for a project.
+ *
+ * This is the key used in the project allowlist. Worktrees return their
+ * parent repo root so all worktrees share the same enablement state.
+ *
+ * Resolution order:
+ *   1. Git main repo -> <gitRoot>
+ *   2. Git worktree -> <parentRepo>
+ *   3. Non-git directory -> <cwd>
+ */
+export function resolveProjectRoot(cwd?: string): string {
+  const effectiveCwd = resolve(cwd || process.cwd());
+  const gitRoot = findGitRoot(effectiveCwd);
+
+  if (!gitRoot) return effectiveCwd;
+
+  const worktreeInfo = detectWorktree(gitRoot);
+  if (worktreeInfo.isWorktree && worktreeInfo.parentRepoPath) {
+    return resolve(worktreeInfo.parentRepoPath);
+  }
+
+  return gitRoot;
+}
