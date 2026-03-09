@@ -1,8 +1,8 @@
 # proj-claude-mem
 
-基于 [claude-mem](https://github.com/thedotmack/claude-mem) 的 fork，实现了 **per-project SQLite 数据库隔离**。
+基于 [claude-mem](https://github.com/thedotmack/claude-mem) 的 fork，实现了 **per-project SQLite 数据库隔离** 和 **per-project opt-in 白名单** 机制。
 
-上游 claude-mem 将所有项目的记忆存储在一个全局数据库 `~/.claude-mem/claude-mem.db` 中。本 fork 改造后，每个 git 仓库拥有独立的数据库文件 `<repo>/.claude/mem.db`，实现项目间记忆完全隔离。
+上游 claude-mem 将所有项目的记忆存储在一个全局数据库 `~/.claude-mem/claude-mem.db` 中。本 fork 改造后，每个 git 仓库拥有独立的数据库文件 `<repo>/.claude/mem.db`，且需要显式启用才会记录，实现项目间记忆完全隔离。
 
 ## 核心特性
 
@@ -35,6 +35,24 @@
 - 连接池管理（`DbConnectionPool`），FIFO 淘汰，最大 10 个并发连接
 - 完全向后兼容：无 `dbPath` 时 fallback 到全局数据库
 
+### Per-Project Opt-In
+
+记忆录制**默认关闭**，必须通过 `/mem-enable` 显式启用。
+
+- **白名单文件**：`~/.claude-mem/enabled-projects.json`
+- **Guard 机制**：所有 hook 事件（SessionStart, UserPromptSubmit, PostToolUse, Stop）在执行前检查白名单，未启用的项目静默退出
+- **Workspace Root 推断**：嵌套 git 仓库场景下，会检查父目录是否包含 `CLAUDE.md` 或 `.claude/` 来确定真正的项目根目录
+- **懒加载路径解析**：`getEnabledProjectsPath()` 在调用时动态读取环境变量，避免 ES module hoisting 导致测试清理误删生产白名单
+
+### 多会话并发安全
+
+多个 Claude Code 会话在同一目录下安全共享 `mem.db`：
+
+- **Worker 守护进程**：单例，端口 37777，检测端口占用和 PID 存活后复用已有实例
+- **SQLite WAL 模式**：读写互不阻塞
+- **Session 隔离**：每个会话独立 `sessionDbId`，`Map<sessionDbId, ActiveSession>` 无共享可变状态
+- **消息队列**：`pending_messages` 表使用 claim-confirm 模式，60 秒超时自动重置
+
 ## 安装与部署
 
 ### 前置条件
@@ -59,13 +77,23 @@ bun run build-and-sync
 
 构建完成后，插件会被同步到 `~/.claude/plugins/marketplaces/thedotmack/` 和版本化缓存目录，自动注册到 Claude Code 插件系统（marketplace、installed_plugins、enabledPlugins），worker 服务自动重启。
 
+### 启用项目
+
+安装后需要在每个想要记录记忆的项目中执行一次：
+
+```
+/mem-enable
+```
+
+重启 Claude Code 会话后生效。使用 `/mem-disable` 可随时关闭录制。
+
 ### 配置
 
 设置文件位于 `~/.claude-mem/settings.json`，首次运行时自动创建。
 
 ## 使用方式
 
-安装后无需额外操作。claude-mem 通过 Claude Code 的 hook 系统自动工作：
+启用后无需额外操作。claude-mem 通过 Claude Code 的 hook 系统自动工作：
 
 1. **SessionStart** — 启动 worker 服务，注入历史上下文
 2. **UserPromptSubmit** — 初始化会话，自动检测当前项目并打开对应数据库
@@ -74,13 +102,16 @@ bun run build-and-sync
 
 下次在同一项目中启动 Claude Code 时，会自动注入该项目的历史上下文。不同项目的记忆互不干扰。
 
-### 搜索历史记忆
+### 内置技能
 
-使用 claude-mem 内置的搜索技能：
-
-```
-/mem-search 上次修改了哪些文件？
-```
+| 技能 | 说明 |
+|------|------|
+| `/mem-enable` | 将当前项目加入记忆录制白名单 |
+| `/mem-disable` | 从白名单移除当前项目，停止录制（已有数据保留） |
+| `/mem-search` | 搜索当前项目的历史记忆 |
+| `/smart-explore` | 基于 tree-sitter AST 的 token 优化代码结构搜索 |
+| `/make-plan` | 创建分阶段实施计划（含文档发现） |
+| `/do` | 使用 subagents 执行分阶段计划 |
 
 ### 隐私控制
 
@@ -99,35 +130,47 @@ proj-claude-mem/
 │   ├── services/
 │   │   ├── sqlite/            # SessionStore, SessionSearch, 数据库迁移
 │   │   ├── worker/            # Worker 服务核心（DatabaseManager, SDKAgent, SessionManager）
-│   │   │   └── http/routes/   # Express API 路由（SessionRoutes, SearchRoutes）
+│   │   │   ├── http/routes/   # Express API 路由（Session, Search, Data）
+│   │   │   └── agents/        # ResponseProcessor 等
+│   │   ├── sync/              # ChromaSync 向量搜索
 │   │   └── context/           # 上下文构建器
 │   ├── shared/
-│   │   ├── paths.ts           # resolveProjectDbPath(), findGitRoot()
-│   │   └── project-db.ts      # DbConnectionPool, ensureGitignore()
+│   │   ├── paths.ts           # resolveProjectDbPath(), resolveProjectRoot(), resolveWorkspaceRoot()
+│   │   ├── project-db.ts      # DbConnectionPool, ensureGitignore()
+│   │   └── project-allowlist.ts  # 白名单 CRUD（getEnabledProjectsPath(), isProjectEnabled 等）
+│   ├── servers/
+│   │   └── mcp-server.ts      # MCP 搜索服务器（白名单驱动的 dbPath 解析）
 │   └── utils/                 # 日志、标签处理等工具
 ├── tests/
-│   ├── shared/                # 路径解析、连接池单元测试
+│   ├── shared/                # 路径解析、连接池、白名单、env override 测试
 │   ├── integration/           # 项目隔离集成测试
+│   ├── cli/                   # Hook 白名单 guard 测试
 │   └── sqlite/                # SessionStore 测试
-├── plugin/                    # 构建产物（hooks, skills, UI）
-├── cursor-hooks/              # Cursor IDE 集成（实验性）
-├── docs/
-│   ├── SESSION_ID_ARCHITECTURE.md   # Session ID 双 ID 架构
-│   └── context/                     # hooks/agent-sdk 参考文档
-└── scripts/                   # 构建和同步脚本
+├── plugin/                    # 构建产物
+│   ├── hooks/hooks.json       # Hook 事件注册
+│   ├── scripts/               # CJS bundles（worker-service, mcp-server, context-generator）
+│   ├── skills/                # 内置技能（mem-enable, mem-disable, mem-search 等）
+│   ├── modes/                 # 多语言模式配置
+│   └── ui/                    # Viewer 前端（React → 单文件 HTML）
+├── scripts/                   # 构建和同步脚本
+└── docs/                      # 架构文档
 ```
 
 ## 开发与测试
 
 ```bash
-# 运行所有测试
+# 运行所有测试（1128 pass, 3 skip）
 bun test
 
-# 运行项目隔离相关测试
-bun test tests/shared/resolve-project-db-path.test.ts
+# 项目隔离专项测试
 bun test tests/shared/project-db.test.ts
-bun test tests/sqlite/session-store-dbpath.test.ts
 bun test tests/integration/project-isolation.test.ts
+
+# Opt-in 白名单测试
+bun test tests/shared/project-root.test.ts tests/shared/project-allowlist.test.ts tests/cli/hook-allowlist-guard.test.ts
+
+# Env override 回归测试
+bun test tests/shared/data-dir-env-override.test.ts
 
 # 按模块运行
 bun test tests/sqlite/          # 数据库层
@@ -141,13 +184,13 @@ bun run build-and-sync
 bun run worker:logs
 ```
 
-### 测试覆盖
+## 已知问题
 
-- 18 个项目隔离专项测试，覆盖路径解析、连接池、gitignore 管理、worktree 共享、数据隔离
-- 完整测试套件 1042 个测试
+- **Viewer 默认视图为空**：`http://localhost:37777/` 在 "All Projects" 模式下不显示 observations，因为默认查询全局 DB（隔离后为空）。需要在 Header 下拉框选择具体项目。待实现多 DB 聚合。
+- **MCP server 孤儿进程**：stdio MCP server 偶尔在父进程退出后存活（竞态条件），无害，~40MB 空闲内存，重启后自动清理。
 
 ## 致谢
 
 本项目 fork 自 [claude-mem](https://github.com/thedotmack/claude-mem)（作者：Alex Newman），基于 AGPL-3.0 许可证。
 
-上游项目提供了完整的 Claude Code 持久记忆系统，本 fork 在此基础上增加了 per-project 数据库隔离功能。
+上游项目提供了完整的 Claude Code 持久记忆系统，本 fork 在此基础上增加了 per-project 数据库隔离和 opt-in 白名单机制。
