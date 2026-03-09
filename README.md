@@ -26,7 +26,7 @@
 1. `CLAUDE_MEM_PROJECT_DB_PATH` 环境变量（显式覆盖）
 2. Git worktree → 父仓库的 `.claude/mem.db`（同一仓库的 worktree 共享数据库）
 3. Git 仓库根目录 → `<git-root>/.claude/mem.db`
-4. 非 git 目录 → `<cwd>/.claude/mem.db`
+4. 非 git 目录 → 向上搜索 workspace 标记（`CLAUDE.md` 或 `.claude/`），找到则使用该目录的 `.claude/mem.db`；否则 `<cwd>/.claude/mem.db`
 
 **关键特性**：
 - 同一仓库的所有 worktree 共享同一个数据库
@@ -91,27 +91,27 @@ bun run build-and-sync
 
 设置文件位于 `~/.claude-mem/settings.json`，首次运行时自动创建。
 
-## Uninstall
+## 卸载
 
-To completely remove the plugin (code, registrations, and processes):
+完全移除插件（代码、注册信息和进程）：
 
 ```bash
 bash ~/.claude/plugins/marketplaces/thedotmack/plugin/scripts/uninstall.sh
 ```
 
-The script will show a preview of all actions and ask for confirmation before proceeding.
+脚本会先预览所有即将执行的操作，确认后才会执行。
 
-**What gets removed:**
-- Plugin directories (`~/.claude/plugins/marketplaces/thedotmack/`, `~/.claude/plugins/cache/thedotmack/`)
-- Plugin registrations (`installed_plugins.json`, `known_marketplaces.json`, `settings.json`)
-- Global data directory (`~/.claude-mem/` — databases, settings, logs, vector index)
-- Worker and MCP server processes
-- Shell alias (`alias claude-mem=...` in `.zshrc` / `.bashrc`)
+**会被删除：**
+- 插件目录（`~/.claude/plugins/marketplaces/thedotmack/`、`~/.claude/plugins/cache/thedotmack/`）
+- 插件注册条目（`installed_plugins.json`、`known_marketplaces.json`、`settings.json` 中的 `enabledPlugins` 和 `extraKnownMarketplaces`）
+- 全局数据目录（`~/.claude-mem/` — 数据库、配置、日志、向量索引）
+- Worker 和 MCP server 进程
+- Shell alias（`.zshrc` / `.bashrc` 中的 `alias claude-mem=...`）
 
-**What is preserved (manual cleanup if needed):**
-- `<project>/.claude/mem.db*` — per-project databases
-- `<project>/.gitignore` entries for `mem.db*`
-- `CLAUDE_MEM_*` environment variables in your shell config
+**不会被删除（如需清理请手动处理）：**
+- `<project>/.claude/mem.db*` — 各项目的独立数据库
+- `<project>/.gitignore` 中的 `mem.db*` 条目
+- shell 配置中的 `CLAUDE_MEM_*` 环境变量
 
 ## 使用方式
 
@@ -170,7 +170,7 @@ proj-claude-mem/
 │   └── sqlite/                # SessionStore 测试
 ├── plugin/                    # 构建产物
 │   ├── hooks/hooks.json       # Hook 事件注册
-│   ├── scripts/               # CJS bundles（worker-service, mcp-server, context-generator）
+│   ├── scripts/               # CJS bundles（worker-service, mcp-server, context-generator）+ uninstall.sh
 │   ├── skills/                # 内置技能（mem-enable, mem-disable, mem-search 等）
 │   ├── modes/                 # 多语言模式配置
 │   └── ui/                    # Viewer 前端（React → 单文件 HTML）
@@ -181,7 +181,7 @@ proj-claude-mem/
 ## 开发与测试
 
 ```bash
-# 运行所有测试（1128 pass, 3 skip）
+# 运行所有测试（1146 pass, 3 skip）
 bun test
 
 # 项目隔离专项测试
