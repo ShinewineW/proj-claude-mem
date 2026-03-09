@@ -103,12 +103,14 @@ The script will show a preview of all actions and ask for confirmation before pr
 
 **What gets removed:**
 - Plugin directories (`~/.claude/plugins/marketplaces/thedotmack/`, `~/.claude/plugins/cache/thedotmack/`)
-- Plugin registrations in `installed_plugins.json`, `known_marketplaces.json`, `settings.json`
+- Plugin registrations (`installed_plugins.json`, `known_marketplaces.json`, `settings.json`)
+- Global data directory (`~/.claude-mem/` — databases, settings, logs, vector index)
 - Worker and MCP server processes
+- Shell alias (`alias claude-mem=...` in `.zshrc` / `.bashrc`)
 
 **What is preserved (manual cleanup if needed):**
-- `~/.claude-mem/` — global data directory (databases, logs, settings)
 - `<project>/.claude/mem.db*` — per-project databases
+- `<project>/.gitignore` entries for `mem.db*`
 - `CLAUDE_MEM_*` environment variables in your shell config
 
 ## 使用方式

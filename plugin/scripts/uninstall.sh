@@ -116,21 +116,15 @@ collect_actions() {
   done
   [[ "$has_alias" == "true" ]] && echo ""
 
-  # Data dir: config & runtime cleaned, user data preserved
+  # Data dir
   if [[ -d "$DATA_DIR" ]]; then
-    echo "清理 $DATA_DIR/ 中的插件配置和运行时产物："
-    [[ -f "$DATA_DIR/enabled-projects.json" ]] && echo "  - enabled-projects.json (项目白名单)"
-    [[ -f "$DATA_DIR/settings.json" ]]         && echo "  - settings.json (插件设置)"
-    [[ -f "$DATA_DIR/worker.pid" ]]            && echo "  - worker.pid (进程 PID)"
-    [[ -d "$DATA_DIR/logs" ]]                  && echo "  - logs/ (日志目录)"
-    [[ -d "$DATA_DIR/observer-sessions" ]]     && echo "  - observer-sessions/"
+    echo -e "删除全局数据目录："
+    echo "  - $DATA_DIR/ (数据库、配置、日志、向量索引等)"
     echo ""
   fi
 
   # Data NOT touched
   echo -e "以下数据 ${YELLOW}不会${NC} 被删除："
-  [[ -f "$DATA_DIR/claude-mem.db" ]] && echo "  - $DATA_DIR/claude-mem.db* (全局数据库)"
-  [[ -d "$DATA_DIR/chroma" ]]        && echo "  - $DATA_DIR/chroma/ (向量索引)"
   echo "  - 各项目的 .claude/mem.db* 文件"
   echo "  - 各项目 .gitignore 中的 mem.db* 条目"
   echo "  - shell 配置中的 CLAUDE_MEM_* 环境变量"
@@ -265,25 +259,12 @@ with open(path, 'w') as f:
   done
 }
 
-# --- Step 5: Clean data dir (config & runtime only) ---
+# --- Step 5: Remove global data directory ---
 clean_data_dir() {
-  if [[ ! -d "$DATA_DIR" ]]; then
-    return
+  if [[ -d "$DATA_DIR" ]]; then
+    rm -rf "$DATA_DIR"
+    info "已删除全局数据目录 $DATA_DIR/"
   fi
-
-  # Plugin config
-  rm -f "$DATA_DIR/enabled-projects.json"
-  rm -f "$DATA_DIR/settings.json"
-
-  # Runtime artifacts
-  rm -f "$DATA_DIR/worker.pid"
-  rm -rf "$DATA_DIR/logs"
-  rm -rf "$DATA_DIR/observer-sessions"
-
-  # Remove data dir if empty (only user data files remain → not empty → kept)
-  rmdir "$DATA_DIR" 2>/dev/null || true
-
-  info "已清理插件配置和运行时产物"
 }
 
 # --- Step 6: Final summary ---
@@ -293,8 +274,6 @@ print_summary() {
   echo -e "${GREEN}卸载完成。${NC}"
   echo ""
   echo "以下数据未被删除，如需清理请手动处理："
-  [[ -f "$DATA_DIR/claude-mem.db" ]] && echo "  - $DATA_DIR/claude-mem.db* (全局数据库)"
-  [[ -d "$DATA_DIR/chroma" ]]        && echo "  - $DATA_DIR/chroma/ (向量索引)"
   echo "  - 各项目数据库：<项目>/.claude/mem.db*"
   echo "  - 各项目 .gitignore 中的 mem.db* 条目"
   echo "  - 环境变量（检查 shell 配置中的 CLAUDE_MEM_* 变量）"
