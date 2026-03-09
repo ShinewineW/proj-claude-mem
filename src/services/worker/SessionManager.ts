@@ -21,28 +21,25 @@ export class SessionManager {
   private sessions: Map<number, ActiveSession> = new Map();
   private sessionQueues: Map<number, EventEmitter> = new Map();
   private onSessionDeletedCallback?: () => void;
-  private pendingStores: Map<string, PendingMessageStore> = new Map();
 
   constructor(dbManager: DatabaseManager) {
     this.dbManager = dbManager;
   }
 
   /**
-   * Get or create PendingMessageStore for a specific database path.
+   * Get PendingMessageStore for a specific database path.
    *
    * Per-project isolation requires separate PendingMessageStore instances
    * because pending_messages has a FK on sdk_sessions(id) — the session must
    * exist in the SAME database where the message is enqueued.
+   *
+   * Always creates a fresh PendingMessageStore from the current pool handle
+   * to avoid holding stale DB references after DbConnectionPool eviction.
+   * PendingMessageStore is a lightweight wrapper, so re-creation cost is negligible.
    */
   private getPendingStore(dbPath?: string): PendingMessageStore {
-    const key = dbPath || '';
-    let store = this.pendingStores.get(key);
-    if (!store) {
-      const sessionStore = this.dbManager.getSessionStore(dbPath);
-      store = new PendingMessageStore(sessionStore.db, 3);
-      this.pendingStores.set(key, store);
-    }
-    return store;
+    const sessionStore = this.dbManager.getSessionStore(dbPath);
+    return new PendingMessageStore(sessionStore.db, 3);
   }
 
   /**
@@ -163,7 +160,7 @@ export class SessionManager {
       conversationHistory: [],  // Initialize empty - will be populated by agents
       currentProvider: null,  // Will be set when generator starts
       consecutiveRestarts: 0,  // Track consecutive restart attempts to prevent infinite loops
-      dbPath: dbPath || '',  // Project-specific SQLite DB path
+      dbPath: dbPath || undefined,  // Project-specific SQLite DB path
       processingMessageIds: [],  // CLAIM-CONFIRM: Track message IDs for confirmProcessed()
       lastGeneratorActivity: Date.now()  // Initialize for stale detection (Issue #1099)
     };
@@ -225,7 +222,7 @@ export class SessionManager {
     };
 
     try {
-      const pendingStore = this.getPendingStore(session.dbPath || undefined);
+      const pendingStore = this.getPendingStore(session.dbPath);
       const messageId = pendingStore.enqueue(sessionDbId, session.contentSessionId, message);
       const queueDepth = pendingStore.getPendingCount(sessionDbId);
       const toolSummary = logger.formatTool(data.tool_name, data.tool_input);
@@ -266,7 +263,7 @@ export class SessionManager {
     };
 
     try {
-      const pendingStore = this.getPendingStore(session.dbPath || undefined);
+      const pendingStore = this.getPendingStore(session.dbPath);
       const messageId = pendingStore.enqueue(sessionDbId, session.contentSessionId, message);
       const queueDepth = pendingStore.getPendingCount(sessionDbId);
       logger.info('QUEUE', `ENQUEUED | sessionDbId=${sessionDbId} | messageId=${messageId} | type=summarize | depth=${queueDepth}`, {
@@ -374,7 +371,7 @@ export class SessionManager {
       if (session.generatorPromise) continue;
 
       // Skip sessions with pending work
-      const pendingCount = this.getPendingStore(session.dbPath || undefined).getPendingCount(sessionDbId);
+      const pendingCount = this.getPendingStore(session.dbPath).getPendingCount(sessionDbId);
       if (pendingCount > 0) continue;
 
       // No generator + no pending work + old enough = stale
@@ -405,7 +402,7 @@ export class SessionManager {
    */
   hasPendingMessages(): boolean {
     for (const session of this.sessions.values()) {
-      if (this.getPendingStore(session.dbPath || undefined).getPendingCount(session.sessionDbId) > 0) {
+      if (this.getPendingStore(session.dbPath).getPendingCount(session.sessionDbId) > 0) {
         return true;
       }
     }
@@ -425,7 +422,7 @@ export class SessionManager {
   getTotalQueueDepth(): number {
     let total = 0;
     for (const session of this.sessions.values()) {
-      total += this.getPendingStore(session.dbPath || undefined).getPendingCount(session.sessionDbId);
+      total += this.getPendingStore(session.dbPath).getPendingCount(session.sessionDbId);
     }
     return total;
   }
@@ -445,7 +442,7 @@ export class SessionManager {
    */
   isAnySessionProcessing(): boolean {
     for (const session of this.sessions.values()) {
-      if (this.getPendingStore(session.dbPath || undefined).getPendingCount(session.sessionDbId) > 0) {
+      if (this.getPendingStore(session.dbPath).getPendingCount(session.sessionDbId) > 0) {
         return true;
       }
     }
@@ -472,7 +469,7 @@ export class SessionManager {
       throw new Error(`No emitter for session ${sessionDbId}`);
     }
 
-    const processor = new SessionQueueProcessor(this.getPendingStore(session.dbPath || undefined), emitter);
+    const processor = new SessionQueueProcessor(this.getPendingStore(session.dbPath), emitter);
 
     // Use the robust iterator - messages are deleted on claim (no tracking needed)
     // CRITICAL: Pass onIdleTimeout callback that triggers abort to kill the subprocess

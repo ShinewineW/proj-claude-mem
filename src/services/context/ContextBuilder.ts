@@ -149,7 +149,7 @@ export async function generateContext(
   if (config.retention?.enabled) {
     for (const proj of projects) {
       try {
-        RetentionManager.cleanup(db.db, proj, config.retention);
+        RetentionManager.cleanup(db.getDatabase(), proj, config.retention);
       } catch (error) {
         logger.warn('CONTEXT', 'Retention cleanup failed, continuing', {
           project: proj,

@@ -141,7 +141,7 @@ export class GeminiAgent {
       if (!session.memorySessionId) {
         const syntheticMemorySessionId = `gemini-${session.contentSessionId}-${Date.now()}`;
         session.memorySessionId = syntheticMemorySessionId;
-        this.dbManager.getSessionStore(session.dbPath || undefined).updateMemorySessionId(session.sessionDbId, syntheticMemorySessionId);
+        this.dbManager.getSessionStore(session.dbPath).updateMemorySessionId(session.sessionDbId, syntheticMemorySessionId);
         logger.info('SESSION', `MEMORY_ID_GENERATED | sessionDbId=${session.sessionDbId} | provider=Gemini`);
       }
 
@@ -188,7 +188,7 @@ export class GeminiAgent {
       // Track cwd from messages for CLAUDE.md generation
       let lastCwd: string | undefined;
 
-      for await (const message of this.sessionManager.getMessageIterator(session.sessionDbId, session.dbPath || undefined)) {
+      for await (const message of this.sessionManager.getMessageIterator(session.sessionDbId, session.dbPath)) {
         // CLAIM-CONFIRM: Track message ID for confirmProcessed() after successful storage
         // The message is now in 'processing' status in DB until ResponseProcessor calls confirmProcessed()
         session.processingMessageIds.push(message._persistentId);

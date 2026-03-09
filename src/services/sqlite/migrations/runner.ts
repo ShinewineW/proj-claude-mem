@@ -35,6 +35,7 @@ export class MigrationRunner {
     this.addObservationContentHashColumn();
     this.addSessionCustomTitleColumn();
     this.addObservationAccessCountColumn();
+    this.createRetentionMetadataTable();
   }
 
   /**
@@ -878,5 +879,45 @@ export class MigrationRunner {
     }
 
     this.db.prepare('INSERT OR IGNORE INTO schema_versions (version, applied_at) VALUES (?, ?)').run(24, new Date().toISOString());
+  }
+
+  /**
+   * Create retention_metadata table for cleanup cooldown tracking (migration 25)
+   * Replaces the schema_versions version-9999 sentinel hack.
+   */
+  private createRetentionMetadataTable(): void {
+    const applied = this.db.prepare('SELECT version FROM schema_versions WHERE version = ?').get(25) as SchemaVersion | undefined;
+    if (applied) return;
+
+    this.db.run(`
+      CREATE TABLE IF NOT EXISTS retention_metadata (
+        project TEXT PRIMARY KEY,
+        last_cleanup_epoch INTEGER NOT NULL
+      )
+    `);
+
+    // Migrate existing cooldown data from schema_versions version 9999 if present
+    const sentinel = this.db.query(
+      'SELECT applied_at FROM schema_versions WHERE version = 9999'
+    ).get() as { applied_at: string } | undefined;
+
+    if (sentinel) {
+      try {
+        const timestamps: Record<string, number> = JSON.parse(sentinel.applied_at);
+        const insertStmt = this.db.prepare(
+          'INSERT OR REPLACE INTO retention_metadata (project, last_cleanup_epoch) VALUES (?, ?)'
+        );
+        for (const [project, epoch] of Object.entries(timestamps)) {
+          insertStmt.run(project, epoch);
+        }
+      } catch {
+        // Malformed JSON — ignore, old data is best-effort
+      }
+      // Remove the sentinel row
+      this.db.run('DELETE FROM schema_versions WHERE version = 9999');
+    }
+
+    this.db.prepare('INSERT OR IGNORE INTO schema_versions (version, applied_at) VALUES (?, ?)').run(25, new Date().toISOString());
+    logger.debug('DB', 'Created retention_metadata table');
   }
 }

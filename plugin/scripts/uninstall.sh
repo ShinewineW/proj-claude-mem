@@ -3,8 +3,8 @@ set -euo pipefail
 
 # ============================================================
 # claude-mem plugin uninstall script
-# Removes plugin code, registrations, and processes.
-# Does NOT delete user data (~/.claude-mem/ or project mem.db).
+# Removes plugin code, registrations, global data directory, and processes.
+# Does NOT delete per-project databases (<project>/.claude/mem.db).
 # ============================================================
 
 # --- Constants (update these when renaming the plugin) ---
@@ -44,10 +44,10 @@ preflight() {
   local found
   found=$(python3 -c "
 import json, sys
-d = json.load(open('$installed'))
+d = json.load(open(sys.argv[1]))
 plugins = d.get('plugins', d)  # v2 has 'plugins' key, v1 is flat
-print('yes' if '$PLUGIN_ID' in plugins else 'no')
-")
+print('yes' if sys.argv[2] in plugins else 'no')
+" "$installed" "$PLUGIN_ID")
   if [[ "$found" != "yes" ]]; then
     error "插件 $PLUGIN_ID 未安装或已卸载"
     exit 0
@@ -64,10 +64,12 @@ collect_actions() {
   # Processes
   echo "停止进程："
   local worker_pid=""
+  local alive_worker=""
   if [[ -f "$DATA_DIR/worker.pid" ]]; then
     worker_pid=$(cat "$DATA_DIR/worker.pid" 2>/dev/null || true)
     if [[ -n "$worker_pid" ]] && kill -0 "$worker_pid" 2>/dev/null; then
       echo "  - Worker 进程 (PID: $worker_pid)"
+      alive_worker="$worker_pid"
     fi
   fi
   # Check port
@@ -80,10 +82,10 @@ collect_actions() {
   local mcp_pids
   mcp_pids=$(pgrep -f "mcp-server.cjs" 2>/dev/null || true)
   if [[ -n "$mcp_pids" ]]; then
-    echo "  - MCP server 进程 (PID: $(echo $mcp_pids | tr '\n' ' '))"
+    echo "  - MCP server 进程 (PID: $(echo "$mcp_pids" | tr '\n' ' '))"
   fi
   local has_procs="false"
-  [[ -n "$worker_pid" || -n "$port_pids" || -n "$mcp_pids" ]] && has_procs="true"
+  [[ -n "$alive_worker" || -n "$port_pids" || -n "$mcp_pids" ]] && has_procs="true"
   if [[ "$has_procs" == "false" ]]; then
     echo "  (无运行中的进程)"
   fi
@@ -191,17 +193,17 @@ clean_json_registrations() {
   local installed="$PLUGINS_DIR/installed_plugins.json"
   if [[ -f "$installed" ]]; then
     python3 -c "
-import json
-path = '$installed'
+import json, sys
+path, key = sys.argv[1], sys.argv[2]
 with open(path) as f:
     d = json.load(f)
 # v2 format has 'plugins' key
 target = d.get('plugins', d)
-target.pop('$PLUGIN_ID', None)
+target.pop(key, None)
 with open(path, 'w') as f:
     json.dump(d, f, indent=2)
     f.write('\n')
-"
+" "$installed" "$PLUGIN_ID"
     info "已清理 installed_plugins.json"
   fi
 
@@ -209,15 +211,15 @@ with open(path, 'w') as f:
   local marketplaces="$PLUGINS_DIR/known_marketplaces.json"
   if [[ -f "$marketplaces" ]]; then
     python3 -c "
-import json
-path = '$marketplaces'
+import json, sys
+path, key = sys.argv[1], sys.argv[2]
 with open(path) as f:
     d = json.load(f)
-d.pop('$MARKETPLACE', None)
+d.pop(key, None)
 with open(path, 'w') as f:
     json.dump(d, f, indent=2)
     f.write('\n')
-"
+" "$marketplaces" "$MARKETPLACE"
     info "已清理 known_marketplaces.json"
   fi
 
@@ -225,16 +227,16 @@ with open(path, 'w') as f:
   local settings="$CLAUDE_DIR/settings.json"
   if [[ -f "$settings" ]]; then
     python3 -c "
-import json
-path = '$settings'
+import json, sys
+path, plugin_id, marketplace = sys.argv[1], sys.argv[2], sys.argv[3]
 with open(path) as f:
     d = json.load(f)
-d.get('enabledPlugins', {}).pop('$PLUGIN_ID', None)
-d.get('extraKnownMarketplaces', {}).pop('$MARKETPLACE', None)
+d.get('enabledPlugins', {}).pop(plugin_id, None)
+d.get('extraKnownMarketplaces', {}).pop(marketplace, None)
 with open(path, 'w') as f:
     json.dump(d, f, indent=2)
     f.write('\n')
-"
+" "$settings" "$PLUGIN_ID" "$MARKETPLACE"
     info "已清理 settings.json"
   fi
 }
@@ -245,15 +247,15 @@ clean_shell_aliases() {
     if [[ -f "$rc" ]] && grep -q "alias claude-mem=" "$rc" 2>/dev/null; then
       # Remove lines containing 'alias claude-mem='
       python3 -c "
-import re
-path = '$rc'
+import sys
+path = sys.argv[1]
 with open(path) as f:
     lines = f.readlines()
 with open(path, 'w') as f:
     for line in lines:
         if 'alias claude-mem=' not in line:
             f.write(line)
-"
+" "$rc"
       info "已清理 $rc 中的 claude-mem alias"
     fi
   done

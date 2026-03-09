@@ -54,11 +54,16 @@ export function loadContextConfig(): ContextConfig {
     fullObservationField: settings.CLAUDE_MEM_CONTEXT_FULL_FIELD as 'narrative' | 'facts',
     showLastSummary: settings.CLAUDE_MEM_CONTEXT_SHOW_LAST_SUMMARY === 'true',
     showLastMessage: settings.CLAUDE_MEM_CONTEXT_SHOW_LAST_MESSAGE === 'true',
-    retention: {
-      enabled: settings.CLAUDE_MEM_RETENTION_ENABLED === 'true',
-      retentionDays: parseInt(settings.CLAUDE_MEM_RETENTION_DAYS, 10),
-      scoreThreshold: parseFloat(settings.CLAUDE_MEM_RETENTION_SCORE_THRESHOLD),
-      maxKept: parseInt(settings.CLAUDE_MEM_RETENTION_MAX_KEPT, 10),
-    },
+    retention: (() => {
+      const retentionDays = parseInt(settings.CLAUDE_MEM_RETENTION_DAYS, 10);
+      const scoreThreshold = parseFloat(settings.CLAUDE_MEM_RETENTION_SCORE_THRESHOLD);
+      const maxKept = parseInt(settings.CLAUDE_MEM_RETENTION_MAX_KEPT, 10);
+      return {
+        enabled: settings.CLAUDE_MEM_RETENTION_ENABLED === 'true',
+        retentionDays: isNaN(retentionDays) ? 30 : retentionDays,
+        scoreThreshold: isNaN(scoreThreshold) ? 0.3 : scoreThreshold,
+        maxKept: isNaN(maxKept) ? 500 : maxKept,
+      };
+    })(),
   };
 }

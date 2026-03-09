@@ -2244,6 +2244,14 @@ export class SessionStore {
   }
 
   /**
+   * Get the underlying SQLite Database handle.
+   * Prefer this over direct `.db` access for a cleaner API boundary.
+   */
+  getDatabase(): Database {
+    return this.db;
+  }
+
+  /**
    * Close the database connection
    */
   close(): void {

@@ -81,7 +81,8 @@ export async function hookCommand(platform: string, event: string, options: Hook
     const rawInput = await readJsonFromStdin();
 
     // Allowlist guard: exit silently if project not opted in
-    const projectCwd = (rawInput as any)?.cwd ?? process.cwd();
+    interface HookRawInput { cwd?: string; [key: string]: unknown; }
+    const projectCwd = (rawInput as HookRawInput)?.cwd ?? process.cwd();
     const projectRoot = resolveProjectRoot(projectCwd);
     if (!isProjectEnabled(projectRoot)) {
       if (!options.skipExit) {

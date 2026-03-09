@@ -72,7 +72,7 @@ export async function processAgentResponse(
   const summaryForStore = normalizeSummaryForStorage(summary);
 
   // Get session store for atomic transaction (use per-session dbPath if available)
-  const sessionStore = dbManager.getSessionStore(session.dbPath || undefined);
+  const sessionStore = dbManager.getSessionStore(session.dbPath);
 
   // CRITICAL: Must use memorySessionId (not contentSessionId) for FK constraint
   if (!session.memorySessionId) {
@@ -113,7 +113,7 @@ export async function processAgentResponse(
 
   // CLAIM-CONFIRM: Now that storage succeeded, confirm all processing messages (delete from queue)
   // This is the critical step that prevents message loss on generator crash
-  const pendingStore = sessionManager.getPendingMessageStore(session.dbPath || undefined);
+  const pendingStore = sessionManager.getPendingMessageStore(session.dbPath);
   for (const messageId of session.processingMessageIds) {
     pendingStore.confirmProcessed(messageId);
   }

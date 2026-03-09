@@ -248,10 +248,15 @@ export class SearchOrchestrator {
 
       if (!ids || ids.length === 0) return;
 
-      const placeholders = ids.map(() => '?').join(',');
-      this.sessionStore.db.prepare(
-        `UPDATE observations SET access_count = access_count + 1 WHERE id IN (${placeholders})`
-      ).run(...ids);
+      const BATCH_SIZE = 500;
+      const db = this.sessionStore.getDatabase();
+      for (let i = 0; i < ids.length; i += BATCH_SIZE) {
+        const batch = ids.slice(i, i + BATCH_SIZE);
+        const placeholders = batch.map(() => '?').join(',');
+        db.prepare(
+          `UPDATE observations SET access_count = access_count + 1 WHERE id IN (${placeholders})`
+        ).run(...batch);
+      }
     } catch (error) {
       logger.debug('SEARCH', 'Failed to increment access_count', {
         error: error instanceof Error ? error.message : String(error),

@@ -6,9 +6,10 @@
  * Value: { enabledAt: ISO timestamp }
  */
 
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync } from 'fs';
 import { dirname, join } from 'path';
 import { homedir } from 'os';
+import { logger } from '../utils/logger.js';
 
 /**
  * Resolve the allowlist path at call time (not module load time).
@@ -34,9 +35,18 @@ interface Allowlist {
 function readAllowlist(): Allowlist {
   const path = getEnabledProjectsPath();
   if (!existsSync(path)) return {};
+  let raw: string;
   try {
-    return JSON.parse(readFileSync(path, 'utf-8')) as Allowlist;
+    raw = readFileSync(path, 'utf-8');
+  } catch (err) {
+    // I/O error (permissions, encoding) — warn and return empty
+    logger.warn('ALLOWLIST', `Failed to read allowlist file: ${err instanceof Error ? err.message : err}`);
+    return {};
+  }
+  try {
+    return JSON.parse(raw) as Allowlist;
   } catch {
+    // Corrupt JSON — recoverable, return empty
     return {};
   }
 }
@@ -44,7 +54,9 @@ function readAllowlist(): Allowlist {
 function writeAllowlist(data: Allowlist): void {
   const path = getEnabledProjectsPath();
   mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, JSON.stringify(data, null, 2));
+  const tmpPath = path + '.tmp.' + process.pid;
+  writeFileSync(tmpPath, JSON.stringify(data, null, 2));
+  renameSync(tmpPath, path);
 }
 
 export function isProjectEnabled(projectRoot: string): boolean {
@@ -54,6 +66,7 @@ export function isProjectEnabled(projectRoot: string): boolean {
 
 export function enableProject(projectRoot: string): void {
   const allowlist = readAllowlist();
+  if (Object.prototype.hasOwnProperty.call(allowlist, projectRoot)) return;
   allowlist[projectRoot] = { enabledAt: new Date().toISOString() };
   writeAllowlist(allowlist);
 }

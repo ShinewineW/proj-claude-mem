@@ -47,23 +47,22 @@ const CLEANUP_COOLDOWN_MS = 6 * 60 * 60 * 1000;
 export class RetentionManager {
   /**
    * Check if cleanup should run based on cooldown period.
-   * Uses schema_versions table to store last cleanup timestamp (version 9999).
+   * Uses retention_metadata table to track per-project last cleanup timestamp.
    */
   static shouldRunCleanup(db: Database, project: string): boolean {
     try {
       const row = db.query(
-        `SELECT applied_at FROM schema_versions WHERE version = 9999`
-      ).get() as { applied_at: string } | undefined;
+        `SELECT last_cleanup_epoch FROM retention_metadata WHERE project = ?`
+      ).get(project) as { last_cleanup_epoch: number } | undefined;
 
       if (!row) return true;
 
-      // applied_at stores a JSON object keyed by project
-      const timestamps: Record<string, number> = JSON.parse(row.applied_at);
-      const lastRun = timestamps[project];
-      if (!lastRun) return true;
-
-      return (Date.now() - lastRun) >= CLEANUP_COOLDOWN_MS;
-    } catch {
+      return (Date.now() - row.last_cleanup_epoch) >= CLEANUP_COOLDOWN_MS;
+    } catch (error) {
+      logger.debug('RETENTION', 'shouldRunCleanup check failed, allowing cleanup', {
+        project,
+        error: error instanceof Error ? error.message : String(error),
+      });
       return true; // On any error, allow cleanup to run
     }
   }
@@ -73,22 +72,14 @@ export class RetentionManager {
    */
   private static recordCleanupRun(db: Database, project: string): void {
     try {
-      let timestamps: Record<string, number> = {};
-      const row = db.query(
-        `SELECT applied_at FROM schema_versions WHERE version = 9999`
-      ).get() as { applied_at: string } | undefined;
-
-      if (row) {
-        try { timestamps = JSON.parse(row.applied_at); } catch { /* reset */ }
-      }
-
-      timestamps[project] = Date.now();
-      const json = JSON.stringify(timestamps);
-
       db.prepare(
-        `INSERT OR REPLACE INTO schema_versions (version, applied_at) VALUES (9999, ?)`
-      ).run(json);
-    } catch {
+        `INSERT OR REPLACE INTO retention_metadata (project, last_cleanup_epoch) VALUES (?, ?)`
+      ).run(project, Date.now());
+    } catch (error) {
+      logger.debug('RETENTION', 'Failed to record cleanup run', {
+        project,
+        error: error instanceof Error ? error.message : String(error),
+      });
       // Best-effort — failure to record doesn't affect cleanup correctness
     }
   }

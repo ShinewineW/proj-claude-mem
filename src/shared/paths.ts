@@ -179,10 +179,11 @@ function findGitRoot(startDir: string): string | null {
  * Returns the nearest workspace root, or null if none found.
  * Stops at filesystem root. Skips home directory to avoid false matches from ~/.claude/.
  */
-function findWorkspaceAncestor(startDir: string): string | null {
+function findWorkspaceAncestor(startDir: string, maxDepth: number = 5): string | null {
   const homeDir = homedir();
   let dir = startDir;
-  while (true) {
+  let depth = 0;
+  while (depth < maxDepth) {
     // Skip home directory — ~/.claude/ is user config, not a workspace marker
     if (dir !== homeDir) {
       if (existsSync(join(dir, 'CLAUDE.md')) || existsSync(join(dir, '.claude'))) {
@@ -192,7 +193,9 @@ function findWorkspaceAncestor(startDir: string): string | null {
     const parent = dirname(dir);
     if (parent === dir) return null;
     dir = parent;
+    depth++;
   }
+  return null;
 }
 
 /**
@@ -224,9 +227,9 @@ function resolveWorkspaceRoot(gitRoot: string): string {
  *
  * Resolution order:
  *   1. CLAUDE_MEM_PROJECT_DB_PATH env var (explicit override)
- *   2. Git worktree -> <parentRepo>/.claude/mem.db
- *   3. Git main repo -> <gitRoot>/.claude/mem.db
- *   4. Non-git directory -> <cwd>/.claude/mem.db
+ *   2. Non-git directory -> findWorkspaceAncestor(cwd) or <cwd>/.claude/mem.db
+ *   3. Git worktree -> <parentRepo>/.claude/mem.db
+ *   4. Git repo -> resolveWorkspaceRoot(gitRoot)/.claude/mem.db
  *
  * Args:
  *     cwd: Working directory to resolve from. Defaults to process.cwd().
@@ -242,16 +245,23 @@ export function resolveProjectDbPath(cwd?: string): string {
   const gitRoot = findGitRoot(effectiveCwd);
 
   if (!gitRoot) {
-    // Non-git directory: walk up looking for a workspace root (CLAUDE.md or .claude/)
+    // Non-git directory: walk up ancestors looking for workspace markers (CLAUDE.md
+    // or .claude/).  Uses findWorkspaceAncestor because there is no git root to
+    // anchor to — the search must start from cwd and climb upward.
     const wsRoot = findWorkspaceAncestor(effectiveCwd);
     return join(wsRoot ?? effectiveCwd, '.claude', 'mem.db');
   }
 
+  // Git directory path: worktree detection first, then workspace-root heuristic.
   const worktreeInfo = detectWorktree(gitRoot);
   if (worktreeInfo.isWorktree && worktreeInfo.parentRepoPath) {
     return join(worktreeInfo.parentRepoPath, '.claude', 'mem.db');
   }
 
+  // resolveWorkspaceRoot checks only the immediate parent of gitRoot for workspace
+  // markers — a single-level check is sufficient here because the git root already
+  // provides a reliable anchor point (unlike the non-git path above which needs an
+  // unbounded ancestor walk).
   return join(resolveWorkspaceRoot(gitRoot), '.claude', 'mem.db');
 }
 

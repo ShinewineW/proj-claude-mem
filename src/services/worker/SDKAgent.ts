@@ -165,12 +165,12 @@ export class SDKAgent {
           session.memorySessionId = message.session_id;
           // Persist to database IMMEDIATELY for FK constraint compliance
           // This must happen BEFORE any observations referencing this ID are stored
-          this.dbManager.getSessionStore(session.dbPath || undefined).ensureMemorySessionIdRegistered(
+          this.dbManager.getSessionStore(session.dbPath).ensureMemorySessionIdRegistered(
             session.sessionDbId,
             message.session_id
           );
           // Verify the update by reading back from DB
-          const verification = this.dbManager.getSessionStore(session.dbPath || undefined).getSessionById(session.sessionDbId);
+          const verification = this.dbManager.getSessionStore(session.dbPath).getSessionById(session.sessionDbId);
           const dbVerified = verification?.memory_session_id === message.session_id;
           const logMessage = previousId
             ? `MEMORY_ID_CHANGED | sessionDbId=${session.sessionDbId} | from=${previousId} | to=${message.session_id} | dbVerified=${dbVerified}`
@@ -367,7 +367,7 @@ export class SDKAgent {
     };
 
     // Consume pending messages from SessionManager (event-driven, no polling)
-    for await (const message of this.sessionManager.getMessageIterator(session.sessionDbId, session.dbPath || undefined)) {
+    for await (const message of this.sessionManager.getMessageIterator(session.sessionDbId, session.dbPath)) {
       // CLAIM-CONFIRM: Track message ID for confirmProcessed() after successful storage
       // The message is now in 'processing' status in DB until ResponseProcessor calls confirmProcessed()
       session.processingMessageIds.push(message._persistentId);

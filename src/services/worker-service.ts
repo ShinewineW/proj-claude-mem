@@ -410,12 +410,28 @@ export class WorkerService {
 
       await this.dbManager.initialize(DB_PATH);
 
-      // Reset any messages that were processing when worker died
+      // Reset any messages that were processing when worker died (global DB)
       const { PendingMessageStore } = await import('./sqlite/PendingMessageStore.js');
       const pendingStore = new PendingMessageStore(this.dbManager.getSessionStore().db, 3);
       const resetCount = pendingStore.resetStaleProcessingMessages(0); // 0 = reset ALL processing
       if (resetCount > 0) {
         logger.info('SYSTEM', `Reset ${resetCount} stale processing messages to pending`);
+      }
+
+      // Reset stale processing messages in all enabled project DBs
+      const enabledProjects = listEnabledProjects();
+      for (const projectRoot of Object.keys(enabledProjects)) {
+        try {
+          const projectDbPath = path.join(projectRoot, '.claude', 'mem.db');
+          const projectStore = this.dbManager.getSessionStore(projectDbPath);
+          const projectPendingStore = new PendingMessageStore(projectStore.db, 3);
+          const projectResetCount = projectPendingStore.resetStaleProcessingMessages(0);
+          if (projectResetCount > 0) {
+            logger.info('SYSTEM', `Reset ${projectResetCount} stale processing messages in project DB`, { projectRoot });
+          }
+        } catch (error) {
+          logger.warn('SYSTEM', `Failed to reset stale messages for project, skipping`, { projectRoot }, error as Error);
+        }
       }
 
       // Initialize search services
@@ -601,7 +617,7 @@ export class WorkerService {
             errorMessage
           });
           // Clear stale memorySessionId and force fresh init on next attempt
-          this.dbManager.getSessionStore(session.dbPath || undefined).updateMemorySessionId(session.sessionDbId, null);
+          this.dbManager.getSessionStore(session.dbPath).updateMemorySessionId(session.sessionDbId, null);
           session.memorySessionId = null;
           session.forceInit = true;
         }
@@ -648,7 +664,7 @@ export class WorkerService {
 
         // Store for pending-count check below (must use session's project DB)
         const { PendingMessageStore } = require('./sqlite/PendingMessageStore.js');
-        const pendingStore = new PendingMessageStore(this.dbManager.getSessionStore(session.dbPath || undefined).db, 3);
+        const pendingStore = new PendingMessageStore(this.dbManager.getSessionStore(session.dbPath).db, 3);
 
         // Idle timeout means no new work arrived for 3 minutes - don't restart
         // No need to reset stale processing messages here — claimNextMessage() self-heals
@@ -711,7 +727,7 @@ export class WorkerService {
     if (!session.memorySessionId) {
       const syntheticId = `fallback-${sessionDbId}-${Date.now()}`;
       session.memorySessionId = syntheticId;
-      this.dbManager.getSessionStore(session.dbPath || undefined).updateMemorySessionId(sessionDbId, syntheticId);
+      this.dbManager.getSessionStore(session.dbPath).updateMemorySessionId(sessionDbId, syntheticId);
     }
 
     if (isGeminiAvailable()) {
@@ -739,7 +755,7 @@ export class WorkerService {
     }
 
     // No fallback or both failed: mark messages abandoned and remove session so queue doesn't grow
-    const pendingStore = this.sessionManager.getPendingMessageStore(session.dbPath || undefined);
+    const pendingStore = this.sessionManager.getPendingMessageStore(session.dbPath);
     const abandoned = pendingStore.markAllSessionMessagesAbandoned(sessionDbId);
     if (abandoned > 0) {
       logger.warn('SDK', 'No fallback available; marked pending messages abandoned', {

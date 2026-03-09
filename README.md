@@ -24,9 +24,9 @@
 **DB 路径解析优先级**（`resolveProjectDbPath()`）：
 
 1. `CLAUDE_MEM_PROJECT_DB_PATH` 环境变量（显式覆盖）
-2. Git worktree → 父仓库的 `.claude/mem.db`（同一仓库的 worktree 共享数据库）
-3. Git 仓库根目录 → `<git-root>/.claude/mem.db`
-4. 非 git 目录 → 向上搜索 workspace 标记（`CLAUDE.md` 或 `.claude/`），找到则使用该目录的 `.claude/mem.db`；否则 `<cwd>/.claude/mem.db`
+2. 非 git 目录 → 向上搜索 workspace 标记（`CLAUDE.md` 或 `.claude/`），找到则使用该目录的 `.claude/mem.db`；否则 `<cwd>/.claude/mem.db`
+3. Git worktree → 父仓库的 `.claude/mem.db`（同一仓库的 worktree 共享数据库）
+4. Git 仓库 → 检查父目录是否为 workspace root（含 `CLAUDE.md` 或 `.claude/` 且非 git 仓库），是则使用父目录的 `.claude/mem.db`；否则 `<git-root>/.claude/mem.db`
 
 **关键特性**：
 - 同一仓库的所有 worktree 共享同一个数据库
@@ -74,6 +74,8 @@ bun install
 # 构建并同步到 Claude Code 插件目录
 bun run build-and-sync
 ```
+
+> **注意**：如果 `bun install` 长时间无响应，可使用 `npm install` 替代。
 
 构建完成后，插件会被同步到 `~/.claude/plugins/marketplaces/thedotmack/` 和版本化缓存目录，自动注册到 Claude Code 插件系统（marketplace、installed_plugins、enabledPlugins），worker 服务自动重启。
 
@@ -181,7 +183,7 @@ proj-claude-mem/
 ## 开发与测试
 
 ```bash
-# 运行所有测试（1146 pass, 3 skip）
+# 运行所有测试
 bun test
 
 # 项目隔离专项测试

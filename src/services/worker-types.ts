@@ -34,7 +34,7 @@ export interface ActiveSession {
   conversationHistory: ConversationMessage[];  // Shared conversation history for provider switching
   currentProvider: 'claude' | 'gemini' | 'openrouter' | null;  // Track which provider is currently running
   consecutiveRestarts: number;  // Track consecutive restart attempts to prevent infinite loops
-  dbPath: string;  // Project-specific SQLite DB path
+  dbPath?: string;  // Project-specific SQLite DB path
   forceInit?: boolean;  // Force fresh SDK session (skip resume)
   idleTimedOut?: boolean;  // Set when session exits due to idle timeout (prevents restart loop)
   lastGeneratorActivity: number;  // Timestamp of last generator progress (for stale detection, Issue #1099)

@@ -17,6 +17,9 @@ function setupTestDb(): Database {
   db.run(`CREATE TABLE IF NOT EXISTS schema_versions (
     id INTEGER PRIMARY KEY, version INTEGER UNIQUE, applied_at TEXT
   )`);
+  db.run(`CREATE TABLE IF NOT EXISTS retention_metadata (
+    project TEXT PRIMARY KEY, last_cleanup_epoch INTEGER NOT NULL
+  )`);
   db.run(`CREATE TABLE IF NOT EXISTS sdk_sessions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     content_session_id TEXT UNIQUE,
@@ -236,8 +239,7 @@ describe("RetentionManager", () => {
       RetentionManager.cleanup(db, "proj", DEFAULT_CONFIG);
 
       // Manually backdate the cooldown timestamp to 7 hours ago
-      const timestamps: Record<string, number> = { proj: Date.now() - 7 * 60 * 60 * 1000 };
-      db.prepare("INSERT OR REPLACE INTO schema_versions (version, applied_at) VALUES (9999, ?)").run(JSON.stringify(timestamps));
+      db.prepare("INSERT OR REPLACE INTO retention_metadata (project, last_cleanup_epoch) VALUES (?, ?)").run("proj", Date.now() - 7 * 60 * 60 * 1000);
 
       // Insert another deletable observation
       insertObservation(db, "s1", "proj", "change", 200, 0);

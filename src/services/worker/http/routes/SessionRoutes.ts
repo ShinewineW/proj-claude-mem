@@ -168,7 +168,7 @@ export class SessionRoutes extends BaseRouteHandler {
     const agentName = provider === 'openrouter' ? 'OpenRouter' : (provider === 'gemini' ? 'Gemini' : 'Claude SDK');
 
     // Use database count for accurate telemetry (in-memory array is always empty due to FK constraint fix)
-    const pendingStore = this.sessionManager.getPendingMessageStore(session.dbPath || undefined);
+    const pendingStore = this.sessionManager.getPendingMessageStore(session.dbPath);
     const actualQueueDepth = pendingStore.getPendingCount(session.sessionDbId);
 
     logger.info('SESSION', `Generator auto-starting (${source}) using ${agentName}`, {
@@ -193,7 +193,7 @@ export class SessionRoutes extends BaseRouteHandler {
         }, error);
 
         // Mark all processing messages as failed so they can be retried or abandoned
-        const pendingStore = this.sessionManager.getPendingMessageStore(session.dbPath || undefined);
+        const pendingStore = this.sessionManager.getPendingMessageStore(session.dbPath);
         try {
           const failedCount = pendingStore.markSessionMessagesFailed(session.sessionDbId);
           if (failedCount > 0) {
@@ -232,7 +232,7 @@ export class SessionRoutes extends BaseRouteHandler {
         // Crash recovery: If not aborted and still has work, restart (with limit)
         if (!wasAborted) {
           try {
-            const pendingStore = this.sessionManager.getPendingMessageStore(session.dbPath || undefined);
+            const pendingStore = this.sessionManager.getPendingMessageStore(session.dbPath);
             const pendingCount = pendingStore.getPendingCount(sessionDbId);
 
             // CRITICAL: Limit consecutive restarts to prevent infinite loops
@@ -453,7 +453,7 @@ export class SessionRoutes extends BaseRouteHandler {
     }
 
     // Use database count for accurate queue length (in-memory array is always empty due to FK constraint fix)
-    const pendingStore = this.sessionManager.getPendingMessageStore(session.dbPath || undefined);
+    const pendingStore = this.sessionManager.getPendingMessageStore(session.dbPath);
     const queueLength = pendingStore.getPendingCount(sessionDbId);
 
     res.json({
