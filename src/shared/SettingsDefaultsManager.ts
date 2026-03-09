@@ -68,6 +68,11 @@ export interface SettingsDefaults {
   CLAUDE_MEM_CHROMA_API_KEY: string;
   CLAUDE_MEM_CHROMA_TENANT: string;
   CLAUDE_MEM_CHROMA_DATABASE: string;
+  // Retention Policy
+  CLAUDE_MEM_RETENTION_ENABLED: string;           // 'true' | 'false'
+  CLAUDE_MEM_RETENTION_DAYS: string;              // grace period in days
+  CLAUDE_MEM_RETENTION_SCORE_THRESHOLD: string;   // minimum score to keep (0.0-1.0)
+  CLAUDE_MEM_RETENTION_MAX_KEPT: string;          // hard cap on >grace-period observations
 }
 
 export class SettingsDefaultsManager {
@@ -130,6 +135,11 @@ export class SettingsDefaultsManager {
     CLAUDE_MEM_CHROMA_API_KEY: '',
     CLAUDE_MEM_CHROMA_TENANT: 'default_tenant',
     CLAUDE_MEM_CHROMA_DATABASE: 'default_database',
+    // Retention Policy
+    CLAUDE_MEM_RETENTION_ENABLED: 'true',
+    CLAUDE_MEM_RETENTION_DAYS: '30',
+    CLAUDE_MEM_RETENTION_SCORE_THRESHOLD: '0.3',
+    CLAUDE_MEM_RETENTION_MAX_KEPT: '500',
   };
 
   /**
