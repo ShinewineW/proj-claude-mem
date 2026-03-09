@@ -600,7 +600,7 @@ export class WorkerService {
             errorMessage
           });
           // Clear stale memorySessionId and force fresh init on next attempt
-          this.dbManager.getSessionStore().updateMemorySessionId(session.sessionDbId, null);
+          this.dbManager.getSessionStore(session.dbPath || undefined).updateMemorySessionId(session.sessionDbId, null);
           session.memorySessionId = null;
           session.forceInit = true;
         }
@@ -710,7 +710,7 @@ export class WorkerService {
     if (!session.memorySessionId) {
       const syntheticId = `fallback-${sessionDbId}-${Date.now()}`;
       session.memorySessionId = syntheticId;
-      this.dbManager.getSessionStore().updateMemorySessionId(sessionDbId, syntheticId);
+      this.dbManager.getSessionStore(session.dbPath || undefined).updateMemorySessionId(sessionDbId, syntheticId);
     }
 
     if (isGeminiAvailable()) {

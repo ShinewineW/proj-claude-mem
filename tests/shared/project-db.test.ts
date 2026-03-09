@@ -83,6 +83,19 @@ describe("ensureGitignore", () => {
     expect(content).toContain(".claude/mem.db*");
   });
 
+  it("creates .gitignore with entry when file does not exist", async () => {
+    const repoRoot = join(testRoot, "repo-no-gitignore");
+    mkdirSync(repoRoot, { recursive: true });
+
+    const { ensureGitignore } = await import("../../src/shared/project-db.js");
+    ensureGitignore(repoRoot);
+
+    const gitignorePath = join(repoRoot, ".gitignore");
+    expect(existsSync(gitignorePath)).toBe(true);
+    const content = readFileSync(gitignorePath, "utf8");
+    expect(content).toContain(".claude/mem.db*");
+  });
+
   it("does not duplicate entry if already present", async () => {
     const repoRoot = join(testRoot, "repo2");
     mkdirSync(repoRoot, { recursive: true });

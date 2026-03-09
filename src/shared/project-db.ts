@@ -6,8 +6,8 @@
  * the single Worker process.
  */
 
-import { join, dirname, resolve } from 'path';
-import { existsSync, readFileSync, appendFileSync } from 'fs';
+import { join, dirname, basename, resolve } from 'path';
+import { existsSync, readFileSync, appendFileSync, writeFileSync } from 'fs';
 import { SessionStore } from '../services/sqlite/SessionStore.js';
 import { SessionSearch } from '../services/sqlite/SessionSearch.js';
 import { ensureDir } from './paths.js';
@@ -99,8 +99,12 @@ export class DbConnectionPool {
 
     // Create directory and .gitignore on first open
     ensureDir(dirname(normalizedPath));
-    const repoRoot = dirname(dirname(normalizedPath)); // dbPath = <repo>/.claude/mem.db
-    ensureGitignore(repoRoot);
+    // Only manage .gitignore when path follows <repo>/.claude/mem.db convention
+    // (skip for env override paths like /custom/path/mem.db)
+    if (basename(dirname(normalizedPath)) === '.claude') {
+      const repoRoot = dirname(dirname(normalizedPath));
+      ensureGitignore(repoRoot);
+    }
 
     const entry: PoolEntry = {
       store: new SessionStore(normalizedPath),
@@ -128,6 +132,8 @@ export function ensureGitignore(repoRoot: string): void {
       if (!lines.some(line => line === entry)) {
         appendFileSync(gitignorePath, `\n# claude-mem project memory\n${entry}\n`);
       }
+    } else {
+      writeFileSync(gitignorePath, `# claude-mem project memory\n${entry}\n`);
     }
   } catch (e) {
     // Non-fatal: .gitignore update failure should not block DB operations

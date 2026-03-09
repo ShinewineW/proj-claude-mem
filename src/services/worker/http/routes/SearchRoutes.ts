@@ -19,6 +19,9 @@ import { BaseRouteHandler } from '../BaseRouteHandler.js';
 import { logger } from '../../../../utils/logger.js';
 
 export class SearchRoutes extends BaseRouteHandler {
+  private formattingService = new FormattingService();
+  private timelineService = new TimelineService();
+
   constructor(
     private defaultSearchManager: SearchManager,
     private dbManager: DatabaseManager
@@ -43,8 +46,8 @@ export class SearchRoutes extends BaseRouteHandler {
       this.dbManager.getSessionSearch(dbPath),
       this.dbManager.getSessionStore(dbPath),
       this.dbManager.getChromaSync(),
-      new FormattingService(),
-      new TimelineService()
+      this.formattingService,
+      this.timelineService
     );
   }
 
