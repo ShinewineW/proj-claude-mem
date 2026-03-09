@@ -53,6 +53,16 @@
 - **Session 隔离**：每个会话独立 `sessionDbId`，`Map<sessionDbId, ActiveSession>` 无共享可变状态
 - **消息队列**：`pending_messages` 表使用 claim-confirm 模式，60 秒超时自动重置
 
+## ⚠️ 与原版 claude-mem 的兼容性
+
+**本 fork 与原版 [claude-mem](https://github.com/thedotmack/claude-mem) 不能共存。**
+
+两者共用相同的 marketplace 目录（`~/.claude/plugins/marketplaces/thedotmack/`）和插件注册键名（`claude-mem@thedotmack`），安装其中一个会覆盖另一个。
+
+- 如果已安装原版 claude-mem，执行 `bun run build-and-sync` 会将其替换为本 fork
+- 如果想切回原版，需要先卸载本 fork（运行 `uninstall.sh`），再按原版文档重新安装
+- 两者的全局配置目录（`~/.claude-mem/`）相同，数据库 schema 兼容，但行为差异较大（本 fork 默认不录制，需 `/mem-enable`）
+
 ## 安装与部署
 
 ### 前置条件
