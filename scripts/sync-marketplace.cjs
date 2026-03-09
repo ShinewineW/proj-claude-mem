@@ -86,6 +86,22 @@ try {
     { stdio: 'inherit' }
   );
 
+  // Write install version marker so smart-install.js skips redundant bun install
+  // smart-install.js resolves ROOT from CLAUDE_PLUGIN_ROOT (plugin/ subdir), so marker goes there
+  const markerPath = path.join(INSTALLED_PATH, 'plugin', '.install-version');
+  const version_ = getPluginVersion();
+  const bunVersion = (() => { try { return execSync('/opt/homebrew/bin/bun --version', { encoding: 'utf-8' }).trim(); } catch { return 'unknown'; } })();
+  writeFileSync(markerPath, JSON.stringify({ version: version_, bun: bunVersion, installedAt: new Date().toISOString() }));
+  console.log('Updated .install-version marker');
+
+  // Ensure .mcp.json is present in marketplace (rsync skips it due to .gitignore exclude)
+  const pluginMcpSrc = path.join(rootDir, 'plugin', '.mcp.json');
+  const marketplaceMcpDst = path.join(INSTALLED_PATH, 'plugin', '.mcp.json');
+  if (existsSync(pluginMcpSrc) && !existsSync(marketplaceMcpDst)) {
+    copyFileSync(pluginMcpSrc, marketplaceMcpDst);
+    console.log('Copied .mcp.json to marketplace plugin folder');
+  }
+
   // Sync to cache folder with version
   const version = getPluginVersion();
   const CACHE_VERSION_PATH = path.join(CACHE_BASE_PATH, version);

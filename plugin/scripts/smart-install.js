@@ -427,13 +427,14 @@ function installDeps() {
   const bunCmd = IS_WINDOWS && bunPath.includes(' ') ? `"${bunPath}"` : bunPath;
 
   let bunSucceeded = false;
+  const BUN_INSTALL_TIMEOUT = 60000; // 60s timeout to prevent hanging on some machines
   try {
-    execSync(`${bunCmd} install`, { cwd: ROOT, stdio: 'inherit', shell: IS_WINDOWS });
+    execSync(`${bunCmd} install`, { cwd: ROOT, stdio: 'inherit', shell: IS_WINDOWS, timeout: BUN_INSTALL_TIMEOUT });
     bunSucceeded = true;
   } catch {
-    // First attempt failed, try with force flag
+    // First attempt failed (error or timeout), try with force flag
     try {
-      execSync(`${bunCmd} install --force`, { cwd: ROOT, stdio: 'inherit', shell: IS_WINDOWS });
+      execSync(`${bunCmd} install --force`, { cwd: ROOT, stdio: 'inherit', shell: IS_WINDOWS, timeout: BUN_INSTALL_TIMEOUT });
       bunSucceeded = true;
     } catch {
       // Bun failed completely, will try npm fallback
