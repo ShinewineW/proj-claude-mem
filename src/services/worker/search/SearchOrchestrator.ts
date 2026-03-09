@@ -70,9 +70,12 @@ export class SearchOrchestrator {
    */
   async search(args: any): Promise<StrategySearchResult> {
     const options = this.normalizeParams(args);
+    const result = await this.executeWithFallback(options);
 
-    // Decision tree for strategy selection
-    return await this.executeWithFallback(options);
+    // Increment access_count for returned observations
+    this.incrementAccessCounts(result);
+
+    return result;
   }
 
   /**
@@ -231,6 +234,29 @@ export class SearchOrchestrator {
    */
   getTimelineBuilder(): TimelineBuilder {
     return this.timelineBuilder;
+  }
+
+  /**
+   * Increment access_count for observations returned by search.
+   * Non-blocking — errors are logged but don't affect search results.
+   */
+  private incrementAccessCounts(result: StrategySearchResult): void {
+    try {
+      const ids = result.results.observations
+        ?.map((obs: any) => obs.id)
+        .filter((id: any): id is number => typeof id === 'number');
+
+      if (!ids || ids.length === 0) return;
+
+      const placeholders = ids.map(() => '?').join(',');
+      this.sessionStore.db.prepare(
+        `UPDATE observations SET access_count = access_count + 1 WHERE id IN (${placeholders})`
+      ).run(...ids);
+    } catch (error) {
+      logger.debug('SEARCH', 'Failed to increment access_count', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   /**
