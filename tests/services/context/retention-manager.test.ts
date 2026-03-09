@@ -208,6 +208,59 @@ describe("RetentionManager", () => {
       expect(promptCount).toBe(1); // prompts kept because session still has observations
     });
 
+    it("skips cleanup within cooldown period", () => {
+      insertSession(db, "s1", "proj");
+      insertObservation(db, "s1", "proj", "change", 200, 0);
+
+      // First run: should delete
+      const result1 = RetentionManager.cleanup(db, "proj", DEFAULT_CONFIG);
+      expect(result1.deleted).toBe(1);
+
+      // Insert another deletable observation
+      insertObservation(db, "s1", "proj", "change", 200, 0);
+
+      // Second run: should skip due to cooldown
+      const result2 = RetentionManager.cleanup(db, "proj", DEFAULT_CONFIG);
+      expect(result2.deleted).toBe(0);
+
+      // The observation should still exist (cleanup was skipped)
+      const count = (db.query("SELECT COUNT(*) as c FROM observations").get() as any).c as number;
+      expect(count).toBe(1);
+    });
+
+    it("runs cleanup after cooldown expires", () => {
+      insertSession(db, "s1", "proj");
+      insertObservation(db, "s1", "proj", "change", 200, 0);
+
+      // First run
+      RetentionManager.cleanup(db, "proj", DEFAULT_CONFIG);
+
+      // Manually backdate the cooldown timestamp to 7 hours ago
+      const timestamps: Record<string, number> = { proj: Date.now() - 7 * 60 * 60 * 1000 };
+      db.prepare("INSERT OR REPLACE INTO schema_versions (version, applied_at) VALUES (9999, ?)").run(JSON.stringify(timestamps));
+
+      // Insert another deletable observation
+      insertObservation(db, "s1", "proj", "change", 200, 0);
+
+      // Should run because cooldown expired
+      const result = RetentionManager.cleanup(db, "proj", DEFAULT_CONFIG);
+      expect(result.deleted).toBe(1);
+    });
+
+    it("cooldown is per-project", () => {
+      insertSession(db, "s1", "proj-a");
+      insertSession(db, "s2", "proj-b");
+      insertObservation(db, "s1", "proj-a", "change", 200, 0);
+      insertObservation(db, "s2", "proj-b", "change", 200, 0);
+
+      // Run cleanup for proj-a (records cooldown for proj-a only)
+      RetentionManager.cleanup(db, "proj-a", DEFAULT_CONFIG);
+
+      // proj-b should still be able to run (different project)
+      const result = RetentionManager.cleanup(db, "proj-b", DEFAULT_CONFIG);
+      expect(result.deleted).toBe(1);
+    });
+
     it("only affects specified project", () => {
       insertSession(db, "s1", "proj-a");
       insertSession(db, "s2", "proj-b");

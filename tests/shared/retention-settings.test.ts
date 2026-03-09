@@ -6,6 +6,6 @@ describe("retention settings defaults", () => {
     expect(SettingsDefaultsManager.get("CLAUDE_MEM_RETENTION_ENABLED")).toBe("true");
     expect(SettingsDefaultsManager.get("CLAUDE_MEM_RETENTION_DAYS")).toBe("30");
     expect(SettingsDefaultsManager.get("CLAUDE_MEM_RETENTION_SCORE_THRESHOLD")).toBe("0.3");
-    expect(SettingsDefaultsManager.get("CLAUDE_MEM_RETENTION_MAX_KEPT")).toBe("500");
+    expect(SettingsDefaultsManager.get("CLAUDE_MEM_RETENTION_MAX_KEPT")).toBe("3000");
   });
 });

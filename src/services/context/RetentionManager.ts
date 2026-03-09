@@ -41,7 +41,58 @@ const W_TYPE = 0.25;
 const W_RECENCY = 0.50;
 const W_REFERENCE = 0.25;
 
+/** Minimum interval between cleanup runs per project (6 hours in ms) */
+const CLEANUP_COOLDOWN_MS = 6 * 60 * 60 * 1000;
+
 export class RetentionManager {
+  /**
+   * Check if cleanup should run based on cooldown period.
+   * Uses schema_versions table to store last cleanup timestamp (version 9999).
+   */
+  static shouldRunCleanup(db: Database, project: string): boolean {
+    try {
+      const row = db.query(
+        `SELECT applied_at FROM schema_versions WHERE version = 9999`
+      ).get() as { applied_at: string } | undefined;
+
+      if (!row) return true;
+
+      // applied_at stores a JSON object keyed by project
+      const timestamps: Record<string, number> = JSON.parse(row.applied_at);
+      const lastRun = timestamps[project];
+      if (!lastRun) return true;
+
+      return (Date.now() - lastRun) >= CLEANUP_COOLDOWN_MS;
+    } catch {
+      return true; // On any error, allow cleanup to run
+    }
+  }
+
+  /**
+   * Record that cleanup ran for a project.
+   */
+  private static recordCleanupRun(db: Database, project: string): void {
+    try {
+      let timestamps: Record<string, number> = {};
+      const row = db.query(
+        `SELECT applied_at FROM schema_versions WHERE version = 9999`
+      ).get() as { applied_at: string } | undefined;
+
+      if (row) {
+        try { timestamps = JSON.parse(row.applied_at); } catch { /* reset */ }
+      }
+
+      timestamps[project] = Date.now();
+      const json = JSON.stringify(timestamps);
+
+      db.prepare(
+        `INSERT OR REPLACE INTO schema_versions (version, applied_at) VALUES (9999, ?)`
+      ).run(json);
+    } catch {
+      // Best-effort — failure to record doesn't affect cleanup correctness
+    }
+  }
+
   /**
    * Compute importance score for a single observation.
    *
@@ -81,6 +132,11 @@ export class RetentionManager {
     const start = performance.now();
 
     if (!config.enabled) {
+      return { deleted: 0, kept: 0, orphanedPrompts: 0, elapsed_ms: 0 };
+    }
+
+    // Cooldown: skip if cleanup ran within the last 6 hours for this project
+    if (!this.shouldRunCleanup(db, project)) {
       return { deleted: 0, kept: 0, orphanedPrompts: 0, elapsed_ms: 0 };
     }
 
@@ -128,12 +184,17 @@ export class RetentionManager {
     }
 
     // Phase 3: Delete observations in a single transaction
+    // Batch deletes in chunks of 500 to stay within SQLite's variable limit (999)
+    const BATCH_SIZE = 500;
     let orphanedPrompts = 0;
     if (toDelete.length > 0) {
       const deleteTransaction = db.transaction(() => {
-        // Delete observations
-        const placeholders = toDelete.map(() => '?').join(',');
-        db.prepare(`DELETE FROM observations WHERE id IN (${placeholders})`).run(...toDelete);
+        // Delete observations in batches
+        for (let i = 0; i < toDelete.length; i += BATCH_SIZE) {
+          const batch = toDelete.slice(i, i + BATCH_SIZE);
+          const placeholders = batch.map(() => '?').join(',');
+          db.prepare(`DELETE FROM observations WHERE id IN (${placeholders})`).run(...batch);
+        }
 
         // Delete orphaned prompts: sessions that have 0 remaining observations
         const orphanResult = db.prepare(`
@@ -154,6 +215,9 @@ export class RetentionManager {
     }
 
     const elapsed_ms = performance.now() - start;
+
+    // Record successful cleanup timestamp
+    this.recordCleanupRun(db, project);
 
     logger.info('RETENTION', `Cleanup complete for ${project}`, {
       deleted: toDelete.length,
