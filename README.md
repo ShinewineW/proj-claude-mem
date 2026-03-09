@@ -91,6 +91,26 @@ bun run build-and-sync
 
 设置文件位于 `~/.claude-mem/settings.json`，首次运行时自动创建。
 
+## Uninstall
+
+To completely remove the plugin (code, registrations, and processes):
+
+```bash
+bash ~/.claude/plugins/marketplaces/thedotmack/plugin/scripts/uninstall.sh
+```
+
+The script will show a preview of all actions and ask for confirmation before proceeding.
+
+**What gets removed:**
+- Plugin directories (`~/.claude/plugins/marketplaces/thedotmack/`, `~/.claude/plugins/cache/thedotmack/`)
+- Plugin registrations in `installed_plugins.json`, `known_marketplaces.json`, `settings.json`
+- Worker and MCP server processes
+
+**What is preserved (manual cleanup if needed):**
+- `~/.claude-mem/` — global data directory (databases, logs, settings)
+- `<project>/.claude/mem.db*` — per-project databases
+- `CLAUDE_MEM_*` environment variables in your shell config
+
 ## 使用方式
 
 启用后无需额外操作。claude-mem 通过 Claude Code 的 hook 系统自动工作：
