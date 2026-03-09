@@ -112,7 +112,7 @@ export const sessionInitHandler: EventHandler = {
       const response = await fetch(`http://127.0.0.1:${port}/sessions/${sessionDbId}/init`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userPrompt: cleanedPrompt, promptNumber })
+        body: JSON.stringify({ userPrompt: cleanedPrompt, promptNumber, dbPath })
         // Note: Removed signal to avoid Windows Bun cleanup issue (libuv assertion)
       });
 

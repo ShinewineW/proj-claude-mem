@@ -57,7 +57,7 @@ bun install
 bun run build-and-sync
 ```
 
-构建完成后，插件会被同步到 `~/.claude/plugins/marketplaces/thedotmack/`，worker 服务自动重启。
+构建完成后，插件会被同步到 `~/.claude/plugins/marketplaces/thedotmack/` 和版本化缓存目录，自动注册到 Claude Code 插件系统（marketplace、installed_plugins、enabledPlugins），worker 服务自动重启。
 
 ### 配置
 
@@ -67,10 +67,10 @@ bun run build-and-sync
 
 安装后无需额外操作。claude-mem 通过 Claude Code 的 hook 系统自动工作：
 
-1. **SessionStart** — 初始化会话，自动检测当前项目并打开对应数据库
-2. **PostToolUse** — 捕获工具调用（文件编辑、命令执行等）作为观察记录
-3. **Summary** — 会话结束时生成记忆摘要
-4. **SessionEnd** — 关闭会话
+1. **SessionStart** — 启动 worker 服务，注入历史上下文
+2. **UserPromptSubmit** — 初始化会话，自动检测当前项目并打开对应数据库
+3. **PostToolUse** — 捕获工具调用（文件编辑、命令执行等）作为观察记录
+4. **Stop** — 会话结束时生成记忆摘要并关闭会话
 
 下次在同一项目中启动 Claude Code 时，会自动注入该项目的历史上下文。不同项目的记忆互不干扰。
 

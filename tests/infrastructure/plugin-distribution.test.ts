@@ -48,6 +48,7 @@ describe('Plugin Distribution - Required Files', () => {
   const requiredFiles = [
     'plugin/hooks/hooks.json',
     'plugin/.claude-plugin/plugin.json',
+    'plugin/.mcp.json',
     'plugin/skills/mem-search/SKILL.md',
   ];
 
@@ -82,16 +83,34 @@ describe('Plugin Distribution - hooks.json Integrity', () => {
     }
   });
 
-  it('should include CLAUDE_PLUGIN_ROOT fallback in all hook commands (#1215)', () => {
+  it('should only use valid Claude Code hook event names', () => {
     const hooksPath = path.join(projectRoot, 'plugin/hooks/hooks.json');
     const parsed = JSON.parse(readFileSync(hooksPath, 'utf-8'));
-    const expectedFallbackPath = '$HOME/.claude/plugins/marketplaces/thedotmack/plugin';
+    const validEvents = [
+      'SessionStart', 'InstructionsLoaded', 'UserPromptSubmit',
+      'PreToolUse', 'PermissionRequest', 'PostToolUse', 'PostToolUseFailure',
+      'Notification', 'SubagentStart', 'SubagentStop', 'Stop',
+      'TeammateIdle', 'TaskCompleted', 'ConfigChange',
+      'WorktreeCreate', 'WorktreeRemove', 'PreCompact', 'SessionEnd',
+    ];
+
+    for (const eventName of Object.keys(parsed.hooks)) {
+      expect(validEvents).toContain(eventName);
+    }
+  });
+
+  it('should use direct ${CLAUDE_PLUGIN_ROOT} paths without shell variable workarounds', () => {
+    const hooksPath = path.join(projectRoot, 'plugin/hooks/hooks.json');
+    const parsed = JSON.parse(readFileSync(hooksPath, 'utf-8'));
 
     for (const [eventName, matchers] of Object.entries(parsed.hooks)) {
       for (const matcher of matchers as any[]) {
         for (const hook of matcher.hooks) {
           if (hook.type === 'command') {
-            expect(hook.command).toContain(expectedFallbackPath);
+            // Must not use _R= shell variable pattern
+            expect(hook.command).not.toContain('_R=');
+            // Must not use $HOME fallback paths
+            expect(hook.command).not.toContain('$HOME/.claude/plugins');
           }
         }
       }
