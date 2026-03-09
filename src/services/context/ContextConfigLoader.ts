@@ -9,6 +9,7 @@ import { homedir } from 'os';
 import { SettingsDefaultsManager } from '../../shared/SettingsDefaultsManager.js';
 import { ModeManager } from '../domain/ModeManager.js';
 import type { ContextConfig } from './types.js';
+import type { RetentionConfig } from './RetentionManager.js';
 
 /**
  * Load all context configuration settings
@@ -53,5 +54,11 @@ export function loadContextConfig(): ContextConfig {
     fullObservationField: settings.CLAUDE_MEM_CONTEXT_FULL_FIELD as 'narrative' | 'facts',
     showLastSummary: settings.CLAUDE_MEM_CONTEXT_SHOW_LAST_SUMMARY === 'true',
     showLastMessage: settings.CLAUDE_MEM_CONTEXT_SHOW_LAST_MESSAGE === 'true',
+    retention: {
+      enabled: settings.CLAUDE_MEM_RETENTION_ENABLED === 'true',
+      retentionDays: parseInt(settings.CLAUDE_MEM_RETENTION_DAYS, 10),
+      scoreThreshold: parseFloat(settings.CLAUDE_MEM_RETENTION_SCORE_THRESHOLD),
+      maxKept: parseInt(settings.CLAUDE_MEM_RETENTION_MAX_KEPT, 10),
+    },
   };
 }

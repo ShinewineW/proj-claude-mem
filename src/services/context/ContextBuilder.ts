@@ -31,6 +31,7 @@ import { shouldShowSummary, renderSummaryFields } from './sections/SummaryRender
 import { renderPreviouslySection, renderFooter } from './sections/FooterRenderer.js';
 import { renderMarkdownEmptyState } from './formatters/MarkdownFormatter.js';
 import { renderColorEmptyState } from './formatters/ColorFormatter.js';
+import { RetentionManager } from './RetentionManager.js';
 
 // Version marker path for native module error handling
 const VERSION_MARKER_PATH = path.join(
@@ -142,6 +143,20 @@ export async function generateContext(
   const db = initializeDatabase(input?.dbPath);
   if (!db) {
     return '';
+  }
+
+  // Run retention cleanup before querying context
+  if (config.retention?.enabled) {
+    for (const proj of projects) {
+      try {
+        RetentionManager.cleanup(db.db, proj, config.retention);
+      } catch (error) {
+        logger.warn('CONTEXT', 'Retention cleanup failed, continuing', {
+          project: proj,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
   }
 
   try {

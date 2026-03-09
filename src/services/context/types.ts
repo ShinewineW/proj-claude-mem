@@ -2,6 +2,8 @@
  * Context Types - Shared types for context generation module
  */
 
+import type { RetentionConfig } from './RetentionManager.js';
+
 /**
  * Input parameters for context generation
  */
@@ -41,6 +43,9 @@ export interface ContextConfig {
   fullObservationField: 'narrative' | 'facts';
   showLastSummary: boolean;
   showLastMessage: boolean;
+
+  // Retention policy (optional — only used by ContextBuilder, not by formatters/renderers)
+  retention?: RetentionConfig;
 }
 
 /**
