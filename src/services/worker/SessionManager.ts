@@ -59,7 +59,8 @@ export class SessionManager {
     logger.debug('SESSION', 'initializeSession called', {
       sessionDbId,
       promptNumber,
-      has_currentUserPrompt: !!currentUserPrompt
+      has_currentUserPrompt: !!currentUserPrompt,
+      dbPath: dbPath || '(none)'
     });
 
     // Check if already active
@@ -206,11 +207,11 @@ export class SessionManager {
    * CRITICAL: Persists to database FIRST before adding to in-memory queue.
    * This ensures observations survive worker crashes.
    */
-  queueObservation(sessionDbId: number, data: ObservationData): void {
+  queueObservation(sessionDbId: number, data: ObservationData, dbPath?: string): void {
     // Auto-initialize from database if needed (handles worker restarts)
     let session = this.sessions.get(sessionDbId);
     if (!session) {
-      session = this.initializeSession(sessionDbId);
+      session = this.initializeSession(sessionDbId, undefined, undefined, dbPath);
     }
 
     // CRITICAL: Persist to database FIRST
@@ -251,11 +252,11 @@ export class SessionManager {
    * CRITICAL: Persists to database FIRST before adding to in-memory queue.
    * This ensures summarize requests survive worker crashes.
    */
-  queueSummarize(sessionDbId: number, lastAssistantMessage?: string): void {
+  queueSummarize(sessionDbId: number, lastAssistantMessage?: string, dbPath?: string): void {
     // Auto-initialize from database if needed (handles worker restarts)
     let session = this.sessions.get(sessionDbId);
     if (!session) {
-      session = this.initializeSession(sessionDbId);
+      session = this.initializeSession(sessionDbId, undefined, undefined, dbPath);
     }
 
     // CRITICAL: Persist to database FIRST
@@ -459,11 +460,11 @@ export class SessionManager {
    * Messages are marked as 'processing' when yielded and must be marked 'processed'
    * by the SDK agent after successful completion.
    */
-  async *getMessageIterator(sessionDbId: number): AsyncIterableIterator<PendingMessageWithId> {
+  async *getMessageIterator(sessionDbId: number, dbPath?: string): AsyncIterableIterator<PendingMessageWithId> {
     // Auto-initialize from database if needed (handles worker restarts)
     let session = this.sessions.get(sessionDbId);
     if (!session) {
-      session = this.initializeSession(sessionDbId);
+      session = this.initializeSession(sessionDbId, undefined, undefined, dbPath);
     }
 
     const emitter = this.sessionQueues.get(sessionDbId);

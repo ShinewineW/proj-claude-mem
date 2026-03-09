@@ -144,7 +144,7 @@ export class OpenRouterAgent {
       let lastCwd: string | undefined;
 
       // Process pending messages
-      for await (const message of this.sessionManager.getMessageIterator(session.sessionDbId)) {
+      for await (const message of this.sessionManager.getMessageIterator(session.sessionDbId, session.dbPath || undefined)) {
         // CLAIM-CONFIRM: Track message ID for confirmProcessed() after successful storage
         // The message is now in 'processing' status in DB until ResponseProcessor calls confirmProcessed()
         session.processingMessageIds.push(message._persistentId);

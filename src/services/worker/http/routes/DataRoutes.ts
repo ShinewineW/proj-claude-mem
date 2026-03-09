@@ -270,7 +270,7 @@ export class DataRoutes extends BaseRouteHandler {
       const rows = db.prepare(`
         SELECT DISTINCT project
         FROM observations
-        WHERE project IS NOT NULL
+        WHERE project IS NOT NULL AND project != ''
         GROUP BY project
         ORDER BY MAX(created_at_epoch) DESC
       `).all() as Array<{ project: string }>;
@@ -281,17 +281,22 @@ export class DataRoutes extends BaseRouteHandler {
     // No dbPath: aggregate from allowlist + global DB
     const allProjects: Array<{ project: string; dbPath: string }> = [];
 
-    // 1. Query global DB
+    // 1. Query global DB (may contain legacy data before per-project isolation)
     try {
       const globalDb = this.dbManager.getSessionStore().db;
       const globalRows = globalDb.prepare(`
-        SELECT DISTINCT project FROM observations WHERE project IS NOT NULL
+        SELECT DISTINCT project FROM observations
+        WHERE project IS NOT NULL AND project != ''
         GROUP BY project ORDER BY MAX(created_at_epoch) DESC
       `).all() as Array<{ project: string }>;
       for (const row of globalRows) {
         allProjects.push({ project: row.project, dbPath: '' });
       }
-    } catch { /* global DB may be empty */ }
+    } catch (globalError) {
+      logger.debug('DATA', 'Global DB query skipped (may be empty or missing tables)', {
+        error: globalError instanceof Error ? globalError.message : String(globalError)
+      });
+    }
 
     // 2. Query each enabled project from allowlist
     try {
@@ -305,7 +310,8 @@ export class DataRoutes extends BaseRouteHandler {
 
           // Try observations first, fall back to sdk_sessions for projects with no observations yet
           let rows = projDb.prepare(`
-            SELECT DISTINCT project FROM observations WHERE project IS NOT NULL
+            SELECT DISTINCT project FROM observations
+            WHERE project IS NOT NULL AND project != ''
             GROUP BY project ORDER BY MAX(created_at_epoch) DESC
           `).all() as Array<{ project: string }>;
 
@@ -322,9 +328,17 @@ export class DataRoutes extends BaseRouteHandler {
               allProjects.push({ project: row.project, dbPath: projDbPath });
             }
           }
-        } catch { /* skip inaccessible project DBs */ }
+        } catch (projError) {
+          logger.warn('DATA', `Failed to query project DB for ${projectRoot}`, {
+            error: projError instanceof Error ? projError.message : String(projError)
+          });
+        }
       }
-    } catch { /* allowlist module may not be available */ }
+    } catch (allowlistError) {
+      logger.warn('DATA', 'Failed to scan allowlist for projects', {
+        error: allowlistError instanceof Error ? allowlistError.message : String(allowlistError)
+      });
+    }
 
     // Return both flat list (backward compat) and enriched list
     res.json({

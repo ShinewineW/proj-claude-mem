@@ -168,7 +168,7 @@ export class SessionRoutes extends BaseRouteHandler {
     const agentName = provider === 'openrouter' ? 'OpenRouter' : (provider === 'gemini' ? 'Gemini' : 'Claude SDK');
 
     // Use database count for accurate telemetry (in-memory array is always empty due to FK constraint fix)
-    const pendingStore = this.sessionManager.getPendingMessageStore();
+    const pendingStore = this.sessionManager.getPendingMessageStore(session.dbPath || undefined);
     const actualQueueDepth = pendingStore.getPendingCount(session.sessionDbId);
 
     logger.info('SESSION', `Generator auto-starting (${source}) using ${agentName}`, {
@@ -232,7 +232,7 @@ export class SessionRoutes extends BaseRouteHandler {
         // Crash recovery: If not aborted and still has work, restart (with limit)
         if (!wasAborted) {
           try {
-            const pendingStore = this.sessionManager.getPendingMessageStore();
+            const pendingStore = this.sessionManager.getPendingMessageStore(session.dbPath || undefined);
             const pendingCount = pendingStore.getPendingCount(sessionDbId);
 
             // CRITICAL: Limit consecutive restarts to prevent infinite loops
@@ -398,7 +398,7 @@ export class SessionRoutes extends BaseRouteHandler {
     const sessionDbId = this.parseIntParam(req, res, 'sessionDbId');
     if (sessionDbId === null) return;
 
-    const { tool_name, tool_input, tool_response, prompt_number, cwd } = req.body;
+    const { tool_name, tool_input, tool_response, prompt_number, cwd, dbPath } = req.body;
 
     this.sessionManager.queueObservation(sessionDbId, {
       tool_name,
@@ -406,7 +406,7 @@ export class SessionRoutes extends BaseRouteHandler {
       tool_response,
       prompt_number,
       cwd
-    });
+    }, dbPath);
 
     // CRITICAL: Ensure SDK agent is running to consume the queue
     this.ensureGeneratorRunning(sessionDbId, 'observation');
@@ -425,9 +425,9 @@ export class SessionRoutes extends BaseRouteHandler {
     const sessionDbId = this.parseIntParam(req, res, 'sessionDbId');
     if (sessionDbId === null) return;
 
-    const { last_assistant_message } = req.body;
+    const { last_assistant_message, dbPath } = req.body;
 
-    this.sessionManager.queueSummarize(sessionDbId, last_assistant_message);
+    this.sessionManager.queueSummarize(sessionDbId, last_assistant_message, dbPath);
 
     // CRITICAL: Ensure SDK agent is running to consume the queue
     this.ensureGeneratorRunning(sessionDbId, 'summarize');
@@ -453,7 +453,7 @@ export class SessionRoutes extends BaseRouteHandler {
     }
 
     // Use database count for accurate queue length (in-memory array is always empty due to FK constraint fix)
-    const pendingStore = this.sessionManager.getPendingMessageStore();
+    const pendingStore = this.sessionManager.getPendingMessageStore(session.dbPath || undefined);
     const queueLength = pendingStore.getPendingCount(sessionDbId);
 
     res.json({
@@ -570,7 +570,7 @@ export class SessionRoutes extends BaseRouteHandler {
           });
           return '';
         })()
-      });
+      }, dbPath);
 
       // Ensure SDK agent is running
       this.ensureGeneratorRunning(sessionDbId, 'observation');
@@ -620,7 +620,7 @@ export class SessionRoutes extends BaseRouteHandler {
     }
 
     // Queue summarize
-    this.sessionManager.queueSummarize(sessionDbId, last_assistant_message);
+    this.sessionManager.queueSummarize(sessionDbId, last_assistant_message, dbPath);
 
     // Ensure SDK agent is running
     this.ensureGeneratorRunning(sessionDbId, 'summarize');
