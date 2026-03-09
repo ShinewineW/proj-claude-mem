@@ -1,342 +1,153 @@
-<p align="center">
-  Official $CMEM Links: 
-  <a href="https://bags.fm/2TsmuYUrsctE57VLckZBYEEzdokUF8j8e1GavekWBAGS">Bags.fm</a> •
-  <a href="https://jup.ag/tokens/2TsmuYUrsctE57VLckZBYEEzdokUF8j8e1GavekWBAGS">Jupiter</a> •
-  <a href="https://photon-sol.tinyastro.io/en/lp/6MzFAkWnac6GSK1EdFX93dZeukGfzrFq4UHWarhGSQyd">Photon</a> •
-  <a href="https://dexscreener.com/solana/6mzfakwnac6gsk1edfx93dzeukgfzrfq4uhwarhgsqyd">DEXScreener</a>
-</p>
+# proj-claude-mem
 
-<p align="center">Official CA: 2TsmuYUrsctE57VLckZBYEEzdokUF8j8e1GavekWBAGS (on Solana)</p>
+基于 [claude-mem](https://github.com/thedotmack/claude-mem) 的 fork，实现了 **per-project SQLite 数据库隔离**。
 
-<h1 align="center">
-  <br>
-  <a href="https://github.com/thedotmack/claude-mem">
-    <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/thedotmack/claude-mem/main/docs/public/claude-mem-logo-for-dark-mode.webp">
-      <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/thedotmack/claude-mem/main/docs/public/claude-mem-logo-for-light-mode.webp">
-      <img src="https://raw.githubusercontent.com/thedotmack/claude-mem/main/docs/public/claude-mem-logo-for-light-mode.webp" alt="Claude-Mem" width="400">
-    </picture>
-  </a>
-  <br>
-</h1>
+上游 claude-mem 将所有项目的记忆存储在一个全局数据库 `~/.claude-mem/claude-mem.db` 中。本 fork 改造后，每个 git 仓库拥有独立的数据库文件 `<repo>/.claude/mem.db`，实现项目间记忆完全隔离。
 
-<p align="center">
-  <a href="docs/i18n/README.zh.md">🇨🇳 中文</a> •
-  <a href="docs/i18n/README.zh-tw.md">🇹🇼 繁體中文</a> •
-  <a href="docs/i18n/README.ja.md">🇯🇵 日本語</a> •
-  <a href="docs/i18n/README.pt.md">🇵🇹 Português</a> •
-  <a href="docs/i18n/README.pt-br.md">🇧🇷 Português</a> •
-  <a href="docs/i18n/README.ko.md">🇰🇷 한국어</a> •
-  <a href="docs/i18n/README.es.md">🇪🇸 Español</a> •
-  <a href="docs/i18n/README.de.md">🇩🇪 Deutsch</a> •
-  <a href="docs/i18n/README.fr.md">🇫🇷 Français</a> •
-  <a href="docs/i18n/README.he.md">🇮🇱 עברית</a> •
-  <a href="docs/i18n/README.ar.md">🇸🇦 العربية</a> •
-  <a href="docs/i18n/README.ru.md">🇷🇺 Русский</a> •
-  <a href="docs/i18n/README.pl.md">🇵🇱 Polski</a> •
-  <a href="docs/i18n/README.cs.md">🇨🇿 Čeština</a> •
-  <a href="docs/i18n/README.nl.md">🇳🇱 Nederlands</a> •
-  <a href="docs/i18n/README.tr.md">🇹🇷 Türkçe</a> •
-  <a href="docs/i18n/README.uk.md">🇺🇦 Українська</a> •
-  <a href="docs/i18n/README.vi.md">🇻🇳 Tiếng Việt</a> •
-  <a href="docs/i18n/README.tl.md">🇵🇭 Tagalog</a> •
-  <a href="docs/i18n/README.id.md">🇮🇩 Indonesia</a> •
-  <a href="docs/i18n/README.th.md">🇹🇭 ไทย</a> •
-  <a href="docs/i18n/README.hi.md">🇮🇳 हिन्दी</a> •
-  <a href="docs/i18n/README.bn.md">🇧🇩 বাংলা</a> •
-  <a href="docs/i18n/README.ur.md">🇵🇰 اردو</a> •
-  <a href="docs/i18n/README.ro.md">🇷🇴 Română</a> •
-  <a href="docs/i18n/README.sv.md">🇸🇪 Svenska</a> •
-  <a href="docs/i18n/README.it.md">🇮🇹 Italiano</a> •
-  <a href="docs/i18n/README.el.md">🇬🇷 Ελληνικά</a> •
-  <a href="docs/i18n/README.hu.md">🇭🇺 Magyar</a> •
-  <a href="docs/i18n/README.fi.md">🇫🇮 Suomi</a> •
-  <a href="docs/i18n/README.da.md">🇩🇰 Dansk</a> •
-  <a href="docs/i18n/README.no.md">🇳🇴 Norsk</a>
-</p>
+## 核心特性
 
-<h4 align="center">Persistent memory compression system built for <a href="https://claude.com/claude-code" target="_blank">Claude Code</a>.</h4>
+### Per-Project DB 隔离
 
-<p align="center">
-  <a href="LICENSE">
-    <img src="https://img.shields.io/badge/License-AGPL%203.0-blue.svg" alt="License">
-  </a>
-  <a href="package.json">
-    <img src="https://img.shields.io/badge/version-6.5.0-green.svg" alt="Version">
-  </a>
-  <a href="package.json">
-    <img src="https://img.shields.io/badge/node-%3E%3D18.0.0-brightgreen.svg" alt="Node">
-  </a>
-  <a href="https://github.com/thedotmack/awesome-claude-code">
-    <img src="https://awesome.re/mentioned-badge.svg" alt="Mentioned in Awesome Claude Code">
-  </a>
-</p>
+**问题**：多个项目共用一个全局数据库，项目 A 的记忆会污染项目 B 的上下文注入。
 
-<p align="center">
-  <a href="https://trendshift.io/repositories/15496" target="_blank">
-    <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/thedotmack/claude-mem/main/docs/public/trendshift-badge-dark.svg">
-      <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/thedotmack/claude-mem/main/docs/public/trendshift-badge.svg">
-      <img src="https://raw.githubusercontent.com/thedotmack/claude-mem/main/docs/public/trendshift-badge.svg" alt="thedotmack/claude-mem | Trendshift" width="250" height="55"/>
-    </picture>
-  </a>
-</p>
-
-<br>
-
-<p align="center">
-  <a href="https://github.com/thedotmack/claude-mem">
-    <picture>
-      <img src="https://raw.githubusercontent.com/thedotmack/claude-mem/main/docs/public/cm-preview.gif" alt="Claude-Mem Preview" width="800">
-    </picture>
-  </a>
-</p>
-
-<p align="center">
-  <a href="#quick-start">Quick Start</a> •
-  <a href="#how-it-works">How It Works</a> •
-  <a href="#mcp-search-tools">Search Tools</a> •
-  <a href="#documentation">Documentation</a> •
-  <a href="#configuration">Configuration</a> •
-  <a href="#troubleshooting">Troubleshooting</a> •
-  <a href="#license">License</a>
-</p>
-
-<p align="center">
-  Claude-Mem seamlessly preserves context across sessions by automatically capturing tool usage observations, generating semantic summaries, and making them available to future sessions. This enables Claude to maintain continuity of knowledge about projects even after sessions end or reconnect.
-</p>
-
----
-
-## Quick Start
-
-Start a new Claude Code session in the terminal and enter the following commands:
+**方案**：每个 git 仓库自动获得独立的 SQLite 数据库。
 
 ```
-/plugin marketplace add thedotmack/claude-mem
+# 改造前（全局共享）
+~/.claude-mem/claude-mem.db    ← 所有项目混在一起
 
-/plugin install claude-mem
+# 改造后（按项目隔离）
+~/projects/proj-a/.claude/mem.db   ← 项目 A 独立数据库
+~/projects/proj-b/.claude/mem.db   ← 项目 B 独立数据库
 ```
 
-Restart Claude Code. Context from previous sessions will automatically appear in new sessions.
+**DB 路径解析优先级**（`resolveProjectDbPath()`）：
 
-> **Note:** Claude-Mem is also published on npm, but `npm install -g claude-mem` installs the **SDK/library only** — it does not register the plugin hooks or set up the worker service. To use Claude-Mem as a plugin, always install via the `/plugin` commands above.
+1. `CLAUDE_MEM_PROJECT_DB_PATH` 环境变量（显式覆盖）
+2. Git worktree → 父仓库的 `.claude/mem.db`（同一仓库的 worktree 共享数据库）
+3. Git 仓库根目录 → `<git-root>/.claude/mem.db`
+4. 非 git 目录 → `<cwd>/.claude/mem.db`
 
-### 🦞 OpenClaw Gateway
+**关键特性**：
+- 同一仓库的所有 worktree 共享同一个数据库
+- `.claude/mem.db*` 自动加入 `.gitignore`（包括 WAL/SHM 文件）
+- 无 `.gitignore` 时自动创建
+- 连接池管理（`DbConnectionPool`），FIFO 淘汰，最大 10 个并发连接
+- 完全向后兼容：无 `dbPath` 时 fallback 到全局数据库
 
-Install claude-mem as a persistent memory plugin on [OpenClaw](https://openclaw.ai) gateways with a single command:
+## 安装与部署
+
+### 前置条件
+
+- [Bun](https://bun.sh/) >= 1.0.0
+- Node.js >= 18.0.0
+- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) CLI
+
+### 安装步骤
 
 ```bash
-curl -fsSL https://install.cmem.ai/openclaw.sh | bash
+# 克隆仓库
+git clone https://github.com/ShinewineW/proj-claude-mem.git
+cd proj-claude-mem
+
+# 安装依赖
+bun install
+
+# 构建并同步到 Claude Code 插件目录
+bun run build-and-sync
 ```
 
-The installer handles dependencies, plugin setup, AI provider configuration, worker startup, and optional real-time observation feeds to Telegram, Discord, Slack, and more. See the [OpenClaw Integration Guide](https://docs.claude-mem.ai/openclaw-integration) for details.
+构建完成后，插件会被同步到 `~/.claude/plugins/marketplaces/thedotmack/`，worker 服务自动重启。
 
-**Key Features:**
+### 配置
 
-- 🧠 **Persistent Memory** - Context survives across sessions
-- 📊 **Progressive Disclosure** - Layered memory retrieval with token cost visibility
-- 🔍 **Skill-Based Search** - Query your project history with mem-search skill
-- 🖥️ **Web Viewer UI** - Real-time memory stream at http://localhost:37777
-- 💻 **Claude Desktop Skill** - Search memory from Claude Desktop conversations
-- 🔒 **Privacy Control** - Use `<private>` tags to exclude sensitive content from storage
-- ⚙️ **Context Configuration** - Fine-grained control over what context gets injected
-- 🤖 **Automatic Operation** - No manual intervention required
-- 🔗 **Citations** - Reference past observations with IDs (access via http://localhost:37777/api/observation/{id} or view all in the web viewer at http://localhost:37777)
-- 🧪 **Beta Channel** - Try experimental features like Endless Mode via version switching
+设置文件位于 `~/.claude-mem/settings.json`，首次运行时自动创建。
 
----
+## 使用方式
 
-## Documentation
+安装后无需额外操作。claude-mem 通过 Claude Code 的 hook 系统自动工作：
 
-📚 **[View Full Documentation](https://docs.claude-mem.ai/)** - Browse on official website
+1. **SessionStart** — 初始化会话，自动检测当前项目并打开对应数据库
+2. **PostToolUse** — 捕获工具调用（文件编辑、命令执行等）作为观察记录
+3. **Summary** — 会话结束时生成记忆摘要
+4. **SessionEnd** — 关闭会话
 
-### Getting Started
+下次在同一项目中启动 Claude Code 时，会自动注入该项目的历史上下文。不同项目的记忆互不干扰。
 
-- **[Installation Guide](https://docs.claude-mem.ai/installation)** - Quick start & advanced installation
-- **[Usage Guide](https://docs.claude-mem.ai/usage/getting-started)** - How Claude-Mem works automatically
-- **[Search Tools](https://docs.claude-mem.ai/usage/search-tools)** - Query your project history with natural language
-- **[Beta Features](https://docs.claude-mem.ai/beta-features)** - Try experimental features like Endless Mode
+### 搜索历史记忆
 
-### Best Practices
+使用 claude-mem 内置的搜索技能：
 
-- **[Context Engineering](https://docs.claude-mem.ai/context-engineering)** - AI agent context optimization principles
-- **[Progressive Disclosure](https://docs.claude-mem.ai/progressive-disclosure)** - Philosophy behind Claude-Mem's context priming strategy
-
-### Architecture
-
-- **[Overview](https://docs.claude-mem.ai/architecture/overview)** - System components & data flow
-- **[Architecture Evolution](https://docs.claude-mem.ai/architecture-evolution)** - The journey from v3 to v5
-- **[Hooks Architecture](https://docs.claude-mem.ai/hooks-architecture)** - How Claude-Mem uses lifecycle hooks
-- **[Hooks Reference](https://docs.claude-mem.ai/architecture/hooks)** - 7 hook scripts explained
-- **[Worker Service](https://docs.claude-mem.ai/architecture/worker-service)** - HTTP API & Bun management
-- **[Database](https://docs.claude-mem.ai/architecture/database)** - SQLite schema & FTS5 search
-- **[Search Architecture](https://docs.claude-mem.ai/architecture/search-architecture)** - Hybrid search with Chroma vector database
-
-### Configuration & Development
-
-- **[Configuration](https://docs.claude-mem.ai/configuration)** - Environment variables & settings
-- **[Development](https://docs.claude-mem.ai/development)** - Building, testing, contributing
-- **[Troubleshooting](https://docs.claude-mem.ai/troubleshooting)** - Common issues & solutions
-
----
-
-## How It Works
-
-**Core Components:**
-
-1. **5 Lifecycle Hooks** - SessionStart, UserPromptSubmit, PostToolUse, Stop, SessionEnd (6 hook scripts)
-2. **Smart Install** - Cached dependency checker (pre-hook script, not a lifecycle hook)
-3. **Worker Service** - HTTP API on port 37777 with web viewer UI and 10 search endpoints, managed by Bun
-4. **SQLite Database** - Stores sessions, observations, summaries
-5. **mem-search Skill** - Natural language queries with progressive disclosure
-6. **Chroma Vector Database** - Hybrid semantic + keyword search for intelligent context retrieval
-
-See [Architecture Overview](https://docs.claude-mem.ai/architecture/overview) for details.
-
----
-
-## MCP Search Tools
-
-Claude-Mem provides intelligent memory search through **4 MCP tools** following a token-efficient **3-layer workflow pattern**:
-
-**The 3-Layer Workflow:**
-
-1. **`search`** - Get compact index with IDs (~50-100 tokens/result)
-2. **`timeline`** - Get chronological context around interesting results
-3. **`get_observations`** - Fetch full details ONLY for filtered IDs (~500-1,000 tokens/result)
-
-**How It Works:**
-- Claude uses MCP tools to search your memory
-- Start with `search` to get an index of results
-- Use `timeline` to see what was happening around specific observations
-- Use `get_observations` to fetch full details for relevant IDs
-- **~10x token savings** by filtering before fetching details
-
-**Available MCP Tools:**
-
-1. **`search`** - Search memory index with full-text queries, filters by type/date/project
-2. **`timeline`** - Get chronological context around a specific observation or query
-3. **`get_observations`** - Fetch full observation details by IDs (always batch multiple IDs)
-
-**Example Usage:**
-
-```typescript
-// Step 1: Search for index
-search(query="authentication bug", type="bugfix", limit=10)
-
-// Step 2: Review index, identify relevant IDs (e.g., #123, #456)
-
-// Step 3: Fetch full details
-get_observations(ids=[123, 456])
+```
+/mem-search 上次修改了哪些文件？
 ```
 
-See [Search Tools Guide](https://docs.claude-mem.ai/usage/search-tools) for detailed examples.
+### 隐私控制
 
----
+使用 `<private>` 标签包裹不希望被记录的内容：
 
-## Beta Features
-
-Claude-Mem offers a **beta channel** with experimental features like **Endless Mode** (biomimetic memory architecture for extended sessions). Switch between stable and beta versions from the web viewer UI at http://localhost:37777 → Settings.
-
-See **[Beta Features Documentation](https://docs.claude-mem.ai/beta-features)** for details on Endless Mode and how to try it.
-
----
-
-## System Requirements
-
-- **Node.js**: 18.0.0 or higher
-- **Claude Code**: Latest version with plugin support
-- **Bun**: JavaScript runtime and process manager (auto-installed if missing)
-- **uv**: Python package manager for vector search (auto-installed if missing)
-- **SQLite 3**: For persistent storage (bundled)
-
----
-### Windows Setup Notes
-
-If you see an error like:
-
-```powershell
-npm : The term 'npm' is not recognized as the name of a cmdlet
+```
+<private>这段内容不会被存储</private>
 ```
 
-Make sure Node.js and npm are installed and added to your PATH. Download the latest Node.js installer from https://nodejs.org and restart your terminal after installation.
+## 项目结构
 
----
+```
+proj-claude-mem/
+├── src/
+│   ├── cli/handlers/          # Hook 处理器（session-init, observation, context）
+│   ├── services/
+│   │   ├── sqlite/            # SessionStore, SessionSearch, 数据库迁移
+│   │   ├── worker/            # Worker 服务核心（DatabaseManager, SDKAgent, SessionManager）
+│   │   │   └── http/routes/   # Express API 路由（SessionRoutes, SearchRoutes）
+│   │   └── context/           # 上下文构建器
+│   ├── shared/
+│   │   ├── paths.ts           # resolveProjectDbPath(), findGitRoot()
+│   │   └── project-db.ts      # DbConnectionPool, ensureGitignore()
+│   └── utils/                 # 日志、标签处理等工具
+├── tests/
+│   ├── shared/                # 路径解析、连接池单元测试
+│   ├── integration/           # 项目隔离集成测试
+│   └── sqlite/                # SessionStore 测试
+├── plugin/                    # 构建产物（hooks, skills, UI）
+├── cursor-hooks/              # Cursor IDE 集成（实验性）
+├── docs/
+│   ├── SESSION_ID_ARCHITECTURE.md   # Session ID 双 ID 架构
+│   └── context/                     # hooks/agent-sdk 参考文档
+└── scripts/                   # 构建和同步脚本
+```
 
-## Configuration
-
-Settings are managed in `~/.claude-mem/settings.json` (auto-created with defaults on first run). Configure AI model, worker port, data directory, log level, and context injection settings.
-
-See the **[Configuration Guide](https://docs.claude-mem.ai/configuration)** for all available settings and examples.
-
----
-
-## Development
-
-See the **[Development Guide](https://docs.claude-mem.ai/development)** for build instructions, testing, and contribution workflow.
-
----
-
-## Troubleshooting
-
-If experiencing issues, describe the problem to Claude and the troubleshoot skill will automatically diagnose and provide fixes.
-
-See the **[Troubleshooting Guide](https://docs.claude-mem.ai/troubleshooting)** for common issues and solutions.
-
----
-
-## Bug Reports
-
-Create comprehensive bug reports with the automated generator:
+## 开发与测试
 
 ```bash
-cd ~/.claude/plugins/marketplaces/thedotmack
-npm run bug-report
+# 运行所有测试
+bun test
+
+# 运行项目隔离相关测试
+bun test tests/shared/resolve-project-db-path.test.ts
+bun test tests/shared/project-db.test.ts
+bun test tests/sqlite/session-store-dbpath.test.ts
+bun test tests/integration/project-isolation.test.ts
+
+# 按模块运行
+bun test tests/sqlite/          # 数据库层
+bun test tests/worker/agents/   # Agent 层
+bun test tests/context/         # 上下文层
+
+# 构建并部署
+bun run build-and-sync
+
+# 查看 worker 日志
+bun run worker:logs
 ```
 
-## Contributing
+### 测试覆盖
 
-Contributions are welcome! Please:
+- 18 个项目隔离专项测试，覆盖路径解析、连接池、gitignore 管理、worktree 共享、数据隔离
+- 完整测试套件 1042 个测试
 
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes with tests
-4. Update documentation
-5. Submit a Pull Request
+## 致谢
 
-See [Development Guide](https://docs.claude-mem.ai/development) for contribution workflow.
+本项目 fork 自 [claude-mem](https://github.com/thedotmack/claude-mem)（作者：Alex Newman），基于 AGPL-3.0 许可证。
 
----
-
-## License
-
-This project is licensed under the **GNU Affero General Public License v3.0** (AGPL-3.0).
-
-Copyright (C) 2025 Alex Newman (@thedotmack). All rights reserved.
-
-See the [LICENSE](LICENSE) file for full details.
-
-**What This Means:**
-
-- You can use, modify, and distribute this software freely
-- If you modify and deploy on a network server, you must make your source code available
-- Derivative works must also be licensed under AGPL-3.0
-- There is NO WARRANTY for this software
-
-**Note on Ragtime**: The `ragtime/` directory is licensed separately under the **PolyForm Noncommercial License 1.0.0**. See [ragtime/LICENSE](ragtime/LICENSE) for details.
-
----
-
-## Support
-
-- **Documentation**: [docs/](docs/)
-- **Issues**: [GitHub Issues](https://github.com/thedotmack/claude-mem/issues)
-- **Repository**: [github.com/thedotmack/claude-mem](https://github.com/thedotmack/claude-mem)
-- **Official X Account**: [@Claude_Memory](https://x.com/Claude_Memory)
-- **Official Discord**: [Join Discord](https://discord.com/invite/J4wttp9vDu)
-- **Author**: Alex Newman ([@thedotmack](https://github.com/thedotmack))
-
----
-
-**Built with Claude Agent SDK** | **Powered by Claude Code** | **Made with TypeScript**
+上游项目提供了完整的 Claude Code 持久记忆系统，本 fork 在此基础上增加了 per-project 数据库隔离功能。
