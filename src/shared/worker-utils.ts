@@ -1,5 +1,6 @@
 import path from "path";
 import { readFileSync } from "fs";
+import { execFileSync } from "child_process";
 import { logger } from "../utils/logger.js";
 import { HOOK_TIMEOUTS, getTimeout } from "./hook-constants.js";
 import { SettingsDefaultsManager } from "./SettingsDefaultsManager.js";
@@ -172,9 +173,41 @@ async function checkWorkerVersion(): Promise<void> {
 
 
 /**
+ * Try to start the worker by spawning the start command.
+ * This is a fallback for when the worker crashed after SessionStart.
+ * Returns true if the worker became healthy after the spawn attempt.
+ */
+async function tryStartWorker(): Promise<boolean> {
+  try {
+    const workerScript = path.join(MARKETPLACE_ROOT, 'scripts', 'worker-service.cjs');
+    const bunRunner = path.join(MARKETPLACE_ROOT, 'scripts', 'bun-runner.js');
+
+    logger.info('SYSTEM', 'Worker not healthy — attempting auto-start from hook');
+
+    // Spawn worker start synchronously with a short timeout.
+    // The start command itself spawns the daemon and waits for health.
+    // Timeout 12s: stays within Claude Code's ~15s hook timeout budget.
+    execFileSync('node', [bunRunner, workerScript, 'start'], {
+      timeout: 12_000,
+      stdio: 'ignore'
+    });
+
+    // Verify the worker is now healthy
+    return await isWorkerHealthy();
+  } catch (error) {
+    const exitCode = (error as { status?: number })?.status;
+    logger.warn('SYSTEM', 'Worker auto-start failed', {
+      error: error instanceof Error ? error.message : String(error),
+      exitCode
+    });
+    return false;
+  }
+}
+
+/**
  * Ensure worker service is running
- * Quick health check - returns false if worker not healthy (doesn't block)
- * Port might be in use by another process, or worker might not be started yet
+ * Quick health check first; if unhealthy, attempts auto-start once.
+ * This prevents silent hook degradation when the worker crashes after SessionStart.
  */
 export async function ensureWorkerRunning(): Promise<boolean> {
   // Quick health check (single attempt, no polling)
@@ -184,14 +217,19 @@ export async function ensureWorkerRunning(): Promise<boolean> {
       return true;  // Worker healthy
     }
   } catch (e) {
-    // Not healthy - log for debugging
+    // Not healthy - will try auto-start below
     logger.debug('SYSTEM', 'Worker health check failed', {
       error: e instanceof Error ? e.message : String(e)
     });
   }
 
-  // Port might be in use by something else, or worker not started
-  // Return false but don't throw - let caller decide how to handle
-  logger.warn('SYSTEM', 'Worker not healthy, hook will proceed gracefully');
+  // Worker not healthy — try to start it (fixes post-compaction crash scenario)
+  const started = await tryStartWorker();
+  if (started) {
+    logger.info('SYSTEM', 'Worker auto-started successfully from hook');
+    return true;
+  }
+
+  logger.warn('SYSTEM', 'Worker not healthy and auto-start failed, hook will proceed gracefully');
   return false;
 }
