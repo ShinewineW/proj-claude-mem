@@ -12,6 +12,7 @@
 import type { EventHandler, NormalizedHookInput, HookResult } from '../types.js';
 import { ensureWorkerRunning, getWorkerPort } from '../../shared/worker-utils.js';
 import { logger } from '../../utils/logger.js';
+import { resolveProjectDbPath } from '../../shared/paths.js';
 
 export const sessionCompleteHandler: EventHandler = {
   async execute(input: NormalizedHookInput): Promise<HookResult> {
@@ -22,8 +23,9 @@ export const sessionCompleteHandler: EventHandler = {
       return { continue: true, suppressOutput: true };
     }
 
-    const { sessionId } = input;
+    const { sessionId, cwd } = input;
     const port = getWorkerPort();
+    const dbPath = resolveProjectDbPath(cwd);
 
     if (!sessionId) {
       logger.warn('HOOK', 'session-complete: Missing sessionId, skipping');
@@ -41,7 +43,8 @@ export const sessionCompleteHandler: EventHandler = {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          contentSessionId: sessionId
+          contentSessionId: sessionId,
+          dbPath
         })
       });
 

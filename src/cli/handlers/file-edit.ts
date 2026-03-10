@@ -9,6 +9,7 @@ import type { EventHandler, NormalizedHookInput, HookResult } from '../types.js'
 import { ensureWorkerRunning, getWorkerPort } from '../../shared/worker-utils.js';
 import { logger } from '../../utils/logger.js';
 import { HOOK_EXIT_CODES } from '../../shared/hook-constants.js';
+import { resolveProjectDbPath } from '../../shared/paths.js';
 
 export const fileEditHandler: EventHandler = {
   async execute(input: NormalizedHookInput): Promise<HookResult> {
@@ -37,6 +38,9 @@ export const fileEditHandler: EventHandler = {
       throw new Error(`Missing cwd in FileEdit hook input for session ${sessionId}, file ${filePath}`);
     }
 
+    // Compute project-specific DB path (after cwd validation)
+    const dbPath = resolveProjectDbPath(cwd);
+
     // Send to worker as an observation with file edit metadata
     // The observation handler on the worker will process this appropriately
     try {
@@ -48,7 +52,8 @@ export const fileEditHandler: EventHandler = {
           tool_name: 'write_file',
           tool_input: { filePath, edits },
           tool_response: { success: true },
-          cwd
+          cwd,
+          dbPath
         })
         // Note: Removed signal to avoid Windows Bun cleanup issue (libuv assertion)
       });

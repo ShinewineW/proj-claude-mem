@@ -9,6 +9,7 @@ import type { EventHandler, NormalizedHookInput, HookResult } from '../types.js'
 import { ensureWorkerRunning, getWorkerPort } from '../../shared/worker-utils.js';
 import { HOOK_EXIT_CODES } from '../../shared/hook-constants.js';
 import { getProjectName } from '../../utils/project-name.js';
+import { resolveProjectDbPath } from '../../shared/paths.js';
 
 export const userMessageHandler: EventHandler = {
   async execute(input: NormalizedHookInput): Promise<HookResult> {
@@ -20,13 +21,15 @@ export const userMessageHandler: EventHandler = {
     }
 
     const port = getWorkerPort();
-    const project = getProjectName(input.cwd ?? process.cwd());
+    const cwd = input.cwd ?? process.cwd();
+    const project = getProjectName(cwd);
+    const dbPath = resolveProjectDbPath(cwd);
 
     // Fetch formatted context directly from worker API
     // Note: Removed AbortSignal.timeout to avoid Windows Bun cleanup issue (libuv assertion)
     try {
       const response = await fetch(
-        `http://127.0.0.1:${port}/api/context/inject?project=${encodeURIComponent(project)}&colors=true`,
+        `http://127.0.0.1:${port}/api/context/inject?project=${encodeURIComponent(project)}&colors=true&dbPath=${encodeURIComponent(dbPath)}`,
         { method: 'GET' }
       );
 

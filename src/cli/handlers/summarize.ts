@@ -11,6 +11,7 @@ import { ensureWorkerRunning, getWorkerPort, fetchWithTimeout } from '../../shar
 import { logger } from '../../utils/logger.js';
 import { extractLastMessage } from '../../shared/transcript-parser.js';
 import { HOOK_EXIT_CODES, HOOK_TIMEOUTS, getTimeout } from '../../shared/hook-constants.js';
+import { resolveProjectDbPath } from '../../shared/paths.js';
 
 const SUMMARIZE_TIMEOUT_MS = getTimeout(HOOK_TIMEOUTS.DEFAULT);
 
@@ -23,9 +24,10 @@ export const summarizeHandler: EventHandler = {
       return { continue: true, suppressOutput: true, exitCode: HOOK_EXIT_CODES.SUCCESS };
     }
 
-    const { sessionId, transcriptPath } = input;
+    const { sessionId, cwd, transcriptPath } = input;
 
     const port = getWorkerPort();
+    const dbPath = resolveProjectDbPath(cwd);
 
     // Validate required fields before processing
     if (!transcriptPath) {
@@ -52,7 +54,8 @@ export const summarizeHandler: EventHandler = {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           contentSessionId: sessionId,
-          last_assistant_message: lastAssistantMessage
+          last_assistant_message: lastAssistantMessage,
+          dbPath
         }),
       },
       SUMMARIZE_TIMEOUT_MS
