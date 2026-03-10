@@ -97,7 +97,8 @@ export class DataRoutes extends BaseRouteHandler {
     const id = this.parseIntParam(req, res, 'id');
     if (id === null) return;
 
-    const store = this.dbManager.getSessionStore();
+    const dbPath = (req.query.dbPath as string) || undefined;
+    const store = this.dbManager.getSessionStore(dbPath);
     const observation = store.getObservationById(id);
 
     if (!observation) {
@@ -152,7 +153,8 @@ export class DataRoutes extends BaseRouteHandler {
     const id = this.parseIntParam(req, res, 'id');
     if (id === null) return;
 
-    const store = this.dbManager.getSessionStore();
+    const dbPath = (req.query.dbPath as string) || undefined;
+    const store = this.dbManager.getSessionStore(dbPath);
     const sessions = store.getSessionSummariesByIds([id]);
 
     if (sessions.length === 0) {
@@ -181,7 +183,8 @@ export class DataRoutes extends BaseRouteHandler {
       return;
     }
 
-    const store = this.dbManager.getSessionStore();
+    const dbPath = (req.body.dbPath as string) || undefined;
+    const store = this.dbManager.getSessionStore(dbPath);
     const sessions = store.getSdkSessionsBySessionIds(memorySessionIds);
     res.json(sessions);
   });
@@ -194,7 +197,8 @@ export class DataRoutes extends BaseRouteHandler {
     const id = this.parseIntParam(req, res, 'id');
     if (id === null) return;
 
-    const store = this.dbManager.getSessionStore();
+    const dbPath = (req.query.dbPath as string) || undefined;
+    const store = this.dbManager.getSessionStore(dbPath);
     const prompts = store.getUserPromptsByIds([id]);
 
     if (prompts.length === 0) {
@@ -403,7 +407,8 @@ export class DataRoutes extends BaseRouteHandler {
       promptsSkipped: 0
     };
 
-    const store = this.dbManager.getSessionStore();
+    const dbPath = (req.body.dbPath as string) || undefined;
+    const store = this.dbManager.getSessionStore(dbPath);
 
     // Import sessions first (dependency for everything else)
     if (Array.isArray(sessions)) {
@@ -466,7 +471,8 @@ export class DataRoutes extends BaseRouteHandler {
    */
   private handleGetPendingQueue = this.wrapHandler((req: Request, res: Response): void => {
     const { PendingMessageStore } = require('../../../sqlite/PendingMessageStore.js');
-    const pendingStore = new PendingMessageStore(this.dbManager.getSessionStore().db, 3);
+    const dbPath = (req.query.dbPath as string) || undefined;
+    const pendingStore = new PendingMessageStore(this.dbManager.getSessionStore(dbPath).db, 3);
 
     // Get queue contents (pending, processing, failed)
     const queueMessages = pendingStore.getQueueMessages();
@@ -520,7 +526,8 @@ export class DataRoutes extends BaseRouteHandler {
    */
   private handleClearFailedQueue = this.wrapHandler((req: Request, res: Response): void => {
     const { PendingMessageStore } = require('../../../sqlite/PendingMessageStore.js');
-    const pendingStore = new PendingMessageStore(this.dbManager.getSessionStore().db, 3);
+    const dbPath = (req.query.dbPath as string) || undefined;
+    const pendingStore = new PendingMessageStore(this.dbManager.getSessionStore(dbPath).db, 3);
 
     const clearedCount = pendingStore.clearFailed();
 
@@ -539,7 +546,8 @@ export class DataRoutes extends BaseRouteHandler {
    */
   private handleClearAllQueue = this.wrapHandler((req: Request, res: Response): void => {
     const { PendingMessageStore } = require('../../../sqlite/PendingMessageStore.js');
-    const pendingStore = new PendingMessageStore(this.dbManager.getSessionStore().db, 3);
+    const dbPath = (req.query.dbPath as string) || undefined;
+    const pendingStore = new PendingMessageStore(this.dbManager.getSessionStore(dbPath).db, 3);
 
     const clearedCount = pendingStore.clearAll();
 

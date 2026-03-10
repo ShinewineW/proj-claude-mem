@@ -16,7 +16,7 @@ import { exec } from 'child_process';
 import { promisify } from 'util';
 import { logger } from '../../utils/logger.js';
 import { getWorkerPort } from '../../shared/worker-utils.js';
-import { DATA_DIR, MARKETPLACE_ROOT, CLAUDE_CONFIG_DIR } from '../../shared/paths.js';
+import { DATA_DIR, MARKETPLACE_ROOT, CLAUDE_CONFIG_DIR, resolveProjectDbPath } from '../../shared/paths.js';
 import {
   readCursorRegistry as readCursorRegistryFromFile,
   writeCursorRegistry as writeCursorRegistryToFile,
@@ -103,8 +103,9 @@ export async function updateCursorContextForProject(projectName: string, port: n
 
   try {
     // Fetch fresh context from worker
+    const dbPath = resolveProjectDbPath(entry.workspacePath);
     const response = await fetch(
-      `http://127.0.0.1:${port}/api/context/inject?project=${encodeURIComponent(projectName)}`
+      `http://127.0.0.1:${port}/api/context/inject?project=${encodeURIComponent(projectName)}&dbPath=${encodeURIComponent(dbPath)}`
     );
 
     if (!response.ok) return;
@@ -409,8 +410,9 @@ async function setupProjectContext(targetDir: string, workspaceRoot: string): Pr
     const healthResponse = await fetch(`http://127.0.0.1:${port}/api/readiness`);
     if (healthResponse.ok) {
       // Fetch context
+      const dbPath = resolveProjectDbPath(workspaceRoot);
       const contextResponse = await fetch(
-        `http://127.0.0.1:${port}/api/context/inject?project=${encodeURIComponent(projectName)}`
+        `http://127.0.0.1:${port}/api/context/inject?project=${encodeURIComponent(projectName)}&dbPath=${encodeURIComponent(dbPath)}`
       );
       if (contextResponse.ok) {
         const context = await contextResponse.text();

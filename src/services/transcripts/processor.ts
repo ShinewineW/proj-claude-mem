@@ -8,6 +8,7 @@ import { getProjectContext, getProjectName } from '../../utils/project-name.js';
 import { writeAgentsMd } from '../../utils/agents-md-utils.js';
 import { resolveFieldSpec, resolveFields, matchesRule } from './field-utils.js';
 import { expandHomePath } from './config.js';
+import { resolveProjectDbPath } from '../../shared/paths.js';
 import type { TranscriptSchema, WatchTarget, SchemaEvent } from './types.js';
 
 interface SessionState {
@@ -326,7 +327,8 @@ export class TranscriptEventProcessor {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           contentSessionId: session.sessionId,
-          last_assistant_message: lastAssistantMessage
+          last_assistant_message: lastAssistantMessage,
+          dbPath: resolveProjectDbPath(session.cwd ?? process.cwd())
         })
       });
     } catch (error) {
@@ -349,10 +351,11 @@ export class TranscriptEventProcessor {
     const context = getProjectContext(cwd);
     const projectsParam = context.allProjects.join(',');
     const port = getWorkerPort();
+    const dbPath = resolveProjectDbPath(cwd);
 
     try {
       const response = await fetch(
-        `http://127.0.0.1:${port}/api/context/inject?projects=${encodeURIComponent(projectsParam)}`
+        `http://127.0.0.1:${port}/api/context/inject?projects=${encodeURIComponent(projectsParam)}&dbPath=${encodeURIComponent(dbPath)}`
       );
       if (!response.ok) return;
 

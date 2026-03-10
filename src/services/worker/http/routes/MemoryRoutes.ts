@@ -24,10 +24,10 @@ export class MemoryRoutes extends BaseRouteHandler {
 
   /**
    * POST /api/memory/save - Save a manual memory/observation
-   * Body: { text: string, title?: string, project?: string }
+   * Body: { text: string, title?: string, project?: string, dbPath?: string }
    */
   private handleSaveMemory = this.wrapHandler(async (req: Request, res: Response): Promise<void> => {
-    const { text, title, project } = req.body;
+    const { text, title, project, dbPath: requestDbPath } = req.body;
     const targetProject = project || this.defaultProject;
 
     if (!text || typeof text !== 'string' || text.trim().length === 0) {
@@ -35,7 +35,7 @@ export class MemoryRoutes extends BaseRouteHandler {
       return;
     }
 
-    const sessionStore = this.dbManager.getSessionStore();
+    const sessionStore = this.dbManager.getSessionStore(requestDbPath || undefined);
     const chromaSync = this.dbManager.getChromaSync();
 
     // 1. Get or create manual session for project

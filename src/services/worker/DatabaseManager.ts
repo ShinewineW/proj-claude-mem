@@ -20,6 +20,34 @@ import { USER_SETTINGS_PATH } from '../../shared/paths.js';
 import { logger } from '../../utils/logger.js';
 import type { DBSession } from '../worker-types.js';
 
+/**
+ * Validate dbPath from HTTP requests to prevent path traversal attacks.
+ *
+ * Rules:
+ * - undefined is allowed (triggers fallback chain)
+ * - Must be an absolute path (starts with /)
+ * - Must not contain '..' (path traversal)
+ * - Must end with 'mem.db' (standard database filename)
+ *
+ * Raises:
+ *   Error: If dbPath violates any validation rule.
+ */
+export function validateDbPath(dbPath: string | undefined | null): void {
+  if (dbPath === undefined || dbPath === null) return;
+
+  if (dbPath === '' || !dbPath.startsWith('/')) {
+    throw new Error(`Invalid dbPath: must be an absolute path, got "${dbPath}"`);
+  }
+
+  if (dbPath.includes('..')) {
+    throw new Error(`Invalid dbPath: path traversal (..) is not allowed, got "${dbPath}"`);
+  }
+
+  if (!dbPath.endsWith('mem.db')) {
+    throw new Error(`Invalid dbPath: must end with mem.db, got "${dbPath}"`);
+  }
+}
+
 export class DatabaseManager {
   private chromaSync: ChromaSync | null = null;
   private pool: DbConnectionPool;
@@ -77,6 +105,7 @@ export class DatabaseManager {
    * Without dbPath, returns the default or last-active store.
    */
   getSessionStore(dbPath?: string): SessionStore {
+    validateDbPath(dbPath);
     if (dbPath) return this.pool.getStore(dbPath);
     if (this.defaultDbPath) return this.pool.getStore(this.defaultDbPath);
     const lastActive = this.pool.getLastActiveStore();
@@ -90,6 +119,7 @@ export class DatabaseManager {
    * Without dbPath, returns the default or last-active search.
    */
   getSessionSearch(dbPath?: string): SessionSearch {
+    validateDbPath(dbPath);
     if (dbPath) return this.pool.getSearch(dbPath);
     if (this.defaultDbPath) return this.pool.getSearch(this.defaultDbPath);
     const lastActive = this.pool.getLastActiveSearch();
