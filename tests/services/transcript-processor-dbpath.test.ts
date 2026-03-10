@@ -115,7 +115,7 @@ mock.module("../../src/shared/SettingsDefaultsManager.js", () => ({
 }));
 
 mock.module("../../src/shared/hook-constants.js", () => ({
-  HOOK_EXIT_CODES: { SUCCESS: 0, NON_BLOCKING_ERROR: 1, BLOCKING_ERROR: 2 },
+  HOOK_EXIT_CODES: { SUCCESS: 0, FAILURE: 1, BLOCKING_ERROR: 2, USER_MESSAGE_ONLY: 3 },
   HOOK_TIMEOUTS: { DEFAULT: 30000 },
   getTimeout: (v: number) => v,
 }));
