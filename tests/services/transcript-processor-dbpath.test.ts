@@ -101,19 +101,23 @@ mock.module("../../src/services/transcripts/config.js", () => ({
   expandHomePath: (p: string) => p,
 }));
 
-// Mock handlers that queueSummary/updateContext don't use directly
-// but handleSessionEnd calls sessionCompleteHandler
-mock.module("../../src/cli/handlers/session-init.js", () => ({
-  sessionInitHandler: { execute: async () => {} },
+// Mock transitive dependencies of handlers imported by processor.ts
+// (session-init, observation, file-edit, session-complete)
+// We do NOT mock the handlers themselves to avoid polluting other test files.
+mock.module("../../src/utils/project-filter.js", () => ({
+  isProjectExcluded: () => false,
 }));
-mock.module("../../src/cli/handlers/observation.js", () => ({
-  observationHandler: { execute: async () => {} },
+
+mock.module("../../src/shared/SettingsDefaultsManager.js", () => ({
+  SettingsDefaultsManager: {
+    loadFromFile: () => ({ CLAUDE_MEM_EXCLUDED_PROJECTS: "" }),
+  },
 }));
-mock.module("../../src/cli/handlers/file-edit.js", () => ({
-  fileEditHandler: { execute: async () => {} },
-}));
-mock.module("../../src/cli/handlers/session-complete.js", () => ({
-  sessionCompleteHandler: { execute: async () => {} },
+
+mock.module("../../src/shared/hook-constants.js", () => ({
+  HOOK_EXIT_CODES: { SUCCESS: 0, NON_BLOCKING_ERROR: 1, BLOCKING_ERROR: 2 },
+  HOOK_TIMEOUTS: { DEFAULT: 30000 },
+  getTimeout: (v: number) => v,
 }));
 
 describe("TranscriptEventProcessor dbPath threading", () => {
