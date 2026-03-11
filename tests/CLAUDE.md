@@ -1,58 +1,35 @@
-<claude-mem-context>
-# Recent Activity
+# Test Conventions
 
-### Nov 10, 2025
+**Framework**: `bun:test` (native, no external deps). Run: `/opt/homebrew/bin/bun test`
 
-| ID | Time | T | Title | Read |
-|----|------|---|-------|------|
-| #6358 | 3:14 PM | 🔵 | SDK Agent Spatial Awareness Implementation | ~309 |
+## Patterns
 
-### Nov 21, 2025
+**In-memory SQLite** (preferred over mocks for DB logic):
+```typescript
+db = new Database(':memory:');
+new MigrationRunner(db).runAllMigrations();
+```
 
-| ID | Time | T | Title | Read |
-|----|------|---|-------|------|
-| #13289 | 2:20 PM | 🟣 | Comprehensive Test Suite for Transcript Transformation | ~320 |
+**mock.module()** — process-level, must be called BEFORE imports:
+```typescript
+mock.module('../../src/shared/paths.js', () => ({ resolveProjectDbPath: () => '/test/mem.db' }));
+```
+**Gotcha**: Pollutes all test files in same process. Only mock leaf deps (paths.ts, SettingsDefaultsManager), never mock handler modules.
 
-### Nov 23, 2025
+**Logger suppression**: `spyOn(logger, 'info').mockImplementation(() => {})` in `beforeEach`, restore in `afterEach`.
 
-| ID | Time | T | Title | Read |
-|----|------|---|-------|------|
-| #14617 | 6:15 PM | 🟣 | Test Suite Successfully Passing - All 8 Tests Green | ~498 |
-| #14615 | 6:14 PM | 🟣 | YAGNI-Focused Test Suite for Transcript Transformation | ~457 |
+**Env vars**: Set BEFORE importing the module under test (ES module hoisting).
 
-### Dec 5, 2025
+**Temp dirs**: `join(tmpdir(), \`test-${Date.now()}\`)` with `rmSync` in `afterEach`.
 
-| ID | Time | T | Title | Read |
-|----|------|---|-------|------|
-| #20732 | 9:07 PM | 🔵 | Smart Install Version Marker Tests for Upgrade Detection | ~452 |
-| #20399 | 7:17 PM | 🔵 | Smart install tests validate version tracking with backward compatibility | ~311 |
-| #20392 | 7:15 PM | 🔵 | Memory tag stripping tests validate dual-tag system for JSON context filtering | ~404 |
-| #20391 | " | 🔵 | User prompt tag stripping tests validate privacy controls for memory exclusion | ~182 |
+## Structure
 
-### Jan 3, 2026
+Tests mirror source: `src/services/sqlite/` → `tests/services/sqlite/` or `tests/sqlite/`. Each file is self-contained (no shared conftest/fixtures).
 
-| ID | Time | T | Title | Read |
-|----|------|---|-------|------|
-| #36663 | 11:06 PM | ✅ | Third Validation Test Updated: Resume Safety Check Now Uses NULL Comparison | ~417 |
-| #36662 | " | ✅ | Second Validation Test Updated: Post-Capture Check Now Uses NULL Comparison | ~418 |
-| #36661 | 11:05 PM | ✅ | First Validation Test Updated: Placeholder Detection Now Checks for NULL | ~482 |
-| #36660 | " | ✅ | Updated Session ID Usage Validation Test Header to Reflect NULL-Based Architecture | ~588 |
-| #36659 | " | ✅ | Sixth Test Fix: Updated Multi-Observation Test to Use Memory Session ID | ~486 |
-| #36658 | " | ✅ | Fifth Test Fix: Updated storeSummary Tests to Use Actual Memory Session ID After Capture | ~555 |
-| #36657 | 11:04 PM | ✅ | Fourth Test Fix: Updated storeObservation Tests to Use Actual Memory Session ID After Capture | ~547 |
-| #36656 | " | ✅ | Third Test Fix: Updated getSessionById Test to Expect NULL for Uncaptured Memory Session ID | ~436 |
-| #36655 | " | ✅ | Second Test Fix: Updated updateMemorySessionId Test to Expect NULL Before Update | ~395 |
-| #36654 | " | ✅ | First Test Fix: Updated Memory Session ID Initialization Test to Expect NULL | ~426 |
-| #36650 | 11:02 PM | 🔵 | Phase 1 Analysis Reveals Implementation-Test Mismatch on NULL vs Placeholder Initialization | ~687 |
-| #36648 | " | 🔵 | Session ID Refactor Test Suite Documents Database Migration 17 and Dual ID System | ~651 |
-| #36647 | 11:01 PM | 🔵 | SessionStore Test Suite Validates Prompt Counting and Timestamp Override Features | ~506 |
-| #36646 | " | 🔵 | Session ID Architecture Revealed Through Test File Analysis | ~611 |
+## Run Commands
 
-### Jan 4, 2026
-
-| ID | Time | T | Title | Read |
-|----|------|---|-------|------|
-| #36858 | 1:50 AM | 🟣 | Phase 1 Implementation Completed via Subagent | ~499 |
-| #36854 | 1:49 AM | 🟣 | gemini-3-flash Model Tests Added to GeminiAgent Test Suite | ~470 |
-| #36851 | " | 🔵 | GeminiAgent Test Structure Analyzed | ~565 |
-</claude-mem-context>
+```bash
+/opt/homebrew/bin/bun test                    # All tests
+/opt/homebrew/bin/bun test tests/sqlite/      # Database tests
+/opt/homebrew/bin/bun test tests/hooks/       # Hook structure tests
+```
