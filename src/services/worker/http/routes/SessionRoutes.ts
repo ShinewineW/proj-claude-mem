@@ -93,8 +93,8 @@ export class SessionRoutes extends BaseRouteHandler {
    */
   private static readonly STALE_GENERATOR_THRESHOLD_MS = 30_000; // 30 seconds (#1099)
 
-  private ensureGeneratorRunning(sessionDbId: number, source: string): void {
-    const session = this.sessionManager.getSession(sessionDbId);
+  private ensureGeneratorRunning(sessionDbId: number, source: string, dbPath?: string): void {
+    const session = this.sessionManager.getSession(sessionDbId, dbPath);
     if (!session) return;
 
     // GUARD: Prevent duplicate spawns
@@ -282,7 +282,7 @@ export class SessionRoutes extends BaseRouteHandler {
               // Delay before restart with exponential backoff
               setTimeout(() => {
                 this.crashRecoveryScheduled.delete(sessionDbId);
-                const stillExists = this.sessionManager.getSession(sessionDbId);
+                const stillExists = this.sessionManager.getSession(sessionDbId, session.dbPath);
                 if (stillExists && !stillExists.generatorPromise) {
                   this.startGeneratorWithProvider(stillExists, this.getSelectedProvider(), 'crash-recovery');
                 }
@@ -383,7 +383,7 @@ export class SessionRoutes extends BaseRouteHandler {
     }
 
     // Idempotent: ensure generator is running (matches handleObservations / handleSummarize)
-    this.ensureGeneratorRunning(sessionDbId, 'init');
+    this.ensureGeneratorRunning(sessionDbId, 'init', dbPath);
 
     // Broadcast session started event
     this.eventBroadcaster.broadcastSessionStarted(sessionDbId, session.project);
@@ -410,7 +410,7 @@ export class SessionRoutes extends BaseRouteHandler {
     }, dbPath);
 
     // CRITICAL: Ensure SDK agent is running to consume the queue
-    this.ensureGeneratorRunning(sessionDbId, 'observation');
+    this.ensureGeneratorRunning(sessionDbId, 'observation', dbPath);
 
     // Broadcast observation queued event
     this.eventBroadcaster.broadcastObservationQueued(sessionDbId);
@@ -431,7 +431,7 @@ export class SessionRoutes extends BaseRouteHandler {
     this.sessionManager.queueSummarize(sessionDbId, last_assistant_message, dbPath);
 
     // CRITICAL: Ensure SDK agent is running to consume the queue
-    this.ensureGeneratorRunning(sessionDbId, 'summarize');
+    this.ensureGeneratorRunning(sessionDbId, 'summarize', dbPath);
 
     // Broadcast summarize queued event
     this.eventBroadcaster.broadcastSummarizeQueued();
@@ -446,7 +446,8 @@ export class SessionRoutes extends BaseRouteHandler {
     const sessionDbId = this.parseIntParam(req, res, 'sessionDbId');
     if (sessionDbId === null) return;
 
-    const session = this.sessionManager.getSession(sessionDbId);
+    const dbPath = req.body?.dbPath;
+    const session = this.sessionManager.getSession(sessionDbId, dbPath);
 
     if (!session) {
       res.json({ status: 'not_found' });
@@ -473,7 +474,8 @@ export class SessionRoutes extends BaseRouteHandler {
     const sessionDbId = this.parseIntParam(req, res, 'sessionDbId');
     if (sessionDbId === null) return;
 
-    await this.completionHandler.completeByDbId(sessionDbId);
+    const dbPath = req.body?.dbPath;
+    await this.completionHandler.completeByDbId(sessionDbId, dbPath);
 
     res.json({ status: 'deleted' });
   });
@@ -486,7 +488,8 @@ export class SessionRoutes extends BaseRouteHandler {
     const sessionDbId = this.parseIntParam(req, res, 'sessionDbId');
     if (sessionDbId === null) return;
 
-    await this.completionHandler.completeByDbId(sessionDbId);
+    const dbPath = req.body?.dbPath;
+    await this.completionHandler.completeByDbId(sessionDbId, dbPath);
 
     res.json({ success: true });
   });
@@ -569,7 +572,7 @@ export class SessionRoutes extends BaseRouteHandler {
       }, dbPath);
 
       // Ensure SDK agent is running
-      this.ensureGeneratorRunning(sessionDbId, 'observation');
+      this.ensureGeneratorRunning(sessionDbId, 'observation', dbPath);
 
       // Broadcast observation queued event
       this.eventBroadcaster.broadcastObservationQueued(sessionDbId);
@@ -619,7 +622,7 @@ export class SessionRoutes extends BaseRouteHandler {
     this.sessionManager.queueSummarize(sessionDbId, last_assistant_message, dbPath);
 
     // Ensure SDK agent is running
-    this.ensureGeneratorRunning(sessionDbId, 'summarize');
+    this.ensureGeneratorRunning(sessionDbId, 'summarize', dbPath);
 
     // Broadcast summarize queued event
     this.eventBroadcaster.broadcastSummarizeQueued();
@@ -757,7 +760,7 @@ export class SessionRoutes extends BaseRouteHandler {
 
     // Step 6: Check if SDK agent is already running for this session (#1079)
     // If contextInjected is true, the hook should skip re-initializing the SDK agent
-    const contextInjected = this.sessionManager.getSession(sessionDbId) !== undefined;
+    const contextInjected = this.sessionManager.getSession(sessionDbId, dbPath) !== undefined;
 
     // Debug-level log since CREATED already logged the key info
     logger.debug('SESSION', 'User prompt saved', {
