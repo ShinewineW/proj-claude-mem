@@ -67,9 +67,13 @@ export class DbConnectionPool {
     for (const [dbPath, entry] of this.connections) {
       try {
         entry.store.close();
+      } catch (e) {
+        logger.debug('POOL', `Error closing store for ${dbPath}`, {}, e as Error);
+      }
+      try {
         entry.search.close();
       } catch (e) {
-        logger.debug('POOL', `Error closing connection for ${dbPath}`, {}, e as Error);
+        logger.debug('POOL', `Error closing search for ${dbPath}`, {}, e as Error);
       }
     }
     this.connections.clear();
@@ -88,8 +92,16 @@ export class DbConnectionPool {
     if (this.connections.size >= this.maxConnections) {
       const oldest = this.connections.keys().next().value!;
       const oldEntry = this.connections.get(oldest)!;
-      oldEntry.store.close();
-      oldEntry.search.close();
+      try {
+        oldEntry.store.close();
+      } catch (e) {
+        logger.debug('POOL', `Error closing store during eviction for ${oldest}`, {}, e as Error);
+      }
+      try {
+        oldEntry.search.close();
+      } catch (e) {
+        logger.debug('POOL', `Error closing search during eviction for ${oldest}`, {}, e as Error);
+      }
       this.connections.delete(oldest);
       if (oldest === this.lastActiveDbPath) {
         this.lastActiveDbPath = null;

@@ -149,7 +149,24 @@ export async function generateContext(
   if (config.retention?.enabled) {
     for (const proj of projects) {
       try {
-        RetentionManager.cleanup(db.getDatabase(), proj, config.retention);
+        const result = RetentionManager.cleanup(db.getDatabase(), proj, config.retention);
+        // Fire-and-forget Chroma cleanup for deleted observations
+        if (result.deletedObservationIds.length > 0 && input?.dbPath) {
+          import('../sync/ChromaSync.js').then(({ ChromaSync }) =>
+            import('../../shared/chroma-utils.js').then(({ getCollectionName }) => {
+              const collectionName = getCollectionName(input!.dbPath!);
+              const chromaSync = new ChromaSync(collectionName);
+              chromaSync.deleteObservationDocs(result.deletedObservationIds).catch(e => {
+                logger.warn('CONTEXT', 'Chroma cleanup failed (non-fatal)', { project: proj }, e as Error);
+              });
+            })
+          ).catch(e => {
+            logger.debug('CONTEXT', 'Chroma cleanup setup failed (non-fatal)', {
+              project: proj,
+              error: e instanceof Error ? e.message : String(e),
+            });
+          });
+        }
       } catch (error) {
         logger.warn('CONTEXT', 'Retention cleanup failed, continuing', {
           project: proj,

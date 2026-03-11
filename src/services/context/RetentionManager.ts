@@ -25,6 +25,7 @@ export interface CleanupResult {
   kept: number;
   orphanedPrompts: number;
   elapsed_ms: number;
+  deletedObservationIds: number[];
 }
 
 /** Observation type importance weights */
@@ -123,12 +124,12 @@ export class RetentionManager {
     const start = performance.now();
 
     if (!config.enabled) {
-      return { deleted: 0, kept: 0, orphanedPrompts: 0, elapsed_ms: 0 };
+      return { deleted: 0, kept: 0, orphanedPrompts: 0, elapsed_ms: 0, deletedObservationIds: [] };
     }
 
     // Cooldown: skip if cleanup ran within the last 6 hours for this project
     if (!this.shouldRunCleanup(db, project)) {
-      return { deleted: 0, kept: 0, orphanedPrompts: 0, elapsed_ms: 0 };
+      return { deleted: 0, kept: 0, orphanedPrompts: 0, elapsed_ms: 0, deletedObservationIds: [] };
     }
 
     const cutoffEpoch = Date.now() - config.retentionDays * 24 * 60 * 60 * 1000;
@@ -147,7 +148,7 @@ export class RetentionManager {
     }>;
 
     if (oldObservations.length === 0) {
-      return { deleted: 0, kept: 0, orphanedPrompts: 0, elapsed_ms: performance.now() - start };
+      return { deleted: 0, kept: 0, orphanedPrompts: 0, elapsed_ms: performance.now() - start, deletedObservationIds: [] };
     }
 
     const now = Date.now();
@@ -222,6 +223,7 @@ export class RetentionManager {
       kept: toKeep.length,
       orphanedPrompts,
       elapsed_ms,
+      deletedObservationIds: toDelete,
     };
   }
 }

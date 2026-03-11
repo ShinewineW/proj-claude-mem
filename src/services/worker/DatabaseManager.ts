@@ -152,6 +152,23 @@ export class DatabaseManager {
   }
 
   /**
+   * Remove a ChromaSync entry for a specific dbPath.
+   * Called when a project is disabled to free resources.
+   */
+  async removeChromaSync(dbPath: string): Promise<boolean> {
+    validateDbPath(dbPath);
+    const collectionName = getCollectionName(dbPath);
+    const sync = this.chromaSyncMap.get(collectionName);
+    if (sync) {
+      await sync.close();
+      this.chromaSyncMap.delete(collectionName);
+      logger.debug('DB_MANAGER', 'Removed ChromaSync entry', { collectionName });
+      return true;
+    }
+    return false;
+  }
+
+  /**
    * Get the underlying connection pool.
    */
   getPool(): DbConnectionPool {

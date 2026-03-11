@@ -73,6 +73,19 @@ export const observationHandler: EventHandler = {
         return { continue: true, suppressOutput: true, exitCode: HOOK_EXIT_CODES.SUCCESS };
       }
 
+      // Check response body for soft failures (HTTP 200 but stored: false)
+      try {
+        const body = await response.json();
+        if (body && body.stored === false) {
+          logger.warn('HOOK', 'Observation storage returned failure', {
+            toolName,
+            reason: body.reason || 'unknown',
+          });
+        }
+      } catch {
+        // Response body parse failure is non-fatal
+      }
+
       logger.debug('HOOK', 'Observation sent successfully', { toolName });
     } catch (error) {
       // Worker unreachable — skip observation gracefully

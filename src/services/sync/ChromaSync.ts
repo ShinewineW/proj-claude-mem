@@ -74,6 +74,9 @@ export class ChromaSync {
   private collectionName: string;
   private collectionCreated = false;
   private readonly BATCH_SIZE = 100;
+  /** Max fact docs per observation for deletion candidate generation.
+   *  Must be >= max facts any observation can have. */
+  private static readonly MAX_FACTS_PER_OBS = 20;
 
   constructor(collectionName: string) {
     this.collectionName = collectionName;
@@ -289,6 +292,59 @@ export class ChromaSync {
       collection: this.collectionName,
       count: documents.length
     });
+  }
+
+  /**
+   * Delete all Chroma documents associated with the given observation IDs.
+   * Each observation may have multiple docs (narrative, text, fact_0..N).
+   * Since chroma_delete_documents silently ignores non-existent IDs,
+   * we generate candidate IDs and delete them all. Fire-and-forget.
+   */
+  async deleteObservationDocs(observationIds: number[]): Promise<void> {
+    if (observationIds.length === 0) return;
+
+    try {
+      await this.ensureCollectionExists();
+      const chromaMcp = ChromaMcpManager.getInstance();
+
+      // Generate candidate document IDs for each observation
+      // Known patterns: obs_{id}_narrative, obs_{id}_text, obs_{id}_fact_{0..19}
+      const allIdsToDelete: string[] = [];
+      for (const obsId of observationIds) {
+        allIdsToDelete.push(`obs_${obsId}_narrative`);
+        allIdsToDelete.push(`obs_${obsId}_text`);
+        for (let f = 0; f < ChromaSync.MAX_FACTS_PER_OBS; f++) {
+          allIdsToDelete.push(`obs_${obsId}_fact_${f}`);
+        }
+      }
+
+      // Delete in batches (chroma_delete_documents silently ignores non-existent IDs)
+      for (let i = 0; i < allIdsToDelete.length; i += this.BATCH_SIZE) {
+        const batch = allIdsToDelete.slice(i, i + this.BATCH_SIZE);
+        try {
+          await chromaMcp.callTool('chroma_delete_documents', {
+            collection_name: this.collectionName,
+            ids: batch,
+          });
+        } catch (e) {
+          logger.warn('CHROMA_SYNC', 'Batch delete failed, continuing', {
+            collection: this.collectionName,
+            batchSize: batch.length,
+          }, e as Error);
+        }
+      }
+
+      logger.info('CHROMA_SYNC', `Deleted Chroma docs for ${observationIds.length} observations`, {
+        collection: this.collectionName,
+        candidateIds: allIdsToDelete.length,
+      });
+    } catch (error) {
+      logger.warn('CHROMA_SYNC', 'Failed to delete observation docs from Chroma', {
+        collection: this.collectionName,
+        observationCount: observationIds.length,
+      }, error as Error);
+      // Fire-and-forget: Chroma cleanup is best-effort
+    }
   }
 
   /**

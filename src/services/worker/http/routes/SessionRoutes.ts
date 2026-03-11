@@ -8,7 +8,8 @@
 import express, { Request, Response } from 'express';
 import { getWorkerPort } from '../../../../shared/worker-utils.js';
 import { logger } from '../../../../utils/logger.js';
-import { stripMemoryTagsFromJson, stripMemoryTagsFromPrompt } from '../../../../utils/tag-stripping.js';
+import { stripMemoryTagsFromPrompt } from '../../../../utils/tag-stripping.js';
+import { cleanToolField } from './observation-utils.js';
 import { SessionManager } from '../../SessionManager.js';
 import { DatabaseManager } from '../../DatabaseManager.js';
 import { SDKAgent } from '../../SDKAgent.js';
@@ -548,14 +549,9 @@ export class SessionRoutes extends BaseRouteHandler {
         return;
       }
 
-      // Strip memory tags from tool_input and tool_response
-      const cleanedToolInput = tool_input !== undefined
-        ? stripMemoryTagsFromJson(JSON.stringify(tool_input))
-        : '{}';
-
-      const cleanedToolResponse = tool_response !== undefined
-        ? stripMemoryTagsFromJson(JSON.stringify(tool_response))
-        : '{}';
+      // Safely serialize and strip memory tags from tool fields
+      const cleanedToolInput = cleanToolField(tool_input);
+      const cleanedToolResponse = cleanToolField(tool_response);
 
       // Queue observation
       this.sessionManager.queueObservation(sessionDbId, {
