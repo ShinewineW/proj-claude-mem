@@ -457,7 +457,7 @@ export class WorkerService {
 
       // Auto-backfill Chroma for all projects if out of sync with SQLite (fire-and-forget)
       if (this.chromaMcpManager) {
-        ChromaSync.backfillAllProjects().then(() => {
+        ChromaSync.backfillAllProjects(this.dbManager).then(() => {
           logger.info('CHROMA_SYNC', 'Backfill check complete for all projects');
         }).catch(error => {
           logger.error('CHROMA_SYNC', 'Backfill failed (non-blocking)', {}, error as Error);

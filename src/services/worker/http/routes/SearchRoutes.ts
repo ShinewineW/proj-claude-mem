@@ -45,7 +45,7 @@ export class SearchRoutes extends BaseRouteHandler {
     return new SearchManager(
       this.dbManager.getSessionSearch(dbPath),
       this.dbManager.getSessionStore(dbPath),
-      this.dbManager.getChromaSync(),
+      this.dbManager.getChromaSync(dbPath),
       this.formattingService,
       this.timelineService
     );

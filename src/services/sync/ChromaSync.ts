@@ -16,6 +16,7 @@ import { ChromaMcpManager } from './ChromaMcpManager.js';
 import { ParsedObservation, ParsedSummary } from '../../sdk/parser.js';
 import { SessionStore } from '../sqlite/SessionStore.js';
 import { logger } from '../../utils/logger.js';
+import type { DatabaseManager } from '../worker/DatabaseManager.js';
 
 interface ChromaDocument {
   id: string;
@@ -70,19 +71,12 @@ interface StoredUserPrompt {
 }
 
 export class ChromaSync {
-  private project: string;
   private collectionName: string;
   private collectionCreated = false;
   private readonly BATCH_SIZE = 100;
 
-  constructor(project: string) {
-    this.project = project;
-    // Chroma collection names only allow [a-zA-Z0-9._-], 3-512 chars,
-    // must start/end with [a-zA-Z0-9]
-    const sanitized = project
-      .replace(/[^a-zA-Z0-9._-]/g, '_')
-      .replace(/[^a-zA-Z0-9]+$/, '');  // strip trailing non-alphanumeric
-    this.collectionName = `cm__${sanitized || 'unknown'}`;
+  constructor(collectionName: string) {
+    this.collectionName = collectionName;
   }
 
   /**
@@ -439,12 +433,11 @@ export class ChromaSync {
    * Fetch all existing document IDs from Chroma collection via MCP
    * Returns Sets of SQLite IDs for observations, summaries, and prompts
    */
-  private async getExistingChromaIds(projectOverride?: string): Promise<{
+  private async getExistingChromaIds(): Promise<{
     observations: Set<number>;
     summaries: Set<number>;
     prompts: Set<number>;
   }> {
-    const targetProject = projectOverride ?? this.project;
     await this.ensureCollectionExists();
 
     const chromaMcp = ChromaMcpManager.getInstance();
@@ -456,14 +449,13 @@ export class ChromaSync {
     let offset = 0;
     const limit = 1000; // Large batches, metadata only = fast
 
-    logger.info('CHROMA_SYNC', 'Fetching existing Chroma document IDs...', { project: targetProject });
+    logger.info('CHROMA_SYNC', 'Fetching existing Chroma document IDs...', { collection: this.collectionName });
 
     while (true) {
       const result = await chromaMcp.callTool('chroma_get_documents', {
         collection_name: this.collectionName,
         limit: limit,
         offset: offset,
-        where: { project: targetProject },
         include: ['metadatas']
       }) as any;
 
@@ -491,14 +483,14 @@ export class ChromaSync {
       offset += limit;
 
       logger.debug('CHROMA_SYNC', 'Fetched batch of existing IDs', {
-        project: targetProject,
+        collection: this.collectionName,
         offset,
         batchSize: metadatas.length
       });
     }
 
     logger.info('CHROMA_SYNC', 'Existing IDs fetched', {
-      project: targetProject,
+      collection: this.collectionName,
       observations: observationIds.size,
       summaries: summaryIds.size,
       prompts: promptIds.size
@@ -509,175 +501,170 @@ export class ChromaSync {
 
   /**
    * Backfill: Sync all observations missing from Chroma
-   * Reads from SQLite and syncs in batches
-   * @param projectOverride - If provided, backfill this project instead of this.project.
-   *   Used by backfillAllProjects() to iterate projects without mutating instance state.
-   * Throws error if backfill fails
+   * Reads from the injected SessionStore and syncs in batches.
+   * Per-project DB is already scoped, so no project WHERE filter needed.
+   *
+   * Args:
+   *     sessionStore: Caller-owned SessionStore targeting the project DB.
+   *
+   * Throws error if backfill fails.
    */
-  async ensureBackfilled(projectOverride?: string): Promise<void> {
-    const backfillProject = projectOverride ?? this.project;
-    logger.info('CHROMA_SYNC', 'Starting smart backfill', { project: backfillProject });
+  async ensureBackfilled(sessionStore: SessionStore): Promise<void> {
+    logger.info('CHROMA_SYNC', 'Starting smart backfill', { collection: this.collectionName });
 
     await this.ensureCollectionExists();
 
     // Fetch existing IDs from Chroma (fast, metadata only)
-    const existing = await this.getExistingChromaIds(backfillProject);
+    const existing = await this.getExistingChromaIds();
 
-    const db = new SessionStore();
+    const db = sessionStore.db;
 
-    try {
-      // Build exclusion list for observations
-      // Filter to validated positive integers before interpolating into SQL
-      const existingObsIds = Array.from(existing.observations).filter(id => Number.isInteger(id) && id > 0);
-      const obsExclusionClause = existingObsIds.length > 0
-        ? `AND id NOT IN (${existingObsIds.join(',')})`
-        : '';
+    // Build exclusion list for observations.
+    // IDs are interpolated into SQL (not parameterized) because SQLite has a
+    // variable limit (~999). Filter to validated positive integers to prevent injection.
+    const existingObsIds = Array.from(existing.observations).filter(id => Number.isInteger(id) && id > 0);
+    const obsExclusionClause = existingObsIds.length > 0
+      ? `AND id NOT IN (${existingObsIds.join(',')})`
+      : '';
 
-      // Get only observations missing from Chroma
-      const observations = db.db.prepare(`
-        SELECT * FROM observations
-        WHERE project = ? ${obsExclusionClause}
-        ORDER BY id ASC
-      `).all(backfillProject) as StoredObservation[];
+    // Get only observations missing from Chroma
+    const observations = db.prepare(`
+      SELECT * FROM observations
+      WHERE 1=1 ${obsExclusionClause}
+      ORDER BY id ASC
+    `).all() as StoredObservation[];
 
-      const totalObsCount = db.db.prepare(`
-        SELECT COUNT(*) as count FROM observations WHERE project = ?
-      `).get(backfillProject) as { count: number };
+    const totalObsCount = db.prepare(`
+      SELECT COUNT(*) as count FROM observations WHERE 1=1
+    `).get() as { count: number };
 
-      logger.info('CHROMA_SYNC', 'Backfilling observations', {
-        project: backfillProject,
-        missing: observations.length,
-        existing: existing.observations.size,
-        total: totalObsCount.count
-      });
+    logger.info('CHROMA_SYNC', 'Backfilling observations', {
+      collection: this.collectionName,
+      missing: observations.length,
+      existing: existing.observations.size,
+      total: totalObsCount.count
+    });
 
-      // Format all observation documents
-      const allDocs: ChromaDocument[] = [];
-      for (const obs of observations) {
-        allDocs.push(...this.formatObservationDocs(obs));
-      }
-
-      // Sync in batches
-      for (let i = 0; i < allDocs.length; i += this.BATCH_SIZE) {
-        const batch = allDocs.slice(i, i + this.BATCH_SIZE);
-        await this.addDocuments(batch);
-
-        logger.debug('CHROMA_SYNC', 'Backfill progress', {
-          project: backfillProject,
-          progress: `${Math.min(i + this.BATCH_SIZE, allDocs.length)}/${allDocs.length}`
-        });
-      }
-
-      // Build exclusion list for summaries
-      const existingSummaryIds = Array.from(existing.summaries).filter(id => Number.isInteger(id) && id > 0);
-      const summaryExclusionClause = existingSummaryIds.length > 0
-        ? `AND id NOT IN (${existingSummaryIds.join(',')})`
-        : '';
-
-      // Get only summaries missing from Chroma
-      const summaries = db.db.prepare(`
-        SELECT * FROM session_summaries
-        WHERE project = ? ${summaryExclusionClause}
-        ORDER BY id ASC
-      `).all(backfillProject) as StoredSummary[];
-
-      const totalSummaryCount = db.db.prepare(`
-        SELECT COUNT(*) as count FROM session_summaries WHERE project = ?
-      `).get(backfillProject) as { count: number };
-
-      logger.info('CHROMA_SYNC', 'Backfilling summaries', {
-        project: backfillProject,
-        missing: summaries.length,
-        existing: existing.summaries.size,
-        total: totalSummaryCount.count
-      });
-
-      // Format all summary documents
-      const summaryDocs: ChromaDocument[] = [];
-      for (const summary of summaries) {
-        summaryDocs.push(...this.formatSummaryDocs(summary));
-      }
-
-      // Sync in batches
-      for (let i = 0; i < summaryDocs.length; i += this.BATCH_SIZE) {
-        const batch = summaryDocs.slice(i, i + this.BATCH_SIZE);
-        await this.addDocuments(batch);
-
-        logger.debug('CHROMA_SYNC', 'Backfill progress', {
-          project: backfillProject,
-          progress: `${Math.min(i + this.BATCH_SIZE, summaryDocs.length)}/${summaryDocs.length}`
-        });
-      }
-
-      // Build exclusion list for prompts
-      const existingPromptIds = Array.from(existing.prompts).filter(id => Number.isInteger(id) && id > 0);
-      const promptExclusionClause = existingPromptIds.length > 0
-        ? `AND up.id NOT IN (${existingPromptIds.join(',')})`
-        : '';
-
-      // Get only user prompts missing from Chroma
-      const prompts = db.db.prepare(`
-        SELECT
-          up.*,
-          s.project,
-          s.memory_session_id
-        FROM user_prompts up
-        JOIN sdk_sessions s ON up.content_session_id = s.content_session_id
-        WHERE s.project = ? ${promptExclusionClause}
-        ORDER BY up.id ASC
-      `).all(backfillProject) as StoredUserPrompt[];
-
-      const totalPromptCount = db.db.prepare(`
-        SELECT COUNT(*) as count
-        FROM user_prompts up
-        JOIN sdk_sessions s ON up.content_session_id = s.content_session_id
-        WHERE s.project = ?
-      `).get(backfillProject) as { count: number };
-
-      logger.info('CHROMA_SYNC', 'Backfilling user prompts', {
-        project: backfillProject,
-        missing: prompts.length,
-        existing: existing.prompts.size,
-        total: totalPromptCount.count
-      });
-
-      // Format all prompt documents
-      const promptDocs: ChromaDocument[] = [];
-      for (const prompt of prompts) {
-        promptDocs.push(this.formatUserPromptDoc(prompt));
-      }
-
-      // Sync in batches
-      for (let i = 0; i < promptDocs.length; i += this.BATCH_SIZE) {
-        const batch = promptDocs.slice(i, i + this.BATCH_SIZE);
-        await this.addDocuments(batch);
-
-        logger.debug('CHROMA_SYNC', 'Backfill progress', {
-          project: backfillProject,
-          progress: `${Math.min(i + this.BATCH_SIZE, promptDocs.length)}/${promptDocs.length}`
-        });
-      }
-
-      logger.info('CHROMA_SYNC', 'Smart backfill complete', {
-        project: backfillProject,
-        synced: {
-          observationDocs: allDocs.length,
-          summaryDocs: summaryDocs.length,
-          promptDocs: promptDocs.length
-        },
-        skipped: {
-          observations: existing.observations.size,
-          summaries: existing.summaries.size,
-          prompts: existing.prompts.size
-        }
-      });
-
-    } catch (error) {
-      logger.error('CHROMA_SYNC', 'Backfill failed', { project: backfillProject }, error as Error);
-      throw new Error(`Backfill failed: ${error instanceof Error ? error.message : String(error)}`);
-    } finally {
-      db.close();
+    // Format all observation documents
+    const allDocs: ChromaDocument[] = [];
+    for (const obs of observations) {
+      allDocs.push(...this.formatObservationDocs(obs));
     }
+
+    // Sync in batches
+    for (let i = 0; i < allDocs.length; i += this.BATCH_SIZE) {
+      const batch = allDocs.slice(i, i + this.BATCH_SIZE);
+      await this.addDocuments(batch);
+
+      logger.debug('CHROMA_SYNC', 'Backfill progress', {
+        collection: this.collectionName,
+        progress: `${Math.min(i + this.BATCH_SIZE, allDocs.length)}/${allDocs.length}`
+      });
+    }
+
+    // Build exclusion list for summaries
+    const existingSummaryIds = Array.from(existing.summaries).filter(id => Number.isInteger(id) && id > 0);
+    const summaryExclusionClause = existingSummaryIds.length > 0
+      ? `AND id NOT IN (${existingSummaryIds.join(',')})`
+      : '';
+
+    // Get only summaries missing from Chroma
+    const summaries = db.prepare(`
+      SELECT * FROM session_summaries
+      WHERE 1=1 ${summaryExclusionClause}
+      ORDER BY id ASC
+    `).all() as StoredSummary[];
+
+    const totalSummaryCount = db.prepare(`
+      SELECT COUNT(*) as count FROM session_summaries WHERE 1=1
+    `).get() as { count: number };
+
+    logger.info('CHROMA_SYNC', 'Backfilling summaries', {
+      collection: this.collectionName,
+      missing: summaries.length,
+      existing: existing.summaries.size,
+      total: totalSummaryCount.count
+    });
+
+    // Format all summary documents
+    const summaryDocs: ChromaDocument[] = [];
+    for (const summary of summaries) {
+      summaryDocs.push(...this.formatSummaryDocs(summary));
+    }
+
+    // Sync in batches
+    for (let i = 0; i < summaryDocs.length; i += this.BATCH_SIZE) {
+      const batch = summaryDocs.slice(i, i + this.BATCH_SIZE);
+      await this.addDocuments(batch);
+
+      logger.debug('CHROMA_SYNC', 'Backfill progress', {
+        collection: this.collectionName,
+        progress: `${Math.min(i + this.BATCH_SIZE, summaryDocs.length)}/${summaryDocs.length}`
+      });
+    }
+
+    // Build exclusion list for prompts
+    const existingPromptIds = Array.from(existing.prompts).filter(id => Number.isInteger(id) && id > 0);
+    const promptExclusionClause = existingPromptIds.length > 0
+      ? `AND up.id NOT IN (${existingPromptIds.join(',')})`
+      : '';
+
+    // Get only user prompts missing from Chroma
+    const prompts = db.prepare(`
+      SELECT
+        up.*,
+        s.project,
+        s.memory_session_id
+      FROM user_prompts up
+      JOIN sdk_sessions s ON up.content_session_id = s.content_session_id
+      WHERE 1=1 ${promptExclusionClause}
+      ORDER BY up.id ASC
+    `).all() as StoredUserPrompt[];
+
+    const totalPromptCount = db.prepare(`
+      SELECT COUNT(*) as count
+      FROM user_prompts up
+      JOIN sdk_sessions s ON up.content_session_id = s.content_session_id
+      WHERE 1=1
+    `).get() as { count: number };
+
+    logger.info('CHROMA_SYNC', 'Backfilling user prompts', {
+      collection: this.collectionName,
+      missing: prompts.length,
+      existing: existing.prompts.size,
+      total: totalPromptCount.count
+    });
+
+    // Format all prompt documents
+    const promptDocs: ChromaDocument[] = [];
+    for (const prompt of prompts) {
+      promptDocs.push(this.formatUserPromptDoc(prompt));
+    }
+
+    // Sync in batches
+    for (let i = 0; i < promptDocs.length; i += this.BATCH_SIZE) {
+      const batch = promptDocs.slice(i, i + this.BATCH_SIZE);
+      await this.addDocuments(batch);
+
+      logger.debug('CHROMA_SYNC', 'Backfill progress', {
+        collection: this.collectionName,
+        progress: `${Math.min(i + this.BATCH_SIZE, promptDocs.length)}/${promptDocs.length}`
+      });
+    }
+
+    logger.info('CHROMA_SYNC', 'Smart backfill complete', {
+      collection: this.collectionName,
+      synced: {
+        observationDocs: allDocs.length,
+        summaryDocs: summaryDocs.length,
+        promptDocs: promptDocs.length
+      },
+      skipped: {
+        observations: existing.observations.size,
+        summaries: existing.summaries.size,
+        prompts: existing.prompts.size
+      }
+    });
   }
 
   /**
@@ -758,44 +745,45 @@ export class ChromaSync {
         // Reset collection state so next call attempts reconnect
         this.collectionCreated = false;
         logger.error('CHROMA_SYNC', 'Connection lost during query',
-          { project: this.project, query }, error as Error);
+          { collection: this.collectionName, query }, error as Error);
         throw new Error(`Chroma query failed - connection lost: ${errorMessage}`);
       }
 
-      logger.error('CHROMA_SYNC', 'Query failed', { project: this.project, query }, error as Error);
+      logger.error('CHROMA_SYNC', 'Query failed', { collection: this.collectionName, query }, error as Error);
       throw error;
     }
   }
 
   /**
-   * Backfill all projects that have observations in SQLite but may be missing from Chroma.
-   * Uses a single shared ChromaSync('claude-mem') instance and Chroma connection.
-   * Per-project scoping is passed as a parameter to ensureBackfilled(), avoiding
-   * instance state mutation. All documents land in the cm__claude-mem collection
-   * with project scoped via metadata, matching how DatabaseManager and SearchManager operate.
+   * Backfill all enabled projects from the allowlist.
+   * Each project gets its own ChromaSync instance (via DatabaseManager pool)
+   * and reads from its own per-project SQLite DB.
    * Designed to be called fire-and-forget on worker startup.
    */
-  static async backfillAllProjects(): Promise<void> {
-    const db = new SessionStore();
-    const sync = new ChromaSync('claude-mem');
-    try {
-      const projects = db.db.prepare(
-        'SELECT DISTINCT project FROM observations WHERE project IS NOT NULL AND project != ?'
-      ).all('') as { project: string }[];
+  static async backfillAllProjects(dbManager: DatabaseManager): Promise<void> {
+    // Dynamic imports avoid circular dependency: DatabaseManager → ChromaSync → DatabaseManager.
+    // `import type` at top is compiled away; these runtime imports only execute here.
+    const { listEnabledProjects } = await import('../../shared/project-allowlist.js');
+    const { resolveProjectDbPath } = await import('../../shared/paths.js');
 
-      logger.info('CHROMA_SYNC', `Backfill check for ${projects.length} projects`);
+    const enabledProjects = listEnabledProjects();
+    const projectRoots = Object.keys(enabledProjects);
 
-      for (const { project } of projects) {
-        try {
-          await sync.ensureBackfilled(project);
-        } catch (error) {
-          logger.error('CHROMA_SYNC', `Backfill failed for project: ${project}`, {}, error as Error);
-          // Continue to next project — don't let one failure stop others
+    logger.info('CHROMA_SYNC', `Backfill check for ${projectRoots.length} enabled projects`);
+
+    for (const projectRoot of projectRoots) {
+      try {
+        const dbPath = resolveProjectDbPath(projectRoot);
+        const chromaSync = dbManager.getChromaSync(dbPath);
+        if (!chromaSync) {
+          logger.debug('CHROMA_SYNC', `Skipping backfill for ${projectRoot} (Chroma unavailable)`);
+          continue;
         }
+        const sessionStore = dbManager.getSessionStore(dbPath);
+        await chromaSync.ensureBackfilled(sessionStore);
+      } catch (error) {
+        logger.error('CHROMA_SYNC', `Backfill failed for project: ${projectRoot}`, {}, error as Error);
       }
-    } finally {
-      await sync.close();
-      db.close();
     }
   }
 
@@ -807,6 +795,6 @@ export class ChromaSync {
   async close(): Promise<void> {
     // ChromaMcpManager is a singleton and manages its own lifecycle
     // We don't close it here - it's closed during graceful shutdown
-    logger.info('CHROMA_SYNC', 'ChromaSync closed', { project: this.project });
+    logger.info('CHROMA_SYNC', 'ChromaSync closed', { collection: this.collectionName });
   }
 }

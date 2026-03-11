@@ -14,6 +14,7 @@
 import { SessionStore } from '../sqlite/SessionStore.js';
 import { SessionSearch } from '../sqlite/SessionSearch.js';
 import { ChromaSync } from '../sync/ChromaSync.js';
+import { getCollectionName } from '../../shared/chroma-utils.js';
 import { DbConnectionPool } from '../../shared/project-db.js';
 import { SettingsDefaultsManager } from '../../shared/SettingsDefaultsManager.js';
 import { USER_SETTINGS_PATH } from '../../shared/paths.js';
@@ -49,7 +50,10 @@ export function validateDbPath(dbPath: string | undefined | null): void {
 }
 
 export class DatabaseManager {
-  private chromaSync: ChromaSync | null = null;
+  // No eviction needed: bounded by enabled projects count (typically <10),
+  // unlike DbConnectionPool which handles arbitrary file paths.
+  private chromaSyncMap: Map<string, ChromaSync> = new Map();
+  private chromaEnabled: boolean = false;
   private pool: DbConnectionPool;
   private defaultDbPath: string | null = null;
 
@@ -73,12 +77,10 @@ export class DatabaseManager {
       this.pool.getStore(defaultDbPath);
     }
 
-    // Initialize ChromaSync only if Chroma is enabled (SQLite-only fallback when disabled)
+    // Initialize Chroma enabled flag (lazy per-project ChromaSync creation in getChromaSync)
     const settings = SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH);
-    const chromaEnabled = settings.CLAUDE_MEM_CHROMA_ENABLED !== 'false';
-    if (chromaEnabled) {
-      this.chromaSync = new ChromaSync('claude-mem');
-    } else {
+    this.chromaEnabled = settings.CLAUDE_MEM_CHROMA_ENABLED !== 'false';
+    if (!this.chromaEnabled) {
       logger.info('DB', 'Chroma disabled via CLAUDE_MEM_CHROMA_ENABLED=false, using SQLite-only search');
     }
 
@@ -89,11 +91,11 @@ export class DatabaseManager {
    * Close all database connections and cleanup resources.
    */
   async close(): Promise<void> {
-    // Close ChromaSync first (MCP connection lifecycle managed by ChromaMcpManager)
-    if (this.chromaSync) {
-      await this.chromaSync.close();
-      this.chromaSync = null;
+    // Close all ChromaSync instances (MCP connection lifecycle managed by ChromaMcpManager)
+    for (const [, sync] of this.chromaSyncMap) {
+      await sync.close();
     }
+    this.chromaSyncMap.clear();
 
     this.pool.closeAll();
     logger.info('DB', 'Database closed');
@@ -128,10 +130,25 @@ export class DatabaseManager {
   }
 
   /**
-   * Get ChromaSync instance (returns null if Chroma is disabled).
+   * Get ChromaSync instance for a specific project DB (returns null if Chroma is disabled).
+   *
+   * Lazily creates and caches ChromaSync instances keyed by collection name.
+   * Falls back to defaultDbPath when no dbPath is provided.
    */
-  getChromaSync(): ChromaSync | null {
-    return this.chromaSync;
+  getChromaSync(dbPath?: string): ChromaSync | null {
+    if (!this.chromaEnabled) return null;
+    validateDbPath(dbPath);
+
+    const resolvedPath = dbPath || this.defaultDbPath;
+    if (!resolvedPath) return null;
+
+    const collectionName = getCollectionName(resolvedPath);
+    let sync = this.chromaSyncMap.get(collectionName);
+    if (!sync) {
+      sync = new ChromaSync(collectionName);
+      this.chromaSyncMap.set(collectionName, sync);
+    }
+    return sync;
   }
 
   /**

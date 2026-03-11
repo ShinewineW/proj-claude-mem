@@ -193,7 +193,7 @@ async function syncAndBroadcastObservations(
     const chromaStart = Date.now();
 
     // Sync to Chroma (fire-and-forget, skipped if Chroma is disabled)
-    dbManager.getChromaSync()?.syncObservation(
+    dbManager.getChromaSync(session.dbPath)?.syncObservation(
       obsId,
       session.contentSessionId,
       session.project,
@@ -286,7 +286,7 @@ async function syncAndBroadcastSummary(
   const chromaStart = Date.now();
 
   // Sync to Chroma (fire-and-forget, skipped if Chroma is disabled)
-  dbManager.getChromaSync()?.syncSummary(
+  dbManager.getChromaSync(session.dbPath)?.syncSummary(
     result.summaryId,
     session.contentSessionId,
     session.project,
