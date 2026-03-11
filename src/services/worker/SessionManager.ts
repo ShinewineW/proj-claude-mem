@@ -292,6 +292,31 @@ export class SessionManager {
 
     const sessionDuration = Date.now() - session.startTime;
 
+    // NEW: Wait for pending summarize messages before aborting
+    // This prevents summary loss when session-complete arrives before
+    // the SDKAgent finishes processing the summarize message.
+    const DRAIN_MAX_WAIT_MS = 10_000;
+    const DRAIN_POLL_INTERVAL_MS = 500;
+    try {
+      const pendingStore = this.getPendingStore(session.dbPath);
+      if (pendingStore.hasPendingSummarize(sessionDbId)) {
+        logger.info('SESSION', 'Waiting for pending summarize to drain before delete', { sessionDbId });
+        let waited = 0;
+        while (pendingStore.hasPendingSummarize(sessionDbId) && waited < DRAIN_MAX_WAIT_MS) {
+          await new Promise(resolve => setTimeout(resolve, DRAIN_POLL_INTERVAL_MS));
+          waited += DRAIN_POLL_INTERVAL_MS;
+        }
+        if (waited >= DRAIN_MAX_WAIT_MS) {
+          logger.warn('SESSION', `Summarize drain timed out after ${DRAIN_MAX_WAIT_MS}ms, proceeding with delete`, { sessionDbId });
+        } else {
+          logger.info('SESSION', `Summarize drained after ${waited}ms`, { sessionDbId });
+        }
+      }
+    } catch (error) {
+      // Don't let drain errors block session cleanup
+      logger.warn('SESSION', 'Error during summarize drain check, proceeding with delete', { sessionDbId }, error as Error);
+    }
+
     // 1. Abort the SDK agent
     session.abortController.abort();
 
@@ -395,6 +420,33 @@ export class SessionManager {
   async shutdownAll(): Promise<void> {
     const sessionIds = Array.from(this.sessions.keys());
     await Promise.all(sessionIds.map(id => this.deleteSession(id)));
+  }
+
+  /**
+   * Clean up orphaned pending messages from previous Worker crashes.
+   * Called once on Worker startup.
+   *
+   * 1. Resets stale 'processing' messages (>5min) back to 'pending'
+   * 2. Marks orphaned summarize messages as 'failed':
+   *    - Session not in active sessions map
+   *    - Message older than 5 minutes
+   */
+  cleanupOrphanedMessages(dbPath?: string): void {
+    try {
+      const pendingStore = this.getPendingStore(dbPath);
+      const resetCount = pendingStore.resetStaleProcessingMessages(); // default: 5 min threshold
+      const activeSessionIds = Array.from(this.sessions.keys());
+      const orphanCount = pendingStore.markOrphanedSummarizesFailed(activeSessionIds);
+
+      if (resetCount > 0 || orphanCount > 0) {
+        logger.info('SESSION', 'Startup orphan cleanup complete', {
+          staleReset: resetCount,
+          orphanedFailed: orphanCount
+        });
+      }
+    } catch (error) {
+      logger.warn('SESSION', 'Orphan cleanup failed (non-fatal)', {}, error as Error);
+    }
   }
 
   /**

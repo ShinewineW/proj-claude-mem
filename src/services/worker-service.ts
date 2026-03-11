@@ -434,6 +434,18 @@ export class WorkerService {
         }
       }
 
+      // Clean up orphaned summarize messages from previous Worker crashes
+      // (session no longer active + message older than 5 minutes)
+      this.sessionManager.cleanupOrphanedMessages();
+      for (const projectRoot of Object.keys(enabledProjects)) {
+        try {
+          const projectDbPath = path.join(projectRoot, '.claude', 'mem.db');
+          this.sessionManager.cleanupOrphanedMessages(projectDbPath);
+        } catch (error) {
+          logger.warn('SYSTEM', 'Failed to cleanup orphaned messages for project', { projectRoot }, error as Error);
+        }
+      }
+
       // Initialize search services
       const formattingService = new FormattingService();
       const timelineService = new TimelineService();

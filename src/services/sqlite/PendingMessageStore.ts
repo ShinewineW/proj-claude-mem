@@ -398,6 +398,69 @@ export class PendingMessageStore {
   }
 
   /**
+   * Check if a session has a pending (unclaimed) summarize message.
+   * Used by deleteSession() drain window to wait for in-flight summaries.
+   * Only checks 'pending' — once claimed ('processing'), the generator will
+   * either complete it or stale message recovery will handle it.
+   */
+  hasPendingSummarize(sessionDbId: number): boolean {
+    const stmt = this.db.prepare(`
+      SELECT COUNT(*) as count FROM pending_messages
+      WHERE session_db_id = ? AND message_type = 'summarize'
+        AND status = 'pending'
+    `);
+    const result = stmt.get(sessionDbId) as { count: number };
+    return result.count > 0;
+  }
+
+  /**
+   * Mark orphaned summarize messages as failed.
+   * A summarize is orphaned when its session is no longer active AND
+   * the message has been pending/processing for more than the threshold.
+   * Called on Worker startup to clean up messages from previous crashes.
+   *
+   * @param activeSessionDbIds - IDs of currently active sessions (from SessionManager)
+   * @param staleThresholdMs - Messages older than this are considered orphaned (default: 5 minutes)
+   * @returns Number of messages marked failed
+   */
+  markOrphanedSummarizesFailed(activeSessionDbIds: number[], staleThresholdMs: number = 5 * 60 * 1000): number {
+    const now = Date.now();
+    const staleCutoff = now - staleThresholdMs;
+
+    // If no active sessions, all pending summarizes older than threshold are orphans
+    if (activeSessionDbIds.length === 0) {
+      const stmt = this.db.prepare(`
+        UPDATE pending_messages
+        SET status = 'failed', failed_at_epoch = ?
+        WHERE message_type = 'summarize'
+          AND status IN ('pending', 'processing')
+          AND created_at_epoch < ?
+      `);
+      const result = stmt.run(now, staleCutoff);
+      if (result.changes > 0) {
+        logger.info('QUEUE', `ORPHAN_CLEANUP | marked ${result.changes} orphaned summarize message(s) as failed (no active sessions)`);
+      }
+      return result.changes;
+    }
+
+    // Build placeholders for IN clause
+    const placeholders = activeSessionDbIds.map(() => '?').join(',');
+    const stmt = this.db.prepare(`
+      UPDATE pending_messages
+      SET status = 'failed', failed_at_epoch = ?
+      WHERE message_type = 'summarize'
+        AND status IN ('pending', 'processing')
+        AND created_at_epoch < ?
+        AND session_db_id NOT IN (${placeholders})
+    `);
+    const result = stmt.run(now, staleCutoff, ...activeSessionDbIds);
+    if (result.changes > 0) {
+      logger.info('QUEUE', `ORPHAN_CLEANUP | marked ${result.changes} orphaned summarize message(s) as failed`);
+    }
+    return result.changes;
+  }
+
+  /**
    * Check if any session has pending work.
    * Excludes 'processing' messages stuck for >5 minutes (resets them to 'pending' as a side effect).
    */
