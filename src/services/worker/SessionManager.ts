@@ -343,7 +343,18 @@ export class SessionManager {
       await ensureProcessExit(tracked, 5000);
     }
 
-    // 4. Cleanup
+    // 4. Mark session as completed in database (best-effort)
+    // Uses AND status = 'active' guard to avoid overwriting 'failed' status set by reaper
+    try {
+      const store = this.dbManager.getSessionStore(session.dbPath);
+      store.db.prepare(
+        'UPDATE sdk_sessions SET status = ?, completed_at_epoch = ? WHERE id = ? AND status = ?'
+      ).run('completed', Date.now(), sessionDbId, 'active');
+    } catch (error) {
+      logger.warn('SESSION', 'Failed to mark session completed in DB', { sessionDbId }, error as Error);
+    }
+
+    // 5. Cleanup
     this.sessions.delete(sessionDbId);
     this.sessionQueues.delete(sessionDbId);
 
@@ -367,6 +378,17 @@ export class SessionManager {
   removeSessionImmediate(sessionDbId: number): void {
     const session = this.sessions.get(sessionDbId);
     if (!session) return;
+
+    // Mark session as completed in database (best-effort)
+    // Uses AND status = 'active' guard to avoid overwriting 'failed' status set by reaper
+    try {
+      const store = this.dbManager.getSessionStore(session.dbPath);
+      store.db.prepare(
+        'UPDATE sdk_sessions SET status = ?, completed_at_epoch = ? WHERE id = ? AND status = ?'
+      ).run('completed', Date.now(), sessionDbId, 'active');
+    } catch (error) {
+      logger.warn('SESSION', 'Failed to mark session completed in DB', { sessionDbId }, error as Error);
+    }
 
     this.sessions.delete(sessionDbId);
     this.sessionQueues.delete(sessionDbId);

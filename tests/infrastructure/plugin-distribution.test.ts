@@ -99,7 +99,7 @@ describe('Plugin Distribution - hooks.json Integrity', () => {
     }
   });
 
-  it('should use direct ${CLAUDE_PLUGIN_ROOT} paths without shell variable workarounds', () => {
+  it('should use _R fallback pattern for Linux compatibility (CLAUDE_PLUGIN_ROOT can be empty)', () => {
     const hooksPath = path.join(projectRoot, 'plugin/hooks/hooks.json');
     const parsed = JSON.parse(readFileSync(hooksPath, 'utf-8'));
 
@@ -107,14 +107,28 @@ describe('Plugin Distribution - hooks.json Integrity', () => {
       for (const matcher of matchers as any[]) {
         for (const hook of matcher.hooks) {
           if (hook.type === 'command') {
-            // Must not use _R= shell variable pattern
-            expect(hook.command).not.toContain('_R=');
-            // Must not use $HOME fallback paths
-            expect(hook.command).not.toContain('$HOME/.claude/plugins');
+            // Must have _R= prefix to capture CLAUDE_PLUGIN_ROOT
+            expect(hook.command).toContain('_R="${CLAUDE_PLUGIN_ROOT}"');
+            // Must have fallback for when CLAUDE_PLUGIN_ROOT is empty
+            expect(hook.command).toContain('[ -z "$_R" ] && _R="$HOME/.claude/plugins/marketplaces/thedotmack/plugin"');
+            // Must use quoted "$_R/scripts/..." paths
+            expect(hook.command).toMatch(/"\$_R\/scripts\//);
           }
         }
       }
     }
+  });
+
+  it('Stop hook must remain a single merged command with ; separator (race condition fix)', () => {
+    const hooksPath = path.join(projectRoot, 'plugin/hooks/hooks.json');
+    const parsed = JSON.parse(readFileSync(hooksPath, 'utf-8'));
+    const stopMatchers = parsed.hooks.Stop;
+    expect(stopMatchers).toHaveLength(1);
+    expect(stopMatchers[0].hooks).toHaveLength(1);
+    const command = stopMatchers[0].hooks[0].command;
+    expect(command).toContain(' ; ');
+    expect(command).toContain('summarize');
+    expect(command).toContain('session-complete');
   });
 });
 
