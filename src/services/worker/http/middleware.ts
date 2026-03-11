@@ -8,7 +8,9 @@
 import express, { Request, Response, NextFunction, RequestHandler } from 'express';
 import cors from 'cors';
 import path from 'path';
+import { basename, dirname } from 'path';
 import { getPackageRoot } from '../../../shared/paths.js';
+import { isProjectEnabled } from '../../../shared/project-allowlist.js';
 import { logger } from '../../../utils/logger.js';
 
 /**
@@ -104,6 +106,57 @@ export function requireLocalhost(req: Request, res: Response, next: NextFunction
   }
 
   next();
+}
+
+/**
+ * Middleware to enforce per-project allowlist at the worker HTTP layer.
+ * Defense-in-depth: even if CLI hook guard is bypassed, the worker rejects
+ * requests targeting non-enabled projects.
+ *
+ * Behavior:
+ * - Requests without dbPath are allowed (use global fallback, existing validateDbPath protects)
+ * - Requests with dbPath for enabled projects are allowed
+ * - Requests with dbPath for non-enabled projects are rejected with 403
+ */
+export function allowlistGuard(req: Request, res: Response, next: NextFunction): void {
+  // Prefer body (POST), fall back to query (GET). Explicit type check avoids falsy coercion.
+  const rawDbPath = req.body?.dbPath ?? req.query?.dbPath;
+  const dbPath: string | undefined =
+    typeof rawDbPath === 'string' && rawDbPath.length > 0 ? rawDbPath : undefined;
+  if (!dbPath) {
+    next();
+    return;
+  }
+
+  // Derive project root from dbPath. Convention: <projectRoot>/.claude/mem.db
+  const claudeDir = dirname(dbPath);
+  if (basename(claudeDir) !== '.claude') {
+    // Non-standard dbPath — only allow if CLAUDE_MEM_PROJECT_DB_PATH env override is set
+    if (process.env.CLAUDE_MEM_PROJECT_DB_PATH) {
+      next();
+      return;
+    }
+    logger.warn('SECURITY', 'Rejected non-standard dbPath without env override', {
+      endpoint: req.path, dbPath
+    });
+    res.status(403).json({ error: 'Invalid dbPath format' });
+    return;
+  }
+  const projectRoot = dirname(claudeDir);
+  if (isProjectEnabled(projectRoot)) {
+    next();
+    return;
+  }
+
+  logger.warn('SECURITY', 'Allowlist guard rejected request for non-enabled project', {
+    endpoint: req.path,
+    method: req.method,
+    projectRoot
+  });
+  res.status(403).json({
+    error: 'Project not enabled',
+    message: 'This project is not opted in for claude-mem recording. Use /mem-enable to opt in.'
+  });
 }
 
 /**

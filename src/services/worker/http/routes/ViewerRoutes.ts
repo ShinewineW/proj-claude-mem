@@ -9,7 +9,8 @@ import express, { Request, Response } from 'express';
 import path from 'path';
 import { readFileSync, existsSync } from 'fs';
 import { logger } from '../../../../utils/logger.js';
-import { getPackageRoot } from '../../../../shared/paths.js';
+import { getPackageRoot, resolveProjectDbPath } from '../../../../shared/paths.js';
+import { listEnabledProjects } from '../../../../shared/project-allowlist.js';
 import { SSEBroadcaster } from '../../SSEBroadcaster.js';
 import { DatabaseManager } from '../../DatabaseManager.js';
 import { SessionManager } from '../../SessionManager.js';
@@ -65,6 +66,39 @@ export class ViewerRoutes extends BaseRouteHandler {
   });
 
   /**
+   * Aggregate project names from all enabled project databases.
+   * Replaces the previous getSessionStore().getAllProjects() which queried
+   * only the global/default DB, leaking cross-project data in the Viewer UI.
+   */
+  /** Cache for aggregated project list (30s TTL to avoid disk I/O on every SSE connect) */
+  private cachedProjects: string[] | null = null;
+  private cacheExpiry = 0;
+
+  private getProjectsFromAllowlist(): string[] {
+    if (this.cachedProjects && Date.now() < this.cacheExpiry) {
+      return this.cachedProjects;
+    }
+    const projects = new Set<string>();
+    const enabled = listEnabledProjects();
+    for (const projectRoot of Object.keys(enabled)) {
+      try {
+        const dbPath = resolveProjectDbPath(projectRoot);
+        const store = this.dbManager.getSessionStore(dbPath);
+        for (const name of store.getAllProjects()) {
+          projects.add(name);
+        }
+      } catch (err) {
+        logger.debug('VIEWER', `Skipping inaccessible project DB for ${projectRoot}`, {
+          error: err instanceof Error ? err.message : String(err)
+        });
+      }
+    }
+    this.cachedProjects = [...projects];
+    this.cacheExpiry = Date.now() + 30_000;
+    return this.cachedProjects;
+  }
+
+  /**
    * SSE stream endpoint
    */
   private handleSSEStream = this.wrapHandler((req: Request, res: Response): void => {
@@ -76,21 +110,20 @@ export class ViewerRoutes extends BaseRouteHandler {
     // Add client to broadcaster
     this.sseBroadcaster.addClient(res);
 
-    // Send initial_load event with projects list
-    const allProjects = this.dbManager.getSessionStore().getAllProjects();
-    this.sseBroadcaster.broadcast({
+    // Send initial state to this client only (not broadcast to all connected clients)
+    const allProjects = this.getProjectsFromAllowlist();
+    res.write(`data: ${JSON.stringify({
       type: 'initial_load',
       projects: allProjects,
       timestamp: Date.now()
-    });
+    })}\n\n`);
 
-    // Send initial processing status (based on queue depth + active generators)
     const isProcessing = this.sessionManager.isAnySessionProcessing();
-    const queueDepth = this.sessionManager.getTotalActiveWork(); // Includes queued + actively processing
-    this.sseBroadcaster.broadcast({
+    const queueDepth = this.sessionManager.getTotalActiveWork();
+    res.write(`data: ${JSON.stringify({
       type: 'processing_status',
       isProcessing,
       queueDepth
-    });
+    })}\n\n`);
   });
 }

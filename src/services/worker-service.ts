@@ -126,6 +126,7 @@ import { SearchRoutes } from './worker/http/routes/SearchRoutes.js';
 import { SettingsRoutes } from './worker/http/routes/SettingsRoutes.js';
 import { LogsRoutes } from './worker/http/routes/LogsRoutes.js';
 import { MemoryRoutes } from './worker/http/routes/MemoryRoutes.js';
+import { allowlistGuard } from './worker/http/middleware.js';
 
 // Process management for zombie cleanup (Issue #737)
 import { startOrphanReaper, reapOrphanedProcesses, getProcessBySession, ensureProcessExit } from './worker/ProcessRegistry.js';
@@ -338,6 +339,10 @@ export class WorkerService {
         });
       }
     });
+
+    // Per-project allowlist enforcement (defense-in-depth, supplements CLI hook guard)
+    this.server.app.use('/api', allowlistGuard);
+    this.server.app.use('/sessions', allowlistGuard);
 
     // Standard routes (registered AFTER guard middleware)
     this.server.registerRoutes(new ViewerRoutes(this.sseBroadcaster, this.dbManager, this.sessionManager));
