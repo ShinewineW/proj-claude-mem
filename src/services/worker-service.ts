@@ -775,7 +775,7 @@ export class WorkerService {
         abandoned
       });
     }
-    this.sessionManager.removeSessionImmediate(sessionDbId);
+    this.sessionManager.removeSessionImmediate(sessionDbId, session.dbPath);
     this.sessionEventBroadcaster.broadcastSessionCompleted(sessionDbId);
   }
 
@@ -805,7 +805,7 @@ export class WorkerService {
     // Clean up stale 'active' sessions and collect orphaned sessions across all DBs
     const STALE_SESSION_THRESHOLD_MS = 6 * 60 * 60 * 1000;
     const staleThreshold = Date.now() - STALE_SESSION_THRESHOLD_MS;
-    const allOrphanedSessionIds: number[] = [];
+    const allOrphanedSessions: Array<{id: number, dbPath: string}> = [];
 
     for (const dbPath of dbPaths) {
       try {
@@ -842,41 +842,42 @@ export class WorkerService {
           }
         }
 
-        // Collect orphaned session IDs from this DB
+        // Collect orphaned session IDs from this DB (with dbPath for composite key)
         const orphaned = pendingStore.getSessionsWithPendingMessages();
-        allOrphanedSessionIds.push(...orphaned);
+        for (const id of orphaned) {
+          allOrphanedSessions.push({ id, dbPath });
+        }
       } catch (error) {
         logger.error('SYSTEM', 'Failed to process pending queue for DB', { dbPath }, error as Error);
       }
     }
 
-    const orphanedSessionIds = allOrphanedSessionIds;
-
     const result = {
-      totalPendingSessions: orphanedSessionIds.length,
+      totalPendingSessions: allOrphanedSessions.length,
       sessionsStarted: 0,
       sessionsSkipped: 0,
       startedSessionIds: [] as number[]
     };
 
-    if (orphanedSessionIds.length === 0) return result;
+    if (allOrphanedSessions.length === 0) return result;
 
-    logger.info('SYSTEM', `Processing up to ${sessionLimit} of ${orphanedSessionIds.length} pending session queues`);
+    logger.info('SYSTEM', `Processing up to ${sessionLimit} of ${allOrphanedSessions.length} pending session queues`);
 
-    for (const sessionDbId of orphanedSessionIds) {
+    for (const { id: sessionDbId, dbPath } of allOrphanedSessions) {
       if (result.sessionsStarted >= sessionLimit) break;
 
       try {
-        const existingSession = this.sessionManager.getSession(sessionDbId);
+        const existingSession = this.sessionManager.getSession(sessionDbId, dbPath);
         if (existingSession?.generatorPromise) {
           result.sessionsSkipped++;
           continue;
         }
 
-        const session = this.sessionManager.initializeSession(sessionDbId);
+        const session = this.sessionManager.initializeSession(sessionDbId, undefined, undefined, dbPath);
         logger.info('SYSTEM', `Starting processor for session ${sessionDbId}`, {
           project: session.project,
-          pendingCount: pendingStore.getPendingCount(sessionDbId)
+          dbPath,
+          pendingCount: this.sessionManager.getPendingMessageStore(dbPath).getPendingCount(sessionDbId)
         });
 
         this.startSessionProcessor(session, 'startup-recovery');
@@ -885,7 +886,7 @@ export class WorkerService {
 
         await new Promise(resolve => setTimeout(resolve, 100));
       } catch (error) {
-        logger.error('SYSTEM', `Failed to process session ${sessionDbId}`, {}, error as Error);
+        logger.error('SYSTEM', `Failed to process session ${sessionDbId}`, { dbPath }, error as Error);
         result.sessionsSkipped++;
       }
     }

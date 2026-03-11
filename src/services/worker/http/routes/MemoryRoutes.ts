@@ -36,7 +36,7 @@ export class MemoryRoutes extends BaseRouteHandler {
     }
 
     const sessionStore = this.dbManager.getSessionStore(requestDbPath || undefined);
-    const chromaSync = this.dbManager.getChromaSync();
+    const chromaSync = this.dbManager.getChromaSync(requestDbPath || undefined);
 
     // 1. Get or create manual session for project
     const memorySessionId = sessionStore.getOrCreateManualSession(targetProject);

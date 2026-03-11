@@ -50,10 +50,26 @@ const WORKER_BASE_URL = `http://${WORKER_HOST}:${WORKER_PORT}`;
  * of truth — no heuristic guessing.
  */
 const PROJECT_ROOT = resolveProjectRoot(process.cwd());
-const PROJECT_ENABLED = isProjectEnabled(PROJECT_ROOT);
-const PROJECT_DB_PATH = PROJECT_ENABLED ? join(PROJECT_ROOT, '.claude', 'mem.db') : null;
 
-const NOT_ENABLED_MESSAGE = `claude-mem is not enabled for this project.\n\nDetected project root: ${PROJECT_ROOT}\nRun /mem-enable to start recording and searching memory.`;
+// Check allowlist per-request to reflect runtime /mem-enable and /mem-disable.
+// Cached for 5 seconds to avoid re-reading JSON file on every tool call.
+let _cachedEnabled: boolean | null = null;
+let _cacheTimestamp = 0;
+const CACHE_TTL_MS = 5_000;
+
+function getProjectDbPath(): string | null {
+  const now = Date.now();
+  if (_cachedEnabled === null || now - _cacheTimestamp > CACHE_TTL_MS) {
+    _cachedEnabled = isProjectEnabled(PROJECT_ROOT);
+    _cacheTimestamp = now;
+  }
+  if (!_cachedEnabled) return null;
+  return join(PROJECT_ROOT, '.claude', 'mem.db');
+}
+
+function getNotEnabledMessage(): string {
+  return `claude-mem is not enabled for this project.\n\nDetected project root: ${PROJECT_ROOT}\nRun /mem-enable to start recording and searching memory.`;
+}
 
 /**
  * Map tool names to Worker HTTP endpoints
@@ -77,8 +93,9 @@ async function callWorkerAPI(
     const searchParams = new URLSearchParams();
 
     // Inject project-specific dbPath so Worker queries the right database
-    if (PROJECT_DB_PATH) {
-      searchParams.append('dbPath', PROJECT_DB_PATH);
+    const dbPath = getProjectDbPath();
+    if (dbPath) {
+      searchParams.append('dbPath', dbPath);
     }
 
     // Convert params to query string
@@ -126,7 +143,8 @@ async function callWorkerAPIPost(
 
   try {
     // Inject project-specific dbPath into POST body
-    const enrichedBody = PROJECT_DB_PATH ? { ...body, dbPath: PROJECT_DB_PATH } : body;
+    const dbPath = getProjectDbPath();
+    const enrichedBody = dbPath ? { ...body, dbPath } : body;
     const url = `${WORKER_BASE_URL}${endpoint}`;
     const response = await fetch(url, {
       method: 'POST',
@@ -226,8 +244,8 @@ NEVER fetch full details without filtering first. 10x token savings.`,
       additionalProperties: true
     },
     handler: async (args: any) => {
-      if (!PROJECT_DB_PATH) {
-        return { content: [{ type: 'text' as const, text: NOT_ENABLED_MESSAGE }] };
+      if (!getProjectDbPath()) {
+        return { content: [{ type: 'text' as const, text: getNotEnabledMessage() }] };
       }
       const endpoint = TOOL_ENDPOINT_MAP['search'];
       return await callWorkerAPI(endpoint, args);
@@ -242,8 +260,8 @@ NEVER fetch full details without filtering first. 10x token savings.`,
       additionalProperties: true
     },
     handler: async (args: any) => {
-      if (!PROJECT_DB_PATH) {
-        return { content: [{ type: 'text' as const, text: NOT_ENABLED_MESSAGE }] };
+      if (!getProjectDbPath()) {
+        return { content: [{ type: 'text' as const, text: getNotEnabledMessage() }] };
       }
       const endpoint = TOOL_ENDPOINT_MAP['timeline'];
       return await callWorkerAPI(endpoint, args);
@@ -265,8 +283,8 @@ NEVER fetch full details without filtering first. 10x token savings.`,
       additionalProperties: true
     },
     handler: async (args: any) => {
-      if (!PROJECT_DB_PATH) {
-        return { content: [{ type: 'text' as const, text: NOT_ENABLED_MESSAGE }] };
+      if (!getProjectDbPath()) {
+        return { content: [{ type: 'text' as const, text: getNotEnabledMessage() }] };
       }
       return await callWorkerAPIPost('/api/observations/batch', args);
     }

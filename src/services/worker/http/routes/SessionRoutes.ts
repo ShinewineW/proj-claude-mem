@@ -357,7 +357,7 @@ export class SessionRoutes extends BaseRouteHandler {
       // Sync user prompt to Chroma
       const chromaStart = Date.now();
       const promptText = latestPrompt.prompt_text;
-      this.dbManager.getChromaSync().syncUserPrompt(
+      this.dbManager.getChromaSync(dbPath).syncUserPrompt(
         latestPrompt.id,
         latestPrompt.memory_session_id,
         latestPrompt.project,
@@ -653,7 +653,7 @@ export class SessionRoutes extends BaseRouteHandler {
     const sessionDbId = store.createSDKSession(contentSessionId, '', '');
 
     // Check if session is in the active sessions map
-    const activeSession = this.sessionManager.getSession(sessionDbId);
+    const activeSession = this.sessionManager.getSession(sessionDbId, dbPath);
     if (!activeSession) {
       // Session may not be in memory (already completed or never initialized)
       logger.debug('SESSION', 'session-complete: Session not in active map', {
@@ -665,7 +665,7 @@ export class SessionRoutes extends BaseRouteHandler {
     }
 
     // Complete the session (removes from active sessions map)
-    await this.completionHandler.completeByDbId(sessionDbId);
+    await this.completionHandler.completeByDbId(sessionDbId, dbPath);
 
     logger.info('SESSION', 'Session completed via API', {
       contentSessionId,

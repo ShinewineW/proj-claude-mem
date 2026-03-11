@@ -18,12 +18,40 @@ import { getProcessBySession, ensureProcessExit } from './ProcessRegistry.js';
 
 export class SessionManager {
   private dbManager: DatabaseManager;
-  private sessions: Map<number, ActiveSession> = new Map();
-  private sessionQueues: Map<number, EventEmitter> = new Map();
+  private sessions: Map<string, ActiveSession> = new Map();
+  private sessionQueues: Map<string, EventEmitter> = new Map();
   private onSessionDeletedCallback?: () => void;
 
   constructor(dbManager: DatabaseManager) {
     this.dbManager = dbManager;
+  }
+
+  /**
+   * Compute composite cache key to prevent cross-project collisions (B6).
+   * Two different project databases can produce the same auto-increment ID.
+   */
+  private sessionKey(sessionDbId: number, dbPath?: string): string {
+    return `${dbPath || '_default'}::${sessionDbId}`;
+  }
+
+  /**
+   * Linear scan fallback when dbPath is unknown (e.g. legacy callers, startup recovery).
+   * Returns the first matching key for the given sessionDbId.
+   */
+  private findSessionKey(sessionDbId: number): string | undefined {
+    let found: string | undefined;
+    for (const [key, session] of this.sessions) {
+      if (session.sessionDbId === sessionDbId) {
+        if (found) {
+          logger.warn('SESSION', 'Multiple sessions found for same sessionDbId, using first match', {
+            sessionDbId, firstKey: found, duplicateKey: key
+          });
+          return found;
+        }
+        found = key;
+      }
+    }
+    return found;
   }
 
   /**
@@ -60,8 +88,9 @@ export class SessionManager {
       dbPath: dbPath || '(none)'
     });
 
-    // Check if already active
-    let session = this.sessions.get(sessionDbId);
+    // Check if already active (composite key prevents cross-project collisions, B6)
+    const key = this.sessionKey(sessionDbId, dbPath);
+    let session = this.sessions.get(key);
     if (session) {
       logger.debug('SESSION', 'Returning cached session', {
         sessionDbId,
@@ -173,11 +202,11 @@ export class SessionManager {
       lastPromptNumber: promptNumber || this.dbManager.getSessionStore(dbPath).getPromptNumberFromUserPrompts(dbSession.content_session_id)
     });
 
-    this.sessions.set(sessionDbId, session);
+    this.sessions.set(key, session);
 
     // Create event emitter for queue notifications
     const emitter = new EventEmitter();
-    this.sessionQueues.set(sessionDbId, emitter);
+    this.sessionQueues.set(key, emitter);
 
     logger.info('SESSION', 'Session initialized', {
       sessionId: sessionDbId,
@@ -191,10 +220,18 @@ export class SessionManager {
   }
 
   /**
-   * Get active session by ID
+   * Get active session by ID.
+   * When dbPath is provided, uses composite key for O(1) lookup.
+   * Otherwise, falls back to linear scan (legacy callers, startup recovery).
    */
-  getSession(sessionDbId: number): ActiveSession | undefined {
-    return this.sessions.get(sessionDbId);
+  getSession(sessionDbId: number, dbPath?: string): ActiveSession | undefined {
+    if (dbPath !== undefined) {
+      return this.sessions.get(this.sessionKey(sessionDbId, dbPath));
+    }
+    for (const session of this.sessions.values()) {
+      if (session.sessionDbId === sessionDbId) return session;
+    }
+    return undefined;
   }
 
   /**
@@ -206,7 +243,8 @@ export class SessionManager {
    */
   queueObservation(sessionDbId: number, data: ObservationData, dbPath?: string): void {
     // Auto-initialize from database if needed (handles worker restarts)
-    let session = this.sessions.get(sessionDbId);
+    const key = this.sessionKey(sessionDbId, dbPath);
+    let session = this.sessions.get(key);
     if (!session) {
       session = this.initializeSession(sessionDbId, undefined, undefined, dbPath);
     }
@@ -238,7 +276,7 @@ export class SessionManager {
     }
 
     // Notify generator immediately (zero latency)
-    const emitter = this.sessionQueues.get(sessionDbId);
+    const emitter = this.sessionQueues.get(key);
     emitter?.emit('message');
   }
 
@@ -251,7 +289,8 @@ export class SessionManager {
    */
   queueSummarize(sessionDbId: number, lastAssistantMessage?: string, dbPath?: string): void {
     // Auto-initialize from database if needed (handles worker restarts)
-    let session = this.sessions.get(sessionDbId);
+    const key = this.sessionKey(sessionDbId, dbPath);
+    let session = this.sessions.get(key);
     if (!session) {
       session = this.initializeSession(sessionDbId, undefined, undefined, dbPath);
     }
@@ -276,7 +315,7 @@ export class SessionManager {
       throw error; // Don't continue if we can't persist
     }
 
-    const emitter = this.sessionQueues.get(sessionDbId);
+    const emitter = this.sessionQueues.get(key);
     emitter?.emit('message');
   }
 
@@ -284,8 +323,12 @@ export class SessionManager {
    * Delete a session (abort SDK agent and cleanup)
    * Verifies subprocess exit to prevent zombie process accumulation (Issue #737)
    */
-  async deleteSession(sessionDbId: number): Promise<void> {
-    const session = this.sessions.get(sessionDbId);
+  async deleteSession(sessionDbId: number, dbPath?: string): Promise<void> {
+    const key = dbPath !== undefined
+      ? this.sessionKey(sessionDbId, dbPath)
+      : this.findSessionKey(sessionDbId);
+    if (!key) return; // Already deleted
+    const session = this.sessions.get(key);
     if (!session) {
       return; // Already deleted
     }
@@ -365,8 +408,8 @@ export class SessionManager {
     }
 
     // 5. Cleanup
-    this.sessions.delete(sessionDbId);
-    this.sessionQueues.delete(sessionDbId);
+    this.sessions.delete(key);
+    this.sessionQueues.delete(key);
 
     logger.info('SESSION', 'Session deleted', {
       sessionId: sessionDbId,
@@ -385,8 +428,12 @@ export class SessionManager {
    * Used when SDK resume fails and we give up (no fallback): avoids deadlock
    * from deleteSession() awaiting the same generator promise we're inside.
    */
-  removeSessionImmediate(sessionDbId: number): void {
-    const session = this.sessions.get(sessionDbId);
+  removeSessionImmediate(sessionDbId: number, dbPath?: string): void {
+    const key = dbPath !== undefined
+      ? this.sessionKey(sessionDbId, dbPath)
+      : this.findSessionKey(sessionDbId);
+    if (!key) return;
+    const session = this.sessions.get(key);
     if (!session) return;
 
     // Mark session as completed in database (best-effort)
@@ -400,8 +447,8 @@ export class SessionManager {
       logger.warn('SESSION', 'Failed to mark session completed in DB', { sessionDbId }, error as Error);
     }
 
-    this.sessions.delete(sessionDbId);
-    this.sessionQueues.delete(sessionDbId);
+    this.sessions.delete(key);
+    this.sessionQueues.delete(key);
 
     logger.info('SESSION', 'Session removed (orphaned after SDK termination)', {
       sessionId: sessionDbId,
@@ -421,37 +468,37 @@ export class SessionManager {
    */
   async reapStaleSessions(): Promise<number> {
     const now = Date.now();
-    const staleSessionIds: number[] = [];
+    const staleKeys: { key: string; sessionDbId: number; dbPath?: string }[] = [];
 
-    for (const [sessionDbId, session] of this.sessions) {
+    for (const [key, session] of this.sessions) {
       // Skip sessions with active generators
       if (session.generatorPromise) continue;
 
       // Skip sessions with pending work
-      const pendingCount = this.getPendingStore(session.dbPath).getPendingCount(sessionDbId);
+      const pendingCount = this.getPendingStore(session.dbPath).getPendingCount(session.sessionDbId);
       if (pendingCount > 0) continue;
 
       // No generator + no pending work + old enough = stale
       const sessionAge = now - session.startTime;
       if (sessionAge > SessionManager.MAX_SESSION_IDLE_MS) {
-        staleSessionIds.push(sessionDbId);
+        staleKeys.push({ key, sessionDbId: session.sessionDbId, dbPath: session.dbPath });
       }
     }
 
-    for (const sessionDbId of staleSessionIds) {
+    for (const { sessionDbId, dbPath } of staleKeys) {
       logger.warn('SESSION', `Reaping stale session ${sessionDbId} (no activity for >${Math.round(SessionManager.MAX_SESSION_IDLE_MS / 60000)}m)`, { sessionDbId });
-      await this.deleteSession(sessionDbId);
+      await this.deleteSession(sessionDbId, dbPath);
     }
 
-    return staleSessionIds.length;
+    return staleKeys.length;
   }
 
   /**
    * Shutdown all active sessions
    */
   async shutdownAll(): Promise<void> {
-    const sessionIds = Array.from(this.sessions.keys());
-    await Promise.all(sessionIds.map(id => this.deleteSession(id)));
+    const entries = Array.from(this.sessions.values());
+    await Promise.all(entries.map(session => this.deleteSession(session.sessionDbId, session.dbPath)));
   }
 
   /**
@@ -467,7 +514,10 @@ export class SessionManager {
     try {
       const pendingStore = this.getPendingStore(dbPath);
       const resetCount = pendingStore.resetStaleProcessingMessages(); // default: 5 min threshold
-      const activeSessionIds = Array.from(this.sessions.keys());
+      // Filter to sessions belonging to this specific DB to avoid cross-project false matches (W4)
+      const activeSessionIds = Array.from(this.sessions.values())
+        .filter(s => s.dbPath === dbPath || (!s.dbPath && !dbPath))
+        .map(s => s.sessionDbId);
       const orphanCount = pendingStore.markOrphanedSummarizesFailed(activeSessionIds);
 
       if (resetCount > 0 || orphanCount > 0) {
@@ -543,12 +593,13 @@ export class SessionManager {
    */
   async *getMessageIterator(sessionDbId: number, dbPath?: string): AsyncIterableIterator<PendingMessageWithId> {
     // Auto-initialize from database if needed (handles worker restarts)
-    let session = this.sessions.get(sessionDbId);
+    const key = this.sessionKey(sessionDbId, dbPath);
+    let session = this.sessions.get(key);
     if (!session) {
       session = this.initializeSession(sessionDbId, undefined, undefined, dbPath);
     }
 
-    const emitter = this.sessionQueues.get(sessionDbId);
+    const emitter = this.sessionQueues.get(key);
     if (!emitter) {
       throw new Error(`No emitter for session ${sessionDbId}`);
     }

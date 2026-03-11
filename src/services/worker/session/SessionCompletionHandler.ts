@@ -23,9 +23,9 @@ export class SessionCompletionHandler {
    * Complete session by database ID
    * Used by DELETE /api/sessions/:id and POST /api/sessions/:id/complete
    */
-  async completeByDbId(sessionDbId: number): Promise<void> {
+  async completeByDbId(sessionDbId: number, dbPath?: string): Promise<void> {
     // Delete from session manager (aborts SDK agent)
-    await this.sessionManager.deleteSession(sessionDbId);
+    await this.sessionManager.deleteSession(sessionDbId, dbPath);
 
     // Broadcast session completed event
     this.eventBroadcaster.broadcastSessionCompleted(sessionDbId);

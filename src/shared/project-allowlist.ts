@@ -6,7 +6,7 @@
  * Value: { enabledAt: ISO timestamp }
  */
 
-import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync, writeSync, mkdirSync, renameSync, openSync, closeSync, unlinkSync, constants } from 'fs';
 import { dirname, join } from 'path';
 import { homedir } from 'os';
 import { logger } from '../utils/logger.js';
@@ -59,23 +59,84 @@ function writeAllowlist(data: Allowlist): void {
   renameSync(tmpPath, path);
 }
 
+// --- File lock for atomic read-modify-write ---
+
+const LOCK_STALE_MS = 10_000;
+
+function acquireLock(lockPath: string, maxWaitMs: number = 3000): boolean {
+  const deadline = Date.now() + maxWaitMs;
+  while (Date.now() < deadline) {
+    try {
+      const fd = openSync(lockPath, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY);
+      const pidBuf = Buffer.from(String(process.pid));
+      writeSync(fd, pidBuf);
+      closeSync(fd);
+      return true;
+    } catch (err: any) {
+      if (err.code === 'EEXIST') {
+        // Check if lock is stale
+        try {
+          if (existsSync(lockPath)) {
+            const content = readFileSync(lockPath, 'utf-8');
+            const lockAge = Date.now() - (Bun.file(lockPath).lastModified || 0);
+            if (lockAge > LOCK_STALE_MS) {
+              logger.warn('ALLOWLIST', `Removing stale lock (age=${lockAge}ms, pid=${content})`);
+              try { unlinkSync(lockPath); } catch { /* ignore */ }
+              continue;
+            }
+          }
+        } catch { /* ignore stat errors */ }
+        Bun.sleepSync(50);
+        continue;
+      }
+      throw err;
+    }
+  }
+  return false;
+}
+
+function releaseLock(lockPath: string): void {
+  try {
+    unlinkSync(lockPath);
+  } catch {
+    // Already removed — safe to ignore
+  }
+}
+
+function withLock<T>(fn: () => T): T {
+  const lockPath = getEnabledProjectsPath() + '.lock';
+  const acquired = acquireLock(lockPath);
+  if (!acquired) {
+    logger.warn('ALLOWLIST', 'Could not acquire lock, proceeding without lock');
+  }
+  try {
+    return fn();
+  } finally {
+    if (acquired) releaseLock(lockPath);
+  }
+}
+
 export function isProjectEnabled(projectRoot: string): boolean {
   const allowlist = readAllowlist();
   return Object.prototype.hasOwnProperty.call(allowlist, projectRoot);
 }
 
 export function enableProject(projectRoot: string): void {
-  const allowlist = readAllowlist();
-  if (Object.prototype.hasOwnProperty.call(allowlist, projectRoot)) return;
-  allowlist[projectRoot] = { enabledAt: new Date().toISOString() };
-  writeAllowlist(allowlist);
+  withLock(() => {
+    const allowlist = readAllowlist();
+    if (Object.prototype.hasOwnProperty.call(allowlist, projectRoot)) return;
+    allowlist[projectRoot] = { enabledAt: new Date().toISOString() };
+    writeAllowlist(allowlist);
+  });
 }
 
 export function disableProject(projectRoot: string): void {
-  const allowlist = readAllowlist();
-  if (!Object.prototype.hasOwnProperty.call(allowlist, projectRoot)) return;
-  delete allowlist[projectRoot];
-  writeAllowlist(allowlist);
+  withLock(() => {
+    const allowlist = readAllowlist();
+    if (!Object.prototype.hasOwnProperty.call(allowlist, projectRoot)) return;
+    delete allowlist[projectRoot];
+    writeAllowlist(allowlist);
+  });
 }
 
 export function listEnabledProjects(): Allowlist {
