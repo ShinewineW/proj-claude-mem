@@ -1,6 +1,7 @@
 import { describe, it, expect } from "bun:test";
 import { Database } from "bun:sqlite";
 import { MigrationRunner } from "../../src/services/sqlite/migrations/runner.js";
+import { SessionStore } from "../../src/services/sqlite/SessionStore.js";
 
 describe("migration 24: access_count column", () => {
   it("adds access_count column to observations table", () => {
@@ -83,5 +84,21 @@ describe("migration 25: retention_metadata table", () => {
     const versions = db.query("SELECT version FROM schema_versions WHERE version = 25").all();
     expect(versions).toHaveLength(1);
     db.close();
+  });
+
+  it("SessionStore also creates retention_metadata table", () => {
+    const store = new SessionStore(":memory:");
+
+    const tables = store.db.query(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name='retention_metadata'"
+    ).all() as any[];
+    expect(tables).toHaveLength(1);
+
+    const columns = store.db.query("PRAGMA table_info(retention_metadata)").all() as any[];
+    const projectCol = columns.find((c: any) => c.name === "project");
+    const epochCol = columns.find((c: any) => c.name === "last_cleanup_epoch");
+    expect(projectCol).toBeDefined();
+    expect(epochCol).toBeDefined();
+    store.db.close();
   });
 });
