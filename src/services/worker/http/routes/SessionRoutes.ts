@@ -23,6 +23,7 @@ import { PrivacyCheckValidator } from '../../validation/PrivacyCheckValidator.js
 import { SettingsDefaultsManager } from '../../../../shared/SettingsDefaultsManager.js';
 import { USER_SETTINGS_PATH } from '../../../../shared/paths.js';
 import { getProcessBySession, ensureProcessExit } from '../../ProcessRegistry.js';
+import { getProjectName } from '../../../../utils/project-name.js';
 
 export class SessionRoutes extends BaseRouteHandler {
   private completionHandler: SessionCompletionHandler;
@@ -534,8 +535,10 @@ export class SessionRoutes extends BaseRouteHandler {
     try {
       const store = this.dbManager.getSessionStore(dbPath);
 
-      // Get or create session
-      const sessionDbId = store.createSDKSession(contentSessionId, '', '');
+      // Get or create session — derive project from cwd so session has correct project
+      // even if UserPromptSubmit hook never fires (worker restart, race condition)
+      const project = cwd ? getProjectName(cwd) : '';
+      const sessionDbId = store.createSDKSession(contentSessionId, project, '');
       const promptNumber = store.getPromptNumberFromUserPrompts(contentSessionId);
 
       // Privacy check: skip if user prompt was entirely private

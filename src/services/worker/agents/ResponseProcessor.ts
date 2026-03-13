@@ -18,6 +18,7 @@ import { updateFolderClaudeMdFiles } from '../../../utils/claude-md-utils.js';
 import { getWorkerPort } from '../../../shared/worker-utils.js';
 import { SettingsDefaultsManager } from '../../../shared/SettingsDefaultsManager.js';
 import { USER_SETTINGS_PATH } from '../../../shared/paths.js';
+import path from 'node:path';
 import type { ActiveSession } from '../../worker-types.js';
 import type { DatabaseManager } from '../DatabaseManager.js';
 import type { SessionManager } from '../SessionManager.js';
@@ -86,6 +87,33 @@ export async function processAgentResponse(
   // In multi-terminal scenarios, createSDKSession() now resets memory_session_id to NULL
   // for each new generator, ensuring clean isolation.
   sessionStore.ensureMemorySessionIdRegistered(session.sessionDbId, session.memorySessionId);
+
+  // Refresh project from DB if empty (race: observation hook may arrive before SessionStart sets project)
+  if (!session.project || session.project.trim() === '') {
+    const dbSession = dbManager.getSessionById(session.sessionDbId, session.dbPath);
+    if (dbSession.project && dbSession.project.trim() !== '') {
+      logger.info('DB', `Project backfilled from database`, {
+        sessionId: session.sessionDbId,
+        project: dbSession.project
+      });
+      session.project = dbSession.project;
+    } else if (session.dbPath) {
+      // Last resort: derive project name from dbPath if it follows standard convention
+      // Standard: <project>/.claude/mem.db — env override paths may not follow this
+      const parentDir = path.basename(path.dirname(session.dbPath));
+      if (parentDir === '.claude' && path.basename(session.dbPath) === 'mem.db') {
+        const derived = path.basename(path.dirname(path.dirname(session.dbPath)));
+        if (derived && derived !== '.' && derived !== '') {
+          logger.info('DB', `Project derived from dbPath`, {
+            sessionId: session.sessionDbId,
+            project: derived,
+            dbPath: session.dbPath
+          });
+          session.project = derived;
+        }
+      }
+    }
+  }
 
   // Log pre-storage with session ID chain for verification
   logger.info('DB', `STORING | sessionDbId=${session.sessionDbId} | memorySessionId=${session.memorySessionId} | obsCount=${observations.length} | hasSummary=${!!summaryForStore}`, {
