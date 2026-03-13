@@ -355,32 +355,35 @@ export class SessionRoutes extends BaseRouteHandler {
         created_at_epoch: latestPrompt.created_at_epoch
       });
 
-      // Sync user prompt to Chroma
-      const chromaStart = Date.now();
+      // Sync user prompt to Chroma (null when Chroma is disabled)
+      const chromaSync = this.dbManager.getChromaSync(dbPath);
       const promptText = latestPrompt.prompt_text;
-      this.dbManager.getChromaSync(dbPath).syncUserPrompt(
-        latestPrompt.id,
-        latestPrompt.memory_session_id,
-        latestPrompt.project,
-        promptText,
-        latestPrompt.prompt_number,
-        latestPrompt.created_at_epoch
-      ).then(() => {
-        const chromaDuration = Date.now() - chromaStart;
-        const truncatedPrompt = promptText.length > 60
-          ? promptText.substring(0, 60) + '...'
-          : promptText;
-        logger.debug('CHROMA', 'User prompt synced', {
-          promptId: latestPrompt.id,
-          duration: `${chromaDuration}ms`,
-          prompt: truncatedPrompt
+      if (chromaSync) {
+        const chromaStart = Date.now();
+        chromaSync.syncUserPrompt(
+          latestPrompt.id,
+          latestPrompt.memory_session_id,
+          latestPrompt.project,
+          promptText,
+          latestPrompt.prompt_number,
+          latestPrompt.created_at_epoch
+        ).then(() => {
+          const chromaDuration = Date.now() - chromaStart;
+          const truncatedPrompt = promptText.length > 60
+            ? promptText.substring(0, 60) + '...'
+            : promptText;
+          logger.debug('CHROMA', 'User prompt synced', {
+            promptId: latestPrompt.id,
+            duration: `${chromaDuration}ms`,
+            prompt: truncatedPrompt
+          });
+        }).catch((error) => {
+          logger.error('CHROMA', 'User prompt sync failed, continuing without vector search', {
+            promptId: latestPrompt.id,
+            prompt: promptText.length > 60 ? promptText.substring(0, 60) + '...' : promptText
+          }, error);
         });
-      }).catch((error) => {
-        logger.error('CHROMA', 'User prompt sync failed, continuing without vector search', {
-          promptId: latestPrompt.id,
-          prompt: promptText.length > 60 ? promptText.substring(0, 60) + '...' : promptText
-        }, error);
-      });
+      }
     }
 
     // Idempotent: ensure generator is running (matches handleObservations / handleSummarize)

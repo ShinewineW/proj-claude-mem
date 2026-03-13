@@ -5,8 +5,7 @@ import { tmpdir } from 'os';
 import { logger } from '../../src/utils/logger.js';
 
 const testDataDir = join(tmpdir(), `test-allowlist-lock-${Date.now()}`);
-mkdirSync(testDataDir, { recursive: true });
-process.env.CLAUDE_MEM_DATA_DIR = testDataDir;
+const originalEnv = process.env.CLAUDE_MEM_DATA_DIR;
 
 import {
   enableProject,
@@ -17,6 +16,10 @@ import {
 
 describe('Allowlist concurrent safety (B4)', () => {
   beforeEach(() => {
+    // Set env var inside lifecycle hook to avoid polluting other test files
+    mkdirSync(testDataDir, { recursive: true });
+    process.env.CLAUDE_MEM_DATA_DIR = testDataDir;
+
     spyOn(logger, 'info').mockImplementation(() => {});
     spyOn(logger, 'debug').mockImplementation(() => {});
     spyOn(logger, 'warn').mockImplementation(() => {});
@@ -32,6 +35,12 @@ describe('Allowlist concurrent safety (B4)', () => {
 
   afterEach(() => {
     rmSync(testDataDir, { recursive: true, force: true });
+    // Restore original env to avoid polluting subsequent test files
+    if (originalEnv !== undefined) {
+      process.env.CLAUDE_MEM_DATA_DIR = originalEnv;
+    } else {
+      delete process.env.CLAUDE_MEM_DATA_DIR;
+    }
   });
 
   it('concurrent enableProject calls preserve all entries', () => {

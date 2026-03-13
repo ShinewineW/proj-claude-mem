@@ -663,9 +663,9 @@ export class MigrationRunner {
 
     // PRAGMA foreign_keys must be set outside a transaction
     this.db.run('PRAGMA foreign_keys = OFF');
-    this.db.run('BEGIN TRANSACTION');
-
     try {
+      this.db.run('BEGIN TRANSACTION');
+
       // ==========================================
       // 1. Recreate observations table
       // ==========================================
@@ -820,13 +820,13 @@ export class MigrationRunner {
       this.db.prepare('INSERT OR IGNORE INTO schema_versions (version, applied_at) VALUES (?, ?)').run(21, new Date().toISOString());
 
       this.db.run('COMMIT');
-      this.db.run('PRAGMA foreign_keys = ON');
 
       logger.debug('DB', 'Successfully added ON UPDATE CASCADE to FK constraints');
     } catch (error) {
-      this.db.run('ROLLBACK');
-      this.db.run('PRAGMA foreign_keys = ON');
+      try { this.db.run('ROLLBACK'); } catch { /* already rolled back or no active transaction */ }
       throw error;
+    } finally {
+      this.db.run('PRAGMA foreign_keys = ON');
     }
   }
 

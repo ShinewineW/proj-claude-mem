@@ -5,6 +5,7 @@
  * and size limiting for tool_input and tool_response fields.
  */
 
+import { logger } from '../../../../utils/logger.js';
 import { stripMemoryTagsFromJson } from '../../../../utils/tag-stripping.js';
 
 /**

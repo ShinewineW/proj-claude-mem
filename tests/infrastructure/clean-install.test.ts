@@ -113,8 +113,8 @@ describe('Clean Install - hooks.json Validity', () => {
       for (const matcher of matchers) {
         for (const hook of matcher.hooks) {
           if (hook.type === 'command') {
-            expect(hook.command).not.toContain('_R=');
-            expect(hook.command).not.toContain('$HOME/.claude/plugins');
+            // _R fallback pattern is intentional for Linux compatibility (#24529)
+            expect(hook.command).toContain('_R=');
             expect(hook.command).toContain('${CLAUDE_PLUGIN_ROOT}');
           }
         }
