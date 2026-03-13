@@ -535,60 +535,54 @@ export class SessionRoutes extends BaseRouteHandler {
       }
     }
 
-    try {
-      const store = this.dbManager.getSessionStore(dbPath);
+    const store = this.dbManager.getSessionStore(dbPath);
 
-      // Get or create session — derive project from cwd so session has correct project
-      // even if UserPromptSubmit hook never fires (worker restart, race condition)
-      const project = cwd ? getProjectName(cwd) : '';
-      const sessionDbId = store.createSDKSession(contentSessionId, project, '');
-      const promptNumber = store.getPromptNumberFromUserPrompts(contentSessionId);
+    // Get or create session — derive project from cwd so session has correct project
+    // even if UserPromptSubmit hook never fires (worker restart, race condition)
+    const project = cwd ? getProjectName(cwd) : '';
+    const sessionDbId = store.createSDKSession(contentSessionId, project, '');
+    const promptNumber = store.getPromptNumberFromUserPrompts(contentSessionId);
 
-      // Privacy check: skip if user prompt was entirely private
-      const userPrompt = PrivacyCheckValidator.checkUserPromptPrivacy(
-        store,
-        contentSessionId,
-        promptNumber,
-        'observation',
-        sessionDbId,
-        { tool_name }
-      );
-      if (!userPrompt) {
-        res.json({ status: 'skipped', reason: 'private' });
-        return;
-      }
-
-      // Safely serialize and strip memory tags from tool fields
-      const cleanedToolInput = cleanToolField(tool_input);
-      const cleanedToolResponse = cleanToolField(tool_response);
-
-      // Queue observation
-      this.sessionManager.queueObservation(sessionDbId, {
-        tool_name,
-        tool_input: cleanedToolInput,
-        tool_response: cleanedToolResponse,
-        prompt_number: promptNumber,
-        cwd: cwd || (() => {
-          logger.error('SESSION', 'Missing cwd when queueing observation in SessionRoutes', {
-            sessionId: sessionDbId,
-            tool_name
-          });
-          return '';
-        })()
-      }, dbPath);
-
-      // Ensure SDK agent is running
-      this.ensureGeneratorRunning(sessionDbId, 'observation', dbPath);
-
-      // Broadcast observation queued event
-      this.eventBroadcaster.broadcastObservationQueued(sessionDbId);
-
-      res.json({ status: 'queued' });
-    } catch (error) {
-      // Return 200 on recoverable errors so the hook doesn't break
-      logger.error('SESSION', 'Observation storage failed', { contentSessionId, tool_name }, error as Error);
-      res.json({ stored: false, reason: (error as Error).message });
+    // Privacy check: skip if user prompt was entirely private
+    const userPrompt = PrivacyCheckValidator.checkUserPromptPrivacy(
+      store,
+      contentSessionId,
+      promptNumber,
+      'observation',
+      sessionDbId,
+      { tool_name }
+    );
+    if (!userPrompt) {
+      res.json({ status: 'skipped', reason: 'private' });
+      return;
     }
+
+    // Safely serialize and strip memory tags from tool fields
+    const cleanedToolInput = cleanToolField(tool_input);
+    const cleanedToolResponse = cleanToolField(tool_response);
+
+    // Queue observation
+    this.sessionManager.queueObservation(sessionDbId, {
+      tool_name,
+      tool_input: cleanedToolInput,
+      tool_response: cleanedToolResponse,
+      prompt_number: promptNumber,
+      cwd: cwd || (() => {
+        logger.error('SESSION', 'Missing cwd when queueing observation in SessionRoutes', {
+          sessionId: sessionDbId,
+          tool_name
+        });
+        return '';
+      })()
+    }, dbPath);
+
+    // Ensure SDK agent is running
+    this.ensureGeneratorRunning(sessionDbId, 'observation', dbPath);
+
+    // Broadcast observation queued event
+    this.eventBroadcaster.broadcastObservationQueued(sessionDbId);
+
+    res.json({ status: 'queued' });
   });
 
   /**

@@ -503,9 +503,9 @@ export class SearchManager {
 
     // Combine, sort, and filter timeline items
     const items: TimelineItem[] = [
-      ...(timelineData.observations || []).map((obs: any) => ({ type: 'observation' as const, data: obs, epoch: obs.created_at_epoch })),
-      ...(timelineData.sessions || []).map((sess: any) => ({ type: 'session' as const, data: sess, epoch: sess.created_at_epoch })),
-      ...(timelineData.prompts || []).map((prompt: any) => ({ type: 'prompt' as const, data: prompt, epoch: prompt.created_at_epoch }))
+      ...timelineData.observations.map((obs: any) => ({ type: 'observation' as const, data: obs, epoch: obs.created_at_epoch })),
+      ...timelineData.sessions.map((sess: any) => ({ type: 'session' as const, data: sess, epoch: sess.created_at_epoch })),
+      ...timelineData.prompts.map((prompt: any) => ({ type: 'prompt' as const, data: prompt, epoch: prompt.created_at_epoch }))
     ];
     items.sort((a, b) => a.epoch - b.epoch);
     const filteredItems = this.timelineService.filterByDepth(items, anchorId, anchorEpoch, depth_before, depth_after);
@@ -534,7 +534,7 @@ export class SearchManager {
       lines.push(`# Timeline around anchor: ${anchorId}`);
     }
 
-    lines.push(`**Window:** ${depth_before} records before -> ${depth_after} records after | **Items:** ${filteredItems?.length ?? 0}`);
+    lines.push(`**Window:** ${depth_before} records before -> ${depth_after} records after | **Items:** ${filteredItems.length}`);
     lines.push('');
 
 
@@ -1506,7 +1506,7 @@ export class SearchManager {
 
     // Header
     lines.push(`# Timeline around anchor: ${anchorId}`);
-    lines.push(`**Window:** ${depth_before} records before -> ${depth_after} records after | **Items:** ${filteredItems?.length ?? 0}`);
+    lines.push(`**Window:** ${depth_before} records before -> ${depth_after} records after | **Items:** ${filteredItems.length}`);
     lines.push('');
 
 
@@ -1718,9 +1718,9 @@ export class SearchManager {
 
       // Combine, sort, and filter timeline items
       const items: TimelineItem[] = [
-        ...(timelineData.observations || []).map(obs => ({ type: 'observation' as const, data: obs, epoch: obs.created_at_epoch })),
-        ...(timelineData.sessions || []).map(sess => ({ type: 'session' as const, data: sess, epoch: sess.created_at_epoch })),
-        ...(timelineData.prompts || []).map(prompt => ({ type: 'prompt' as const, data: prompt, epoch: prompt.created_at_epoch }))
+        ...timelineData.observations.map(obs => ({ type: 'observation' as const, data: obs, epoch: obs.created_at_epoch })),
+        ...timelineData.sessions.map(sess => ({ type: 'session' as const, data: sess, epoch: sess.created_at_epoch })),
+        ...timelineData.prompts.map(prompt => ({ type: 'prompt' as const, data: prompt, epoch: prompt.created_at_epoch }))
       ];
       items.sort((a, b) => a.epoch - b.epoch);
       const filteredItems = this.timelineService.filterByDepth(items, topResult.id, 0, depth_before, depth_after);
@@ -1740,7 +1740,7 @@ export class SearchManager {
       // Header
       lines.push(`# Timeline for query: "${query}"`);
       lines.push(`**Anchor:** Observation #${topResult.id} - ${topResult.title || 'Untitled'}`);
-      lines.push(`**Window:** ${depth_before} records before -> ${depth_after} records after | **Items:** ${filteredItems?.length ?? 0}`);
+      lines.push(`**Window:** ${depth_before} records before -> ${depth_after} records after | **Items:** ${filteredItems.length}`);
       lines.push('');
 
 

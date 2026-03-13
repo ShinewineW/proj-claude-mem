@@ -197,8 +197,8 @@ export class SDKAgent {
             : typeof content === 'string' ? content : '';
 
           // Check for context overflow - prevents infinite retry loops
-          if (textContent.includes('prompt is too long') ||
-              textContent.includes('context window')) {
+          if (textContent.toLowerCase().includes('prompt is too long') ||
+              textContent.toLowerCase().includes('context window')) {
             logger.error('SDK', 'Context overflow detected - terminating session');
             session.abortController.abort();
             return;
@@ -248,14 +248,9 @@ export class SDKAgent {
             }, truncatedResponse);
           }
 
-          // Detect fatal context overflow and terminate gracefully (issue #870)
-          if (typeof textContent === 'string' && textContent.includes('Prompt is too long')) {
-            throw new Error('Claude session context overflow: prompt is too long');
-          }
-
           // Detect invalid API key — SDK returns this as response text, not an error.
           // Throw so it surfaces in health endpoint and prevents silent failures.
-          if (typeof textContent === 'string' && textContent.includes('Invalid API key')) {
+          if (textContent.includes('Invalid API key')) {
             throw new Error('Invalid API key: check your API key configuration in ~/.claude-mem/settings.json or ~/.claude-mem/.env');
           }
 

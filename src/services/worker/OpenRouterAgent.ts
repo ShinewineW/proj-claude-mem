@@ -162,12 +162,6 @@ export class OpenRouterAgent {
             session.lastPromptNumber = message.prompt_number;
           }
 
-          // CRITICAL: Check memorySessionId BEFORE making expensive LLM call
-          // This prevents wasting tokens when we won't be able to store the result anyway
-          if (!session.memorySessionId) {
-            throw new Error('Cannot process observations: memorySessionId not yet captured. This session may need to be reinitialized.');
-          }
-
           // Build observation prompt
           const obsPrompt = buildObservationPrompt({
             id: 0,
@@ -206,11 +200,6 @@ export class OpenRouterAgent {
           );
 
         } else if (message.type === 'summarize') {
-          // CRITICAL: Check memorySessionId BEFORE making expensive LLM call
-          if (!session.memorySessionId) {
-            throw new Error('Cannot process summary: memorySessionId not yet captured. This session may need to be reinitialized.');
-          }
-
           // Build summary prompt
           const summaryPrompt = buildSummaryPrompt({
             id: session.sessionDbId,
