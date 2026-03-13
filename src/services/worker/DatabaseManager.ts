@@ -11,6 +11,7 @@
  * - Without dbPath: falls back to defaultDbPath or last-active connection
  */
 
+import path from 'path';
 import { SessionStore } from '../sqlite/SessionStore.js';
 import { SessionSearch } from '../sqlite/SessionSearch.js';
 import { ChromaSync } from '../sync/ChromaSync.js';
@@ -36,7 +37,7 @@ import type { DBSession } from '../worker-types.js';
 export function validateDbPath(dbPath: string | undefined | null): void {
   if (dbPath === undefined || dbPath === null) return;
 
-  if (dbPath === '' || !dbPath.startsWith('/')) {
+  if (dbPath === '' || !path.isAbsolute(dbPath)) {
     throw new Error(`Invalid dbPath: must be an absolute path, got "${dbPath}"`);
   }
 

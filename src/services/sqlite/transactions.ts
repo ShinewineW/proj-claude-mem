@@ -56,6 +56,10 @@ export function storeObservationsAndMarkComplete(
   discoveryTokens: number = 0,
   overrideTimestampEpoch?: number
 ): StoreAndMarkCompleteResult {
+  if (!project || project.trim() === '') {
+    throw new Error('storeObservationsAndMarkComplete: project parameter is required');
+  }
+
   // Use override timestamp if provided
   const timestampEpoch = overrideTimestampEpoch ?? Date.now();
   const timestampIso = new Date(timestampEpoch).toISOString();
@@ -175,6 +179,10 @@ export function storeObservations(
   discoveryTokens: number = 0,
   overrideTimestampEpoch?: number
 ): StoreObservationsResult {
+  if (!project || project.trim() === '') {
+    throw new Error('storeObservations: project parameter is required');
+  }
+
   // Use override timestamp if provided
   const timestampEpoch = overrideTimestampEpoch ?? Date.now();
   const timestampIso = new Date(timestampEpoch).toISOString();

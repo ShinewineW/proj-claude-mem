@@ -1583,6 +1583,10 @@ export class SessionStore {
     const timestampEpoch = overrideTimestampEpoch ?? Date.now();
     const timestampIso = new Date(timestampEpoch).toISOString();
 
+    if (!project || project.trim() === '') {
+      throw new Error('storeObservation: project parameter is required');
+    }
+
     // Content-hash deduplication
     const contentHash = computeObservationContentHash(memorySessionId, observation.title, observation.narrative);
     const existing = findDuplicateObservation(this.db, contentHash, timestampEpoch);
@@ -1713,6 +1717,10 @@ export class SessionStore {
     discoveryTokens: number = 0,
     overrideTimestampEpoch?: number
   ): { observationIds: number[]; summaryId: number | null; createdAtEpoch: number } {
+    if (!project || project.trim() === '') {
+      throw new Error('storeObservations: project parameter is required');
+    }
+
     // Use override timestamp if provided
     const timestampEpoch = overrideTimestampEpoch ?? Date.now();
     const timestampIso = new Date(timestampEpoch).toISOString();
@@ -1833,6 +1841,10 @@ export class SessionStore {
     discoveryTokens: number = 0,
     overrideTimestampEpoch?: number
   ): { observationIds: number[]; summaryId?: number; createdAtEpoch: number } {
+    if (!project || project.trim() === '') {
+      throw new Error('storeObservationsAndMarkComplete: project parameter is required');
+    }
+
     // Use override timestamp if provided
     const timestampEpoch = overrideTimestampEpoch ?? Date.now();
     const timestampIso = new Date(timestampEpoch).toISOString();

@@ -136,16 +136,13 @@ describe('TRIAGE-03: Data Integrity', () => {
   });
 
   describe('Empty project string guard', () => {
-    it('storeObservation replaces empty project with cwd-derived name', () => {
+    it('storeObservation throws on empty project', () => {
       const memId = createSessionWithMemoryId(db, 'content-empty-proj', 'mem-empty-proj');
       const obs = createObservationInput();
 
-      const result = storeObservation(db, memId, '', obs);
-      const row = db.prepare('SELECT project FROM observations WHERE id = ?').get(result.id) as { project: string };
-
-      // Should not be empty — will be derived from cwd
-      expect(row.project).toBeTruthy();
-      expect(row.project.length).toBeGreaterThan(0);
+      expect(() => storeObservation(db, memId, '', obs)).toThrow(
+        'storeObservation: project parameter is required'
+      );
     });
   });
 

@@ -8,7 +8,6 @@
 import express, { Request, Response, NextFunction, RequestHandler } from 'express';
 import cors from 'cors';
 import path from 'path';
-import { basename, dirname } from 'path';
 import { getPackageRoot } from '../../../shared/paths.js';
 import { isProjectEnabled } from '../../../shared/project-allowlist.js';
 import { logger } from '../../../utils/logger.js';
@@ -129,10 +128,10 @@ export function allowlistGuard(req: Request, res: Response, next: NextFunction):
   }
 
   // Derive project root from dbPath. Convention: <projectRoot>/.claude/mem.db
-  const claudeDir = dirname(dbPath);
-  if (basename(claudeDir) !== '.claude') {
+  const claudeDir = path.dirname(dbPath);
+  if (path.basename(claudeDir) !== '.claude') {
     // Non-standard dbPath — only allow if CLAUDE_MEM_PROJECT_DB_PATH env override is set
-    if (process.env.CLAUDE_MEM_PROJECT_DB_PATH) {
+    if (process.env.CLAUDE_MEM_PROJECT_DB_PATH === dbPath) {
       next();
       return;
     }
@@ -142,7 +141,7 @@ export function allowlistGuard(req: Request, res: Response, next: NextFunction):
     res.status(403).json({ error: 'Invalid dbPath format' });
     return;
   }
-  const projectRoot = dirname(claudeDir);
+  const projectRoot = path.dirname(claudeDir);
   if (isProjectEnabled(projectRoot)) {
     next();
     return;
