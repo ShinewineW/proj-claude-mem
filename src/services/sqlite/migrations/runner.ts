@@ -19,23 +19,34 @@ export class MigrationRunner {
    * This is the only public method - all migrations are internal
    */
   runAllMigrations(): void {
-    this.initializeSchema();
-    this.ensureWorkerPortColumn();
-    this.ensurePromptTrackingColumns();
-    this.removeSessionSummariesUniqueConstraint();
-    this.addObservationHierarchicalFields();
-    this.makeObservationsTextNullable();
-    this.createUserPromptsTable();
-    this.ensureDiscoveryTokensColumn();
-    this.createPendingMessagesTable();
-    this.renameSessionIdColumns();
-    this.repairSessionIdColumnRename();
-    this.addFailedAtEpochColumn();
-    this.addOnUpdateCascadeToForeignKeys();
-    this.addObservationContentHashColumn();
-    this.addSessionCustomTitleColumn();
-    this.addObservationAccessCountColumn();
-    this.createRetentionMetadataTable();
+    const steps: [string, () => void][] = [
+      ['initializeSchema', () => this.initializeSchema()],
+      ['ensureWorkerPortColumn', () => this.ensureWorkerPortColumn()],
+      ['ensurePromptTrackingColumns', () => this.ensurePromptTrackingColumns()],
+      ['removeSessionSummariesUniqueConstraint', () => this.removeSessionSummariesUniqueConstraint()],
+      ['addObservationHierarchicalFields', () => this.addObservationHierarchicalFields()],
+      ['makeObservationsTextNullable', () => this.makeObservationsTextNullable()],
+      ['createUserPromptsTable', () => this.createUserPromptsTable()],
+      ['ensureDiscoveryTokensColumn', () => this.ensureDiscoveryTokensColumn()],
+      ['createPendingMessagesTable', () => this.createPendingMessagesTable()],
+      ['renameSessionIdColumns', () => this.renameSessionIdColumns()],
+      ['repairSessionIdColumnRename', () => this.repairSessionIdColumnRename()],
+      ['addFailedAtEpochColumn', () => this.addFailedAtEpochColumn()],
+      ['addOnUpdateCascadeToForeignKeys', () => this.addOnUpdateCascadeToForeignKeys()],
+      ['addObservationContentHashColumn', () => this.addObservationContentHashColumn()],
+      ['addSessionCustomTitleColumn', () => this.addSessionCustomTitleColumn()],
+      ['addObservationAccessCountColumn', () => this.addObservationAccessCountColumn()],
+      ['createRetentionMetadataTable', () => this.createRetentionMetadataTable()],
+    ];
+
+    for (const [name, fn] of steps) {
+      try {
+        fn();
+      } catch (error) {
+        logger.error('DB', `Migration "${name}" failed`, {}, error instanceof Error ? error : undefined);
+        throw error;
+      }
+    }
   }
 
   /**

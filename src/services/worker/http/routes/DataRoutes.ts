@@ -60,6 +60,9 @@ export class DataRoutes extends BaseRouteHandler {
 
     // Import endpoint
     app.post('/api/import', this.handleImport.bind(this));
+
+    // Chroma collection management
+    app.delete('/api/chroma-collection', this.handleDeleteChromaCollection.bind(this));
   }
 
   /**
@@ -536,6 +539,26 @@ export class DataRoutes extends BaseRouteHandler {
     res.json({
       success: true,
       clearedCount
+    });
+  });
+
+  /**
+   * Delete a Chroma collection for a specific project database.
+   * DELETE /api/chroma-collection?dbPath=...
+   */
+  private handleDeleteChromaCollection = this.wrapHandler(async (req: Request, res: Response): Promise<void> => {
+    const dbPath = (req.query.dbPath as string) || undefined;
+    if (!dbPath) {
+      res.status(400).json({ success: false, error: 'dbPath query parameter is required' });
+      return;
+    }
+
+    const deleted = await this.dbManager.removeChromaSync(dbPath, true);
+
+    res.json({
+      success: true,
+      deleted,
+      message: deleted ? 'Chroma collection deleted and cache cleared' : 'No cached ChromaSync found (collection may not exist)'
     });
   });
 

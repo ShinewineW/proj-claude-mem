@@ -16,6 +16,7 @@ import { logger } from '../utils/logger.js';
 interface PoolEntry {
   store: SessionStore;
   search: SessionSearch;
+  activeOps: number;
 }
 
 export class DbConnectionPool {
@@ -63,6 +64,22 @@ export class DbConnectionPool {
     return this.connections.size;
   }
 
+  acquireRef(dbPath: string): void {
+    const normalizedPath = resolve(dbPath);
+    const entry = this.connections.get(normalizedPath);
+    if (entry) {
+      entry.activeOps++;
+    }
+  }
+
+  releaseRef(dbPath: string): void {
+    const normalizedPath = resolve(dbPath);
+    const entry = this.connections.get(normalizedPath);
+    if (entry && entry.activeOps > 0) {
+      entry.activeOps--;
+    }
+  }
+
   closeAll(): void {
     for (const [dbPath, entry] of this.connections) {
       try {
@@ -88,25 +105,40 @@ export class DbConnectionPool {
       return existing;
     }
 
-    // Evict oldest if at capacity
+    // Evict oldest idle connection if at capacity
     if (this.connections.size >= this.maxConnections) {
-      const oldest = this.connections.keys().next().value!;
-      const oldEntry = this.connections.get(oldest)!;
+      // Find oldest idle connection (activeOps === 0)
+      let evictKey: string | null = null;
+      for (const [key, entry] of this.connections) {
+        if (entry.activeOps === 0) {
+          evictKey = key;
+          break; // Map iteration order = insertion order = oldest first
+        }
+      }
+
+      if (!evictKey) {
+        throw new Error(
+          `Connection pool full (${this.maxConnections}): all connections are active. ` +
+          `Cannot open new connection for ${normalizedPath}`
+        );
+      }
+
+      const oldEntry = this.connections.get(evictKey)!;
       try {
         oldEntry.store.close();
       } catch (e) {
-        logger.debug('POOL', `Error closing store during eviction for ${oldest}`, {}, e as Error);
+        logger.debug('POOL', `Error closing store during eviction for ${evictKey}`, {}, e as Error);
       }
       try {
         oldEntry.search.close();
       } catch (e) {
-        logger.debug('POOL', `Error closing search during eviction for ${oldest}`, {}, e as Error);
+        logger.debug('POOL', `Error closing search during eviction for ${evictKey}`, {}, e as Error);
       }
-      this.connections.delete(oldest);
-      if (oldest === this.lastActiveDbPath) {
+      this.connections.delete(evictKey);
+      if (evictKey === this.lastActiveDbPath) {
         this.lastActiveDbPath = null;
       }
-      logger.debug('POOL', 'Evicted connection', { evicted: oldest });
+      logger.debug('POOL', 'Evicted idle connection', { evicted: evictKey });
     }
 
     // Create directory and .gitignore on first open
@@ -121,6 +153,7 @@ export class DbConnectionPool {
     const entry: PoolEntry = {
       store: new SessionStore(normalizedPath),
       search: new SessionSearch(normalizedPath),
+      activeOps: 0,
     };
     this.connections.set(normalizedPath, entry);
     this.lastActiveDbPath = normalizedPath;

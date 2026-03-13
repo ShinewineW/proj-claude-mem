@@ -3,7 +3,7 @@
  * Provides readable, traceable logging with correlation IDs and data flow tracking
  */
 
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, unlinkSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 
@@ -56,6 +56,9 @@ class Logger {
       if (!existsSync(logsDir)) {
         mkdirSync(logsDir, { recursive: true });
       }
+
+      // Clean up old log files (> 7 days)
+      cleanupOldLogs(logsDir);
 
       // Create log file path with date
       const date = new Date().toISOString().split('T')[0];
@@ -402,6 +405,39 @@ class Logger {
     this.warn(component, `[HAPPY-PATH] ${message}`, enhancedContext, data);
 
     return fallback;
+  }
+}
+
+/**
+ * Delete claude-mem log files older than maxAgeDays from the given directory.
+ * Called once on logger initialization. Errors are non-fatal.
+ */
+export function cleanupOldLogs(logsDir: string, maxAgeDays = 7): void {
+  try {
+    if (!existsSync(logsDir)) return;
+
+    const now = Date.now();
+    const maxAgeMs = maxAgeDays * 24 * 60 * 60 * 1000;
+    const files = readdirSync(logsDir);
+    const logPattern = /^claude-mem-(\d{4}-\d{2}-\d{2})\.log$/;
+
+    for (const file of files) {
+      const match = file.match(logPattern);
+      if (!match) continue;
+
+      const fileDate = new Date(match[1] + 'T00:00:00Z');
+      if (isNaN(fileDate.getTime())) continue;
+
+      if (now - fileDate.getTime() > maxAgeMs) {
+        try {
+          unlinkSync(join(logsDir, file));
+        } catch {
+          // Non-fatal: skip files that can't be deleted
+        }
+      }
+    }
+  } catch {
+    // Non-fatal: log cleanup failure should never block startup
   }
 }
 

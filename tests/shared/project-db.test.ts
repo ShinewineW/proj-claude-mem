@@ -63,6 +63,63 @@ describe("DbConnectionPool", () => {
   });
 });
 
+describe("DbConnectionPool eviction with active operations", () => {
+  const testRoot = join(tmpdir(), `claude-mem-evict-test-${Date.now()}`);
+  let pool: any;
+
+  beforeEach(async () => {
+    mkdirSync(testRoot, { recursive: true });
+    const mod = await import("../../src/shared/project-db.js");
+    pool = new mod.DbConnectionPool(2);
+  });
+
+  afterEach(() => {
+    pool?.closeAll();
+    rmSync(testRoot, { recursive: true, force: true });
+  });
+
+  it("should not evict a connection with active operations", () => {
+    const pathA = join(testRoot, "proj-a", ".claude", "mem.db");
+    const pathB = join(testRoot, "proj-b", ".claude", "mem.db");
+    const pathC = join(testRoot, "proj-c", ".claude", "mem.db");
+
+    const store1 = pool.getStore(pathA);
+    pool.getStore(pathB);
+    expect(pool.connectionCount()).toBe(2);
+
+    // Mark proj-a as active — it should not be evicted
+    pool.acquireRef(pathA);
+
+    // Adding proj-c should evict proj-b (idle), not proj-a (active)
+    pool.getStore(pathC);
+    expect(pool.connectionCount()).toBe(2);
+
+    // proj-a should still be cached (same instance)
+    const store1Again = pool.getStore(pathA);
+    expect(store1Again).toBe(store1);
+
+    pool.releaseRef(pathA);
+  });
+
+  it("should throw when all connections are active and pool is full", () => {
+    const pathA = join(testRoot, "proj-d", ".claude", "mem.db");
+    const pathB = join(testRoot, "proj-e", ".claude", "mem.db");
+    const pathC = join(testRoot, "proj-f", ".claude", "mem.db");
+
+    pool.getStore(pathA);
+    pool.getStore(pathB);
+    pool.acquireRef(pathA);
+    pool.acquireRef(pathB);
+
+    expect(() => {
+      pool.getStore(pathC);
+    }).toThrow(/all connections are active/i);
+
+    pool.releaseRef(pathA);
+    pool.releaseRef(pathB);
+  });
+});
+
 describe("ensureGitignore", () => {
   const testRoot = join(tmpdir(), `claude-mem-gitignore-test-${Date.now()}`);
 

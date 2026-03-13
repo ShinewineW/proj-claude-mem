@@ -62,6 +62,20 @@ If file doesn't exist, or confirmed path is not a key:
 ```
 Stop here.
 
+### Step 3.5: Clean up Chroma vector data
+
+Delete the project's Chroma collection to free vector storage. This step is best-effort — skip silently if the worker is not running.
+
+```bash
+WORKER_PORT=$(cat ~/.claude-mem/worker.port 2>/dev/null || echo "37777")
+DB_PATH="<confirmed_path>/.claude/mem.db"
+DB_PATH_ENCODED=$(node -e "process.stdout.write(encodeURIComponent('${DB_PATH}'))")
+curl -s -X DELETE "http://localhost:${WORKER_PORT}/api/chroma-collection?dbPath=${DB_PATH_ENCODED}" 2>/dev/null || true
+```
+
+- If the curl succeeds and `deleted` is true, inform the user: `✓ Chroma vector data cleaned up for this project.`
+- If the curl fails or `deleted` is false, do NOT show an error — continue silently.
+
 ### Step 4: Remove entry and write back
 
 Delete only the confirmed path's key. Preserve all other entries. Do NOT delete the file even if it becomes `{}`.

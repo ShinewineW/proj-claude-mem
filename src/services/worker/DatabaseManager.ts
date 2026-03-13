@@ -155,15 +155,29 @@ export class DatabaseManager {
   /**
    * Remove a ChromaSync entry for a specific dbPath.
    * Called when a project is disabled to free resources.
+   *
+   * Args:
+   *   dbPath: Absolute path to the project's mem.db.
+   *   deleteCollection: If true, also deletes the Chroma collection data.
    */
-  async removeChromaSync(dbPath: string): Promise<boolean> {
+  async removeChromaSync(dbPath: string, deleteCollection = false): Promise<boolean> {
     validateDbPath(dbPath);
     const collectionName = getCollectionName(dbPath);
     const sync = this.chromaSyncMap.get(collectionName);
     if (sync) {
+      if (deleteCollection) {
+        await sync.deleteCollection();
+      }
       await sync.close();
       this.chromaSyncMap.delete(collectionName);
-      logger.debug('DB_MANAGER', 'Removed ChromaSync entry', { collectionName });
+      logger.info('DB_MANAGER', 'Removed ChromaSync entry', { collectionName, deleted: deleteCollection });
+      return true;
+    }
+    // If no cached instance, but caller wants deletion, create a temporary one
+    if (deleteCollection) {
+      const tempSync = new ChromaSync(collectionName);
+      await tempSync.deleteCollection();
+      await tempSync.close();
       return true;
     }
     return false;

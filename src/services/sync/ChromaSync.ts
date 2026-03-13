@@ -853,4 +853,33 @@ export class ChromaSync {
     // We don't close it here - it's closed during graceful shutdown
     logger.info('CHROMA_SYNC', 'ChromaSync closed', { collection: this.collectionName });
   }
+
+  /**
+   * Delete the Chroma collection associated with this instance.
+   *
+   * Returns true if the collection was successfully deleted, false if
+   * the collection didn't exist or the MCP server was unavailable.
+   */
+  async deleteCollection(): Promise<boolean> {
+    const chromaMcp = ChromaMcpManager.getInstance();
+    try {
+      await chromaMcp.callTool('chroma_delete_collection', {
+        collection_name: this.collectionName
+      });
+      logger.info('CHROMA_SYNC', 'Deleted Chroma collection', { collection: this.collectionName });
+      this.collectionCreated = false;
+      return true;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message.includes('does not exist') || message.includes('ECONNREFUSED') || message.includes('not connected')) {
+        logger.debug('CHROMA_SYNC', 'Collection delete skipped (not found or MCP unavailable)', {
+          collection: this.collectionName,
+          reason: message
+        });
+        return false;
+      }
+      logger.warn('CHROMA_SYNC', 'Failed to delete Chroma collection', { collection: this.collectionName }, error as Error);
+      return false;
+    }
+  }
 }
