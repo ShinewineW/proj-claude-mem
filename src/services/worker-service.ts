@@ -192,6 +192,9 @@ export class WorkerService {
   // Stale session reaper interval (Issue #1168)
   private staleSessionReaperInterval: ReturnType<typeof setInterval> | null = null;
 
+  // Periodic fallback file replay + cleanup
+  private fallbackCleanupInterval: ReturnType<typeof setInterval> | null = null;
+
   // AI interaction tracking for health endpoint
   private lastAiInteraction: {
     timestamp: number;
@@ -222,6 +225,10 @@ export class WorkerService {
     // Set callback for when sessions are deleted
     this.sessionManager.setOnSessionDeleted(() => {
       this.broadcastProcessingStatus();
+    });
+
+    this.sessionManager.setOnStartGenerator((session, source) => {
+      this.startSessionProcessor(session, source);
     });
 
 
@@ -451,6 +458,16 @@ export class WorkerService {
         }
       }
 
+      // Replay fallback observations from hook failures
+      try {
+        const replayed = await this.replayFallbackEntries();
+        if (replayed > 0) {
+          logger.info('SYSTEM', `Replayed ${replayed} fallback entries from hook failures`);
+        }
+      } catch (fallbackError) {
+        logger.warn('SYSTEM', 'Fallback replay failed (non-fatal)', {}, fallbackError as Error);
+      }
+
       // Initialize search services
       const formattingService = new FormattingService();
       const timelineService = new TimelineService();
@@ -520,6 +537,15 @@ export class WorkerService {
           logger.error('SYSTEM', 'Stale session reaper error', { error: e instanceof Error ? e.message : String(e) });
         }
       }, 2 * 60 * 1000);
+
+      // Periodic fallback replay + cleanup to prevent file accumulation
+      this.fallbackCleanupInterval = setInterval(async () => {
+        try {
+          await this.replayFallbackEntries();
+        } catch (e) {
+          logger.warn('SYSTEM', 'Fallback cleanup error', { error: e instanceof Error ? e.message : String(e) });
+        }
+      }, 30 * 60 * 1000); // Every 30 minutes
 
       // Auto-recover orphaned queues (fire-and-forget with error logging)
       this.processPendingQueues(50).then(result => {
@@ -892,11 +918,79 @@ export class WorkerService {
         await new Promise(resolve => setTimeout(resolve, 100));
       } catch (error) {
         logger.error('SYSTEM', `Failed to process session ${sessionDbId}`, { dbPath }, error as Error);
+        try {
+          const abandonCount = this.sessionManager.getPendingMessageStore(dbPath).markAllSessionMessagesAbandoned(sessionDbId);
+          if (abandonCount > 0) {
+            logger.info('SYSTEM', `Abandoned ${abandonCount} orphaned messages for unrecoverable session ${sessionDbId}`, { dbPath });
+          }
+        } catch (abandonError) {
+          logger.warn('SYSTEM', `Failed to abandon messages for session ${sessionDbId}`, { dbPath }, abandonError as Error);
+        }
         result.sessionsSkipped++;
       }
     }
 
     return result;
+  }
+
+  /**
+   * Replay fallback entries written by hooks when worker was unreachable.
+   * Looks up existing sessions by contentSessionId; discards entries for
+   * sessions that no longer exist (stale data from old sessions).
+   */
+  private async replayFallbackEntries(): Promise<number> {
+    const { readFallbackEntries, deleteFallbackFile, cleanupStaleFallbacks, getDefaultFallbackDir } = await import('../shared/fallback-queue.js');
+    const fallbackDir = getDefaultFallbackDir();
+
+    const staleRemoved = cleanupStaleFallbacks(fallbackDir);
+    if (staleRemoved > 0) {
+      logger.info('SYSTEM', `Cleaned up ${staleRemoved} stale fallback files`);
+    }
+
+    const entries = readFallbackEntries(fallbackDir);
+    let replayed = 0;
+
+    for (const { entry, filepath } of entries) {
+      try {
+        const store = this.dbManager.getSessionStore(entry.dbPath);
+        // TODO: Extract to SessionStore.getSessionByContentId() to avoid raw db access
+        const existing = store.db.prepare(
+          'SELECT id FROM sdk_sessions WHERE content_session_id = ?'
+        ).get(entry.sessionId) as { id: number } | undefined;
+
+        if (!existing) {
+          logger.debug('SYSTEM', 'Fallback entry references non-existent session, discarding', { filepath });
+          deleteFallbackFile(filepath);
+          continue;
+        }
+
+        const sessionDbId = existing.id;
+
+        if (entry.type === 'observation') {
+          this.sessionManager.queueObservation(sessionDbId, {
+            tool_name: entry.payload.tool_name as string,
+            tool_input: entry.payload.tool_input,
+            tool_response: entry.payload.tool_response,
+            cwd: entry.cwd,
+            prompt_number: (entry.payload.prompt_number as number) ?? 0
+          }, entry.dbPath);
+        } else if (entry.type === 'summarize') {
+          this.sessionManager.queueSummarize(
+            sessionDbId,
+            entry.payload.last_assistant_message as string | undefined,
+            entry.dbPath
+          );
+        }
+
+        deleteFallbackFile(filepath);
+        replayed++;
+      } catch (replayError) {
+        logger.warn('SYSTEM', 'Failed to replay fallback entry, deleting', { filepath }, replayError as Error);
+        deleteFallbackFile(filepath);
+      }
+    }
+
+    return replayed;
   }
 
   /**
@@ -913,6 +1007,12 @@ export class WorkerService {
     if (this.staleSessionReaperInterval) {
       clearInterval(this.staleSessionReaperInterval);
       this.staleSessionReaperInterval = null;
+    }
+
+    // Stop fallback cleanup interval
+    if (this.fallbackCleanupInterval) {
+      clearInterval(this.fallbackCleanupInterval);
+      this.fallbackCleanupInterval = null;
     }
 
     await performGracefulShutdown({

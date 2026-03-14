@@ -12,6 +12,7 @@ import { logger } from '../../utils/logger.js';
 import { extractLastMessage } from '../../shared/transcript-parser.js';
 import { HOOK_EXIT_CODES, HOOK_TIMEOUTS, getTimeout } from '../../shared/hook-constants.js';
 import { resolveProjectDbPath } from '../../shared/paths.js';
+import { writeFallbackEntry } from '../../shared/fallback-queue.js';
 
 const SUMMARIZE_TIMEOUT_MS = getTimeout(HOOK_TIMEOUTS.DEFAULT);
 
@@ -47,26 +48,41 @@ export const summarizeHandler: EventHandler = {
     });
 
     // Send to worker - worker handles privacy check and database operations
-    const response = await fetchWithTimeout(
-      `http://127.0.0.1:${port}/api/sessions/summarize`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contentSessionId: sessionId,
-          last_assistant_message: lastAssistantMessage,
-          dbPath
-        }),
-      },
-      SUMMARIZE_TIMEOUT_MS
-    );
+    try {
+      const response = await fetchWithTimeout(
+        `http://127.0.0.1:${port}/api/sessions/summarize`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contentSessionId: sessionId,
+            last_assistant_message: lastAssistantMessage,
+            dbPath
+          }),
+        },
+        SUMMARIZE_TIMEOUT_MS
+      );
 
-    if (!response.ok) {
-      // Return standard response even on failure (matches original behavior)
-      return { continue: true, suppressOutput: true };
+      if (!response.ok) {
+        logger.warn('HOOK', 'Summarize storage failed, writing fallback', { status: response.status });
+        writeFallbackEntry({
+          type: 'summarize', sessionId, cwd, dbPath,
+          timestamp: Date.now(),
+          payload: { last_assistant_message: lastAssistantMessage }
+        });
+        return { continue: true, suppressOutput: true };
+      }
+
+      logger.debug('HOOK', 'Summary request sent successfully');
+    } catch (error) {
+      logger.warn('HOOK', 'Summarize fetch error, writing fallback', { error: error instanceof Error ? error.message : String(error) });
+      writeFallbackEntry({
+        type: 'summarize', sessionId, cwd, dbPath,
+        timestamp: Date.now(),
+        payload: { last_assistant_message: lastAssistantMessage }
+      });
+      return { continue: true, suppressOutput: true, exitCode: HOOK_EXIT_CODES.SUCCESS };
     }
-
-    logger.debug('HOOK', 'Summary request sent successfully');
 
     return { continue: true, suppressOutput: true };
   }

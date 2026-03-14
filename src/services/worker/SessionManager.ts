@@ -21,6 +21,7 @@ export class SessionManager {
   private sessions: Map<string, ActiveSession> = new Map();
   private sessionQueues: Map<string, EventEmitter> = new Map();
   private onSessionDeletedCallback?: () => void;
+  private onStartGeneratorCallback?: (session: ActiveSession, source: string) => void;
 
   constructor(dbManager: DatabaseManager) {
     this.dbManager = dbManager;
@@ -75,6 +76,10 @@ export class SessionManager {
    */
   setOnSessionDeleted(callback: () => void): void {
     this.onSessionDeletedCallback = callback;
+  }
+
+  setOnStartGenerator(callback: (session: ActiveSession, source: string) => void): void {
+    this.onStartGeneratorCallback = callback;
   }
 
   /**
@@ -468,7 +473,8 @@ export class SessionManager {
    */
   async reapStaleSessions(): Promise<number> {
     const now = Date.now();
-    const staleKeys: { key: string; sessionDbId: number; dbPath?: string }[] = [];
+    const toReap: { key: string; sessionDbId: number; dbPath?: string }[] = [];
+    const toSummarize: ActiveSession[] = [];
 
     for (const [key, session] of this.sessions) {
       // Skip sessions with active generators
@@ -478,19 +484,47 @@ export class SessionManager {
       const pendingCount = this.getPendingStore(session.dbPath).getPendingCount(session.sessionDbId);
       if (pendingCount > 0) continue;
 
-      // No generator + no pending work + old enough = stale
-      const sessionAge = now - session.startTime;
-      if (sessionAge > SessionManager.MAX_SESSION_IDLE_MS) {
-        staleKeys.push({ key, sessionDbId: session.sessionDbId, dbPath: session.dbPath });
+      // Sessions with proactive summarize already queued: reap immediately
+      // (skip idle time check — the summarize was the final lifecycle step)
+      if (session.proactiveSummarizeQueued) {
+        toReap.push({ key, sessionDbId: session.sessionDbId, dbPath: session.dbPath });
+        continue;
+      }
+
+      // Use lastGeneratorActivity for idle detection (more accurate than startTime)
+      const idleMs = now - session.lastGeneratorActivity;
+      if (idleMs <= SessionManager.MAX_SESSION_IDLE_MS) continue;
+
+      // Session is idle long enough — queue proactive summarize
+      toSummarize.push(session);
+    }
+
+    // Phase 1: Queue proactive summarizes (will be reaped on next cycle)
+    for (const session of toSummarize) {
+      try {
+        this.queueSummarize(session.sessionDbId, undefined, session.dbPath);
+        session.proactiveSummarizeQueued = true;
+        logger.info('SESSION', `Queued proactive summarize for idle session ${session.sessionDbId}`, {
+          sessionDbId: session.sessionDbId,
+          idleMs: now - session.lastGeneratorActivity
+        });
+        if (this.onStartGeneratorCallback) {
+          this.onStartGeneratorCallback(session, 'proactive-summarize');
+        }
+      } catch (error) {
+        // Summarize queue failed — reap immediately instead of leaving in limbo
+        logger.warn('SESSION', `Proactive summarize failed, reaping directly`, { sessionDbId: session.sessionDbId }, error as Error);
+        toReap.push({ key: this.sessionKey(session.sessionDbId, session.dbPath), sessionDbId: session.sessionDbId, dbPath: session.dbPath });
       }
     }
 
-    for (const { sessionDbId, dbPath } of staleKeys) {
-      logger.warn('SESSION', `Reaping stale session ${sessionDbId} (no activity for >${Math.round(SessionManager.MAX_SESSION_IDLE_MS / 60000)}m)`, { sessionDbId });
+    // Phase 2: Reap sessions that are done with their summarize
+    for (const { sessionDbId, dbPath } of toReap) {
+      logger.warn('SESSION', `Reaping stale session ${sessionDbId} (idle >${Math.round(SessionManager.MAX_SESSION_IDLE_MS / 60000)}m)`, { sessionDbId });
       await this.deleteSession(sessionDbId, dbPath);
     }
 
-    return staleKeys.length;
+    return toReap.length;
   }
 
   /**

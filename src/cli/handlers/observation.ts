@@ -11,17 +11,24 @@ import { HOOK_EXIT_CODES } from '../../shared/hook-constants.js';
 import { isProjectExcluded } from '../../utils/project-filter.js';
 import { SettingsDefaultsManager } from '../../shared/SettingsDefaultsManager.js';
 import { USER_SETTINGS_PATH, resolveProjectDbPath } from '../../shared/paths.js';
+import { writeFallbackEntry } from '../../shared/fallback-queue.js';
 
 export const observationHandler: EventHandler = {
   async execute(input: NormalizedHookInput): Promise<HookResult> {
+    const { sessionId, cwd, toolName, toolInput, toolResponse } = input;
+
     // Ensure worker is running before any other logic
     const workerReady = await ensureWorkerRunning();
     if (!workerReady) {
-      // Worker not available - skip observation gracefully
+      if (toolName && cwd) {
+        writeFallbackEntry({
+          type: 'observation', sessionId, cwd, dbPath: resolveProjectDbPath(cwd),
+          timestamp: Date.now(),
+          payload: { tool_name: toolName, tool_input: toolInput, tool_response: toolResponse }
+        });
+      }
       return { continue: true, suppressOutput: true, exitCode: HOOK_EXIT_CODES.SUCCESS };
     }
-
-    const { sessionId, cwd, toolName, toolInput, toolResponse } = input;
 
     if (!toolName) {
       // No tool name provided - skip observation gracefully
@@ -68,28 +75,23 @@ export const observationHandler: EventHandler = {
       });
 
       if (!response.ok) {
-        // Log but don't throw — observation storage failure should not block tool use
-        logger.warn('HOOK', 'Observation storage failed, skipping', { status: response.status, toolName });
+        logger.warn('HOOK', 'Observation storage failed, writing fallback', { status: response.status, toolName });
+        writeFallbackEntry({
+          type: 'observation', sessionId, cwd, dbPath,
+          timestamp: Date.now(),
+          payload: { tool_name: toolName, tool_input: toolInput, tool_response: toolResponse }
+        });
         return { continue: true, suppressOutput: true, exitCode: HOOK_EXIT_CODES.SUCCESS };
-      }
-
-      // Check response body for soft failures (HTTP 200 but stored: false)
-      try {
-        const body = await response.json();
-        if (body && body.stored === false) {
-          logger.warn('HOOK', 'Observation storage returned failure', {
-            toolName,
-            reason: body.reason || 'unknown',
-          });
-        }
-      } catch {
-        // Response body parse failure is non-fatal
       }
 
       logger.debug('HOOK', 'Observation sent successfully', { toolName });
     } catch (error) {
-      // Worker unreachable — skip observation gracefully
-      logger.warn('HOOK', 'Observation fetch error, skipping', { error: error instanceof Error ? error.message : String(error) });
+      logger.warn('HOOK', 'Observation fetch error, writing fallback', { error: error instanceof Error ? error.message : String(error) });
+      writeFallbackEntry({
+        type: 'observation', sessionId, cwd, dbPath,
+        timestamp: Date.now(),
+        payload: { tool_name: toolName, tool_input: toolInput, tool_response: toolResponse }
+      });
       return { continue: true, suppressOutput: true, exitCode: HOOK_EXIT_CODES.SUCCESS };
     }
 
