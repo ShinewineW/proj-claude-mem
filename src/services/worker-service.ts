@@ -519,8 +519,8 @@ export class WorkerService {
       // Start orphan reaper to clean up zombie processes (Issue #737)
       this.stopOrphanReaper = startOrphanReaper(() => {
         const activeIds = new Set<number>();
-        for (const [id] of this.sessionManager['sessions']) {
-          activeIds.add(id);
+        for (const session of this.sessionManager['sessions'].values()) {
+          activeIds.add(session.sessionDbId);
         }
         return activeIds;
       });
