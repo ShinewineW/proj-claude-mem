@@ -20,6 +20,14 @@ mock.module('../../src/shared/paths.js', () => ({ resolveProjectDbPath: () => '/
 
 **Env vars**: Set BEFORE importing the module under test (ES module hoisting).
 
+**Env var cleanup**: Module-level `process.env.X = ...` MUST be restored in `afterAll`:
+```typescript
+const orig = process.env.CLAUDE_MEM_DATA_DIR;
+process.env.CLAUDE_MEM_DATA_DIR = testDataDir;
+afterAll(() => { orig === undefined ? delete process.env.CLAUDE_MEM_DATA_DIR : process.env.CLAUDE_MEM_DATA_DIR = orig; });
+```
+bun runs all test files in the same process — leaked env vars break `SettingsDefaultsManager` tests.
+
 **Temp dirs**: `join(tmpdir(), \`test-${Date.now()}\`)` with `rmSync` in `afterEach`.
 
 ## Structure
