@@ -10,7 +10,6 @@ process.env.CLAUDE_MEM_DATA_DIR = testDataDir;
 
 import {
   enableProject,
-  listEnabledProjects,
   getEnabledProjectsPath,
   resolveProjectByName,
   resolveAllProjectDbPaths,
@@ -52,12 +51,10 @@ describe('Cross-project name resolution', () => {
       expect(result).toBeNull();
     });
 
-    it('returns first match on basename collision', () => {
+    it('throws on basename collision with disambiguation message', () => {
       enableProject('/Users/dev/code/auth-service');
       enableProject('/Users/dev/other/auth-service');
-      const result = resolveProjectByName('auth-service');
-      expect(result).not.toBeNull();
-      expect(result!.dbPath).toMatch(/auth-service\/\.claude\/mem\.db$/);
+      expect(() => resolveProjectByName('auth-service')).toThrow('Ambiguous project name');
     });
   });
 

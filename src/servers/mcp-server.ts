@@ -29,13 +29,12 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import { getWorkerPort, getWorkerHost } from '../shared/worker-utils.js';
 import { resolveProjectRoot } from '../shared/paths.js';
-import { isProjectEnabled } from '../shared/project-allowlist.js';
-import { resolveProjectByName, resolveAllProjectDbPaths } from '../shared/project-allowlist.js';
+import { isProjectEnabled, resolveProjectByName, resolveAllProjectDbPaths } from '../shared/project-allowlist.js';
 import { existsSync } from 'node:fs';
 import { searchCodebase, formatSearchResults } from '../services/smart-file-read/search.js';
 import { parseFile, formatFoldedView, unfoldSymbol } from '../services/smart-file-read/parser.js';
 import { readFile } from 'node:fs/promises';
-import { resolve, join, basename } from 'node:path';
+import { resolve, join } from 'node:path';
 
 /**
  * Worker HTTP API configuration
@@ -230,8 +229,7 @@ function resolveFromProject(fromProject?: string): ProjectTarget {
  */
 async function executeWithCrossProject(
   fromProject: string | undefined,
-  executeFn: (dbPath?: string) => Promise<WorkerResponse>,
-  toolName: string
+  executeFn: (dbPath?: string) => Promise<WorkerResponse>
 ): Promise<WorkerResponse> {
   const target = resolveFromProject(fromProject);
 
@@ -249,7 +247,7 @@ async function executeWithCrossProject(
           result: await executeFn(p.dbPath),
         }))
       );
-      return mergeResults(settled, toolName);
+      return mergeResults(settled);
     }
   }
 }
@@ -261,8 +259,7 @@ async function executeWithCrossProject(
  * Skips failed projects with a note in output.
  */
 function mergeResults(
-  settled: PromiseSettledResult<{ name: string; result: WorkerResponse }>[],
-  toolName: string
+  settled: PromiseSettledResult<{ name: string; result: WorkerResponse }>[]
 ): WorkerResponse {
   const sections: string[] = [];
   const errors: string[] = [];
@@ -279,7 +276,7 @@ function mergeResults(
       continue;
     }
 
-    const text = result.content[0]?.text || '';
+    const text = result.content.map(c => c.text).join('\n') || '';
     if (text.trim()) {
       sections.push(`## ${name}\n\n${text}`);
     }
@@ -376,8 +373,7 @@ NEVER fetch full details without filtering first. 10x token savings.`,
       try {
         return await executeWithCrossProject(
           from_project,
-          (dbPath) => callWorkerAPI(TOOL_ENDPOINT_MAP['search'], searchParams, dbPath),
-          'search'
+          (dbPath) => callWorkerAPI(TOOL_ENDPOINT_MAP['search'], searchParams, dbPath)
         );
       } catch (error) {
         return {
@@ -409,8 +405,7 @@ NEVER fetch full details without filtering first. 10x token savings.`,
       try {
         return await executeWithCrossProject(
           from_project,
-          (dbPath) => callWorkerAPI(TOOL_ENDPOINT_MAP['timeline'], timelineParams, dbPath),
-          'timeline'
+          (dbPath) => callWorkerAPI(TOOL_ENDPOINT_MAP['timeline'], timelineParams, dbPath)
         );
       } catch (error) {
         return {
@@ -449,8 +444,7 @@ NEVER fetch full details without filtering first. 10x token savings.`,
       try {
         return await executeWithCrossProject(
           from_project,
-          (dbPath) => callWorkerAPIPost('/api/observations/batch', fetchParams, dbPath),
-          'get_observations'
+          (dbPath) => callWorkerAPIPost('/api/observations/batch', fetchParams, dbPath)
         );
       } catch (error) {
         return {

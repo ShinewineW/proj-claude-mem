@@ -145,16 +145,25 @@ export function listEnabledProjects(): Allowlist {
 
 /**
  * Resolve a project by its basename (directory name).
- * Returns the first match if multiple projects share the same basename.
+ * Throws if multiple projects share the same basename (ambiguous).
  */
 export function resolveProjectByName(name: string): { projectRoot: string; dbPath: string } | null {
   const allowlist = readAllowlist();
+  const matches: string[] = [];
   for (const projectRoot of Object.keys(allowlist)) {
     if (basename(projectRoot) === name) {
-      return { projectRoot, dbPath: join(projectRoot, '.claude', 'mem.db') };
+      matches.push(projectRoot);
     }
   }
-  return null;
+  if (matches.length === 0) return null;
+  if (matches.length > 1) {
+    throw new Error(
+      `Ambiguous project name "${name}" matches ${matches.length} projects:\n` +
+      matches.map(p => `  - ${p}`).join('\n') +
+      `\nUse list_projects to see full paths.`
+    );
+  }
+  return { projectRoot: matches[0], dbPath: join(matches[0], '.claude', 'mem.db') };
 }
 
 /**
