@@ -37,6 +37,7 @@ export interface ActiveSession {
   dbPath?: string;  // Project-specific SQLite DB path
   forceInit?: boolean;  // Force fresh SDK session (skip resume)
   idleTimedOut?: boolean;  // Set when session exits due to idle timeout (prevents restart loop)
+  lastExitWasIdleTimeout?: boolean;  // Persists after idle timeout exit — cleared when new hook messages arrive, checked by reaper to skip futile proactive summarize
   lastGeneratorActivity: number;  // Timestamp of last generator progress (for stale detection, Issue #1099)
   proactiveSummarizeQueued?: boolean; // Set when reaper queues a proactive summarize to prevent double-queuing
   // CLAIM-CONFIRM FIX: Track IDs of messages currently being processed

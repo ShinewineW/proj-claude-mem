@@ -254,6 +254,12 @@ export class SessionManager {
       session = this.initializeSession(sessionDbId, undefined, undefined, dbPath);
     }
 
+    // New hook message arrived — CC is alive, clear idle timeout flag
+    if (session.lastExitWasIdleTimeout) {
+      logger.debug('SESSION', 'Clearing lastExitWasIdleTimeout — CC alive', { sessionDbId: session.sessionDbId });
+      session.lastExitWasIdleTimeout = false;
+    }
+
     // CRITICAL: Persist to database FIRST
     const message: PendingMessage = {
       type: 'observation',
@@ -298,6 +304,12 @@ export class SessionManager {
     let session = this.sessions.get(key);
     if (!session) {
       session = this.initializeSession(sessionDbId, undefined, undefined, dbPath);
+    }
+
+    // External summarize (stop hook) proves CC is alive — clear idle timeout flag
+    if (session.lastExitWasIdleTimeout) {
+      logger.debug('SESSION', 'Clearing lastExitWasIdleTimeout — summarize received', { sessionDbId: session.sessionDbId });
+      session.lastExitWasIdleTimeout = false;
     }
 
     // CRITICAL: Persist to database FIRST
@@ -494,6 +506,18 @@ export class SessionManager {
       // Use lastGeneratorActivity for idle detection (more accurate than startTime)
       const idleMs = now - session.lastGeneratorActivity;
       if (idleMs <= SessionManager.MAX_SESSION_IDLE_MS) continue;
+
+      // If last generator exited due to idle timeout and no new hook messages arrived since,
+      // CC is gone — reap directly instead of futile proactive summarize that would spin for
+      // ~16 min waiting for a dead SDK subprocess
+      if (session.lastExitWasIdleTimeout) {
+        logger.info('SESSION', `Reaping idle-timeout session ${session.sessionDbId} directly (no new hook activity)`, {
+          sessionDbId: session.sessionDbId,
+          idleMs
+        });
+        toReap.push({ key, sessionDbId: session.sessionDbId, dbPath: session.dbPath });
+        continue;
+      }
 
       // Session is idle long enough — queue proactive summarize
       toSummarize.push(session);

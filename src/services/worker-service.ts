@@ -716,6 +716,7 @@ export class WorkerService {
             sessionId: session.sessionDbId
           });
           session.idleTimedOut = false; // Reset flag
+          session.lastExitWasIdleTimeout = true; // Persist for reaper: skip futile proactive summarize
           this.broadcastProcessingStatus();
           return;
         }
