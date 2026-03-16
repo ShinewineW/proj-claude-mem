@@ -30,10 +30,12 @@ import {
 import { getWorkerPort, getWorkerHost } from '../shared/worker-utils.js';
 import { resolveProjectRoot } from '../shared/paths.js';
 import { isProjectEnabled } from '../shared/project-allowlist.js';
+import { resolveProjectByName, resolveAllProjectDbPaths } from '../shared/project-allowlist.js';
+import { existsSync } from 'node:fs';
 import { searchCodebase, formatSearchResults } from '../services/smart-file-read/search.js';
 import { parseFile, formatFoldedView, unfoldSymbol } from '../services/smart-file-read/parser.js';
 import { readFile } from 'node:fs/promises';
-import { resolve, join } from 'node:path';
+import { resolve, join, basename } from 'node:path';
 
 /**
  * Worker HTTP API configuration
@@ -85,7 +87,8 @@ const TOOL_ENDPOINT_MAP: Record<string, string> = {
  */
 async function callWorkerAPI(
   endpoint: string,
-  params: Record<string, any>
+  params: Record<string, any>,
+  dbPathOverride?: string
 ): Promise<{ content: Array<{ type: 'text'; text: string }>; isError?: boolean }> {
   logger.debug('SYSTEM', '→ Worker API', undefined, { endpoint, params });
 
@@ -93,7 +96,7 @@ async function callWorkerAPI(
     const searchParams = new URLSearchParams();
 
     // Inject project-specific dbPath so Worker queries the right database
-    const dbPath = getProjectDbPath();
+    const dbPath = dbPathOverride ?? getProjectDbPath();
     if (dbPath) {
       searchParams.append('dbPath', dbPath);
     }
@@ -137,13 +140,14 @@ async function callWorkerAPI(
  */
 async function callWorkerAPIPost(
   endpoint: string,
-  body: Record<string, any>
+  body: Record<string, any>,
+  dbPathOverride?: string
 ): Promise<{ content: Array<{ type: 'text'; text: string }>; isError?: boolean }> {
   logger.debug('HTTP', 'Worker API request (POST)', undefined, { endpoint });
 
   try {
     // Inject project-specific dbPath into POST body
-    const dbPath = getProjectDbPath();
+    const dbPath = dbPathOverride ?? getProjectDbPath();
     const enrichedBody = dbPath ? { ...body, dbPath } : body;
     const url = `${WORKER_BASE_URL}${endpoint}`;
     const response = await fetch(url, {
@@ -180,6 +184,121 @@ async function callWorkerAPIPost(
       isError: true
     };
   }
+}
+
+/**
+ * Response type alias for Worker API results
+ */
+type WorkerResponse = { content: Array<{ type: 'text'; text: string }>; isError?: boolean };
+
+/**
+ * Resolve `from_project` parameter to target project(s).
+ *
+ * - undefined → current project (existing behavior)
+ * - "project-name" → single named project from allowlist
+ * - "*" → all enabled projects
+ */
+type ProjectTarget =
+  | { mode: 'current' }
+  | { mode: 'single'; name: string; dbPath: string }
+  | { mode: 'all'; projects: Array<{ name: string; dbPath: string }> };
+
+function resolveFromProject(fromProject?: string): ProjectTarget {
+  if (!fromProject) return { mode: 'current' };
+
+  if (fromProject === '*') {
+    const all = resolveAllProjectDbPaths();
+    if (all.length === 0) {
+      throw new Error('No projects enabled. Run /mem-enable in a project first.');
+    }
+    return { mode: 'all', projects: all.map(p => ({ name: p.name, dbPath: p.dbPath })) };
+  }
+
+  const resolved = resolveProjectByName(fromProject);
+  if (!resolved) {
+    throw new Error(`Project "${fromProject}" not found. Use list_projects to see available projects.`);
+  }
+  return { mode: 'single', name: fromProject, dbPath: resolved.dbPath };
+}
+
+/**
+ * Execute a Worker API call with cross-project support.
+ *
+ * For 'current' mode: delegates to executeFn() with no override (existing behavior).
+ * For 'single' mode: delegates to executeFn(targetDbPath).
+ * For 'all' mode: fans out to all enabled projects in parallel, merges results.
+ */
+async function executeWithCrossProject(
+  fromProject: string | undefined,
+  executeFn: (dbPath?: string) => Promise<WorkerResponse>,
+  toolName: string
+): Promise<WorkerResponse> {
+  const target = resolveFromProject(fromProject);
+
+  switch (target.mode) {
+    case 'current':
+      return executeFn();
+
+    case 'single':
+      return executeFn(target.dbPath);
+
+    case 'all': {
+      const settled = await Promise.allSettled(
+        target.projects.map(async (p) => ({
+          name: p.name,
+          result: await executeFn(p.dbPath),
+        }))
+      );
+      return mergeResults(settled, toolName);
+    }
+  }
+}
+
+/**
+ * Merge results from multiple projects into a single MCP response.
+ *
+ * Groups results by project name with headers.
+ * Skips failed projects with a note in output.
+ */
+function mergeResults(
+  settled: PromiseSettledResult<{ name: string; result: WorkerResponse }>[],
+  toolName: string
+): WorkerResponse {
+  const sections: string[] = [];
+  const errors: string[] = [];
+
+  for (const entry of settled) {
+    if (entry.status === 'rejected') {
+      errors.push(`- Failed: ${entry.reason instanceof Error ? entry.reason.message : String(entry.reason)}`);
+      continue;
+    }
+
+    const { name, result } = entry.value;
+    if (result.isError) {
+      errors.push(`- **${name}**: ${result.content[0]?.text || 'Unknown error'}`);
+      continue;
+    }
+
+    const text = result.content[0]?.text || '';
+    if (text.trim()) {
+      sections.push(`## ${name}\n\n${text}`);
+    }
+  }
+
+  const parts: string[] = [];
+  if (sections.length > 0) {
+    parts.push(sections.join('\n\n---\n\n'));
+  }
+  if (errors.length > 0) {
+    parts.push(`\n\n**Skipped projects:**\n${errors.join('\n')}`);
+  }
+  if (parts.length === 0) {
+    parts.push(`No results found across any enabled project.`);
+  }
+
+  return {
+    content: [{ type: 'text' as const, text: parts.join('') }],
+  };
 }
 
 /**
@@ -231,45 +350,79 @@ NEVER fetch full details without filtering first. 10x token savings.`,
    \`get_observations(ids=[...])\`  # ALWAYS batch for 2+ items
    Returns: Complete details (~500-1000 tokens/result)
 
-**Why:** 10x token savings. Never fetch full details without filtering first.`
+**Why:** 10x token savings. Never fetch full details without filtering first.
+
+**Cross-project queries:**
+- \`list_projects\` — see all enabled projects
+- \`search(query="...", from_project="project-name")\` — search specific project
+- \`search(query="...", from_project="*")\` — search ALL projects
+- \`timeline\` and \`get_observations\`: use \`from_project="name"\` (not "*")`
       }]
     })
   },
   {
     name: 'search',
-    description: 'Step 1: Search memory. Returns index with IDs. Params: query, limit, project, type, obs_type, dateStart, dateEnd, offset, orderBy',
+    description: 'Step 1: Search memory. Returns index with IDs. Params: query, limit, project, type, obs_type, dateStart, dateEnd, offset, orderBy, from_project (cross-project: name or "*")',
     inputSchema: {
       type: 'object',
       properties: {},
       additionalProperties: true
     },
     handler: async (args: any) => {
-      if (!getProjectDbPath()) {
+      const { from_project, ...searchParams } = args;
+      if (!from_project && !getProjectDbPath()) {
         return { content: [{ type: 'text' as const, text: getNotEnabledMessage() }] };
       }
-      const endpoint = TOOL_ENDPOINT_MAP['search'];
-      return await callWorkerAPI(endpoint, args);
+      try {
+        return await executeWithCrossProject(
+          from_project,
+          (dbPath) => callWorkerAPI(TOOL_ENDPOINT_MAP['search'], searchParams, dbPath),
+          'search'
+        );
+      } catch (error) {
+        return {
+          content: [{ type: 'text' as const, text: error instanceof Error ? error.message : String(error) }],
+          isError: true,
+        };
+      }
     }
   },
   {
     name: 'timeline',
-    description: 'Step 2: Get context around results. Params: anchor (observation ID) OR query (finds anchor automatically), depth_before, depth_after, project',
+    description: 'Step 2: Get context around results. Params: anchor (observation ID) OR query (finds anchor automatically), depth_before, depth_after, project, from_project (cross-project: name only, "*" not supported)',
     inputSchema: {
       type: 'object',
       properties: {},
       additionalProperties: true
     },
     handler: async (args: any) => {
-      if (!getProjectDbPath()) {
+      const { from_project, ...timelineParams } = args;
+      if (from_project === '*') {
+        return {
+          content: [{ type: 'text' as const, text: 'Cannot use from_project="*" with timeline. Anchor IDs are per-project — specify the project name instead.' }],
+          isError: true,
+        };
+      }
+      if (!from_project && !getProjectDbPath()) {
         return { content: [{ type: 'text' as const, text: getNotEnabledMessage() }] };
       }
-      const endpoint = TOOL_ENDPOINT_MAP['timeline'];
-      return await callWorkerAPI(endpoint, args);
+      try {
+        return await executeWithCrossProject(
+          from_project,
+          (dbPath) => callWorkerAPI(TOOL_ENDPOINT_MAP['timeline'], timelineParams, dbPath),
+          'timeline'
+        );
+      } catch (error) {
+        return {
+          content: [{ type: 'text' as const, text: error instanceof Error ? error.message : String(error) }],
+          isError: true,
+        };
+      }
     }
   },
   {
     name: 'get_observations',
-    description: 'Step 3: Fetch full details for filtered IDs. Params: ids (array of observation IDs, required), orderBy, limit, project',
+    description: 'Step 3: Fetch full details for filtered IDs. Params: ids (array of observation IDs, required), orderBy, limit, project, from_project (cross-project: name only, "*" not supported)',
     inputSchema: {
       type: 'object',
       properties: {
@@ -283,10 +436,51 @@ NEVER fetch full details without filtering first. 10x token savings.`,
       additionalProperties: true
     },
     handler: async (args: any) => {
-      if (!getProjectDbPath()) {
+      const { from_project, ...fetchParams } = args;
+      if (from_project === '*') {
+        return {
+          content: [{ type: 'text' as const, text: 'Cannot use from_project="*" with get_observations. Observation IDs are per-project — specify the project name instead.' }],
+          isError: true,
+        };
+      }
+      if (!from_project && !getProjectDbPath()) {
         return { content: [{ type: 'text' as const, text: getNotEnabledMessage() }] };
       }
-      return await callWorkerAPIPost('/api/observations/batch', args);
+      try {
+        return await executeWithCrossProject(
+          from_project,
+          (dbPath) => callWorkerAPIPost('/api/observations/batch', fetchParams, dbPath),
+          'get_observations'
+        );
+      } catch (error) {
+        return {
+          content: [{ type: 'text' as const, text: error instanceof Error ? error.message : String(error) }],
+          isError: true,
+        };
+      }
+    }
+  },
+  {
+    name: 'list_projects',
+    description: 'List all enabled projects. Use to discover project names for cross-project queries with from_project parameter.',
+    inputSchema: {
+      type: 'object',
+      properties: {},
+    },
+    handler: async () => {
+      const projects = resolveAllProjectDbPaths();
+      if (projects.length === 0) {
+        return {
+          content: [{ type: 'text' as const, text: 'No projects enabled. Run /mem-enable in a project to start recording memory.' }],
+        };
+      }
+      const lines = projects.map(p => {
+        const dbExists = existsSync(p.dbPath);
+        return `- **${p.name}** — \`${p.projectRoot}\`${dbExists ? '' : ' [no data yet]'}`;
+      });
+      return {
+        content: [{ type: 'text' as const, text: `## Enabled Projects\n\n${lines.join('\n')}\n\nUse \`from_project="<name>"\` in search/timeline/get_observations to query another project, or \`from_project="*"\` to search all.` }],
+      };
     }
   },
   {

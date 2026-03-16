@@ -7,7 +7,7 @@
  */
 
 import { existsSync, readFileSync, writeFileSync, writeSync, mkdirSync, renameSync, openSync, closeSync, unlinkSync, constants } from 'fs';
-import { dirname, join } from 'path';
+import { basename, dirname, join } from 'path';
 import { homedir } from 'os';
 import { logger } from '../utils/logger.js';
 
@@ -141,4 +141,31 @@ export function disableProject(projectRoot: string): void {
 
 export function listEnabledProjects(): Allowlist {
   return readAllowlist();
+}
+
+/**
+ * Resolve a project by its basename (directory name).
+ * Returns the first match if multiple projects share the same basename.
+ */
+export function resolveProjectByName(name: string): { projectRoot: string; dbPath: string } | null {
+  const allowlist = readAllowlist();
+  for (const projectRoot of Object.keys(allowlist)) {
+    if (basename(projectRoot) === name) {
+      return { projectRoot, dbPath: join(projectRoot, '.claude', 'mem.db') };
+    }
+  }
+  return null;
+}
+
+/**
+ * List all enabled projects with their names and database paths.
+ * Used for cross-project queries and the list_projects MCP tool.
+ */
+export function resolveAllProjectDbPaths(): Array<{ name: string; projectRoot: string; dbPath: string }> {
+  const allowlist = readAllowlist();
+  return Object.keys(allowlist).map(root => ({
+    name: basename(root),
+    projectRoot: root,
+    dbPath: join(root, '.claude', 'mem.db'),
+  }));
 }
