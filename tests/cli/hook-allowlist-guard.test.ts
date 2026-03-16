@@ -1,11 +1,17 @@
-import { describe, it, expect, mock, afterEach } from "bun:test";
+import { describe, it, expect, mock, afterEach, afterAll } from "bun:test";
 import { tmpdir } from "os";
 import { join } from "path";
 import { mkdirSync, rmSync, existsSync } from "fs";
 
+const originalDataDir = process.env.CLAUDE_MEM_DATA_DIR;
 const testDataDir = join(tmpdir(), `test-hook-guard-${Date.now()}`);
 mkdirSync(testDataDir, { recursive: true });
 process.env.CLAUDE_MEM_DATA_DIR = testDataDir;
+
+afterAll(() => {
+  if (originalDataDir === undefined) delete process.env.CLAUDE_MEM_DATA_DIR;
+  else process.env.CLAUDE_MEM_DATA_DIR = originalDataDir;
+});
 
 mock.module("../../src/cli/stdin-reader.js", () => ({
   readJsonFromStdin: async () => ({

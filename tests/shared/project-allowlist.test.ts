@@ -1,12 +1,18 @@
-import { describe, it, expect, beforeEach, afterEach } from "bun:test";
+import { describe, it, expect, beforeEach, afterEach, afterAll } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync, existsSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 
 // Set env var BEFORE importing the module under test
+const originalDataDir = process.env.CLAUDE_MEM_DATA_DIR;
 const testDataDir = join(tmpdir(), `test-allowlist-${Date.now()}`);
 mkdirSync(testDataDir, { recursive: true });
 process.env.CLAUDE_MEM_DATA_DIR = testDataDir;
+
+afterAll(() => {
+  if (originalDataDir === undefined) delete process.env.CLAUDE_MEM_DATA_DIR;
+  else process.env.CLAUDE_MEM_DATA_DIR = originalDataDir;
+});
 
 // Import AFTER setting env var
 import {

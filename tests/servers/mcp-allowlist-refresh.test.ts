@@ -1,14 +1,20 @@
-import { describe, it, expect, beforeEach, afterEach, spyOn } from 'bun:test';
+import { describe, it, expect, beforeEach, afterEach, afterAll, spyOn } from 'bun:test';
 import { mkdirSync, rmSync, existsSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { logger } from '../../src/utils/logger.js';
 
+const originalDataDir = process.env.CLAUDE_MEM_DATA_DIR;
 const testDataDir = join(tmpdir(), `test-mcp-allowlist-${Date.now()}`);
 const testProjectRoot = join(tmpdir(), `test-mcp-project-${Date.now()}`);
 mkdirSync(testDataDir, { recursive: true });
 mkdirSync(join(testProjectRoot, '.git'), { recursive: true });
 process.env.CLAUDE_MEM_DATA_DIR = testDataDir;
+
+afterAll(() => {
+  if (originalDataDir === undefined) delete process.env.CLAUDE_MEM_DATA_DIR;
+  else process.env.CLAUDE_MEM_DATA_DIR = originalDataDir;
+});
 
 import {
   enableProject,
