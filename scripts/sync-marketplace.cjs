@@ -122,6 +122,11 @@ try {
   console.log(`Running npm install in cache folder (version ${version})...`);
   execSync(`npm install`, { cwd: CACHE_VERSION_PATH, stdio: 'inherit' });
 
+  // Write install marker so smart-install.js skips redundant bun install in cache
+  const cacheMarkerPath = path.join(CACHE_VERSION_PATH, '.install-version');
+  writeFileSync(cacheMarkerPath, JSON.stringify({ version: version, bun: bunVersion, installedAt: new Date().toISOString() }));
+  console.log('Updated .install-version marker in cache');
+
   // Ensure .mcp.json is present in cache (rsync may skip dotfiles)
   const mcpJsonSrc = path.join(pluginDir, '.mcp.json');
   const mcpJsonDst = path.join(CACHE_VERSION_PATH, '.mcp.json');
