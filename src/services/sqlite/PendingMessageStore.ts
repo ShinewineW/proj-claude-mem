@@ -398,16 +398,15 @@ export class PendingMessageStore {
   }
 
   /**
-   * Check if a session has a pending (unclaimed) summarize message.
-   * Used by deleteSession() drain window to wait for in-flight summaries.
-   * Only checks 'pending' — once claimed ('processing'), the generator will
-   * either complete it or stale message recovery will handle it.
+   * Check if a session has an in-flight summarize message (pending or processing).
+   * Used by deleteSession() drain window to wait for summaries to complete.
+   * Includes 'processing' because aborting during active summarize loses the summary.
    */
   hasPendingSummarize(sessionDbId: number): boolean {
     const stmt = this.db.prepare(`
       SELECT COUNT(*) as count FROM pending_messages
       WHERE session_db_id = ? AND message_type = 'summarize'
-        AND status = 'pending'
+        AND status IN ('pending', 'processing')
     `);
     const result = stmt.get(sessionDbId) as { count: number };
     return result.count > 0;

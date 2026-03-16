@@ -59,11 +59,11 @@ describe('PendingMessageStore — Summarize Query Methods', () => {
       expect(store.hasPendingSummarize(sessionDbId1)).toBe(true);
     });
 
-    it('should return false when summarize is already claimed (processing)', () => {
+    it('should return true when summarize is claimed but still processing', () => {
       store.enqueue(sessionDbId1, 'content-1', makeSummarizeMessage());
-      // Claim to move to 'processing' — generator owns it now
+      // Claim to move to 'processing' — still in-flight, drain should wait
       store.claimNextMessage(sessionDbId1);
-      expect(store.hasPendingSummarize(sessionDbId1)).toBe(false);
+      expect(store.hasPendingSummarize(sessionDbId1)).toBe(true);
     });
 
     it('should return false when only observation messages exist', () => {

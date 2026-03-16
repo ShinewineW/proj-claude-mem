@@ -27,8 +27,13 @@ import { getProjectName } from '../../../../utils/project-name.js';
 
 export class SessionRoutes extends BaseRouteHandler {
   private completionHandler: SessionCompletionHandler;
-  private spawnInProgress = new Map<number, boolean>();
-  private crashRecoveryScheduled = new Set<number>();
+  private spawnInProgress = new Map<string, boolean>();
+  private crashRecoveryScheduled = new Set<string>();
+
+  /** Composite key to prevent cross-project collisions on same auto-increment sessionDbId */
+  private spawnKey(sessionDbId: number, dbPath?: string): string {
+    return `${dbPath || '_default'}::${sessionDbId}`;
+  }
 
   constructor(
     private sessionManager: SessionManager,
@@ -98,8 +103,10 @@ export class SessionRoutes extends BaseRouteHandler {
     const session = this.sessionManager.getSession(sessionDbId, dbPath);
     if (!session) return;
 
+    const key = this.spawnKey(sessionDbId, dbPath);
+
     // GUARD: Prevent duplicate spawns
-    if (this.spawnInProgress.get(sessionDbId)) {
+    if (this.spawnInProgress.get(key)) {
       logger.debug('SESSION', 'Spawn already in progress, skipping', { sessionDbId, source });
       return;
     }
@@ -108,7 +115,7 @@ export class SessionRoutes extends BaseRouteHandler {
 
     // Start generator if not running
     if (!session.generatorPromise) {
-      this.spawnInProgress.set(sessionDbId, true);
+      this.spawnInProgress.set(key, true);
       this.startGeneratorWithProvider(session, selectedProvider, source);
       return;
     }
@@ -128,7 +135,7 @@ export class SessionRoutes extends BaseRouteHandler {
       session.abortController = new AbortController();
       session.lastGeneratorActivity = Date.now();
       // Start a fresh generator
-      this.spawnInProgress.set(sessionDbId, true);
+      this.spawnInProgress.set(key, true);
       this.startGeneratorWithProvider(session, selectedProvider, 'stale-recovery');
       return;
     }
@@ -218,7 +225,8 @@ export class SessionRoutes extends BaseRouteHandler {
         }
 
         const sessionDbId = session.sessionDbId;
-        this.spawnInProgress.delete(sessionDbId);
+        const key = this.spawnKey(sessionDbId, session.dbPath);
+        this.spawnInProgress.delete(key);
         const wasAborted = session.abortController.signal.aborted;
 
         if (wasAborted) {
@@ -243,7 +251,7 @@ export class SessionRoutes extends BaseRouteHandler {
 
             if (pendingCount > 0) {
               // GUARD: Prevent duplicate crash recovery spawns
-              if (this.crashRecoveryScheduled.has(sessionDbId)) {
+              if (this.crashRecoveryScheduled.has(key)) {
                 logger.debug('SESSION', 'Crash recovery already scheduled', { sessionDbId });
                 return;
               }
@@ -275,14 +283,14 @@ export class SessionRoutes extends BaseRouteHandler {
               session.abortController = new AbortController();
               oldController.abort();
 
-              this.crashRecoveryScheduled.add(sessionDbId);
+              this.crashRecoveryScheduled.add(key);
 
               // Exponential backoff: 1s, 2s, 4s for subsequent restarts
               const backoffMs = Math.min(1000 * Math.pow(2, session.consecutiveRestarts - 1), 8000);
 
               // Delay before restart with exponential backoff
               setTimeout(() => {
-                this.crashRecoveryScheduled.delete(sessionDbId);
+                this.crashRecoveryScheduled.delete(key);
                 const stillExists = this.sessionManager.getSession(sessionDbId, session.dbPath);
                 if (stillExists && !stillExists.generatorPromise) {
                   this.startGeneratorWithProvider(stillExists, this.getSelectedProvider(), 'crash-recovery');
