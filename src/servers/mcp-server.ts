@@ -27,7 +27,7 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
-import { getWorkerPort, getWorkerHost } from '../shared/worker-utils.js';
+import { getWorkerPort, getWorkerHost, ensureWorkerRunning } from '../shared/worker-utils.js';
 import { resolveProjectRoot } from '../shared/paths.js';
 import { isProjectEnabled, resolveProjectByName, resolveAllProjectDbPaths } from '../shared/project-allowlist.js';
 import { existsSync } from 'node:fs';
@@ -296,20 +296,6 @@ function mergeResults(
   return {
     content: [{ type: 'text' as const, text: parts.join('') }],
   };
-}
-
-/**
- * Verify Worker is accessible
- */
-async function verifyWorkerConnection(): Promise<boolean> {
-  try {
-    const response = await fetch(`${WORKER_BASE_URL}/api/health`);
-    return response.ok;
-  } catch (error) {
-    // Expected during worker startup or if worker is down
-    logger.debug('SYSTEM', 'Worker health check failed', {}, error as Error);
-    return false;
-  }
 }
 
 /**
@@ -683,13 +669,11 @@ async function main() {
   // Start parent heartbeat to detect orphaned MCP servers
   startParentHeartbeat();
 
-  // Check Worker availability in background
+  // Ensure Worker is running (auto-start if needed)
   setTimeout(async () => {
-    const workerAvailable = await verifyWorkerConnection();
+    const workerAvailable = await ensureWorkerRunning();
     if (!workerAvailable) {
-      logger.error('SYSTEM', 'Worker not available', undefined, { workerUrl: WORKER_BASE_URL });
-      logger.error('SYSTEM', 'Tools will fail until Worker is started');
-      logger.error('SYSTEM', 'Start Worker with: npm run worker:restart');
+      logger.warn('SYSTEM', 'Worker not available after auto-start attempt', undefined, { workerUrl: WORKER_BASE_URL });
     } else {
       logger.info('SYSTEM', 'Worker available', undefined, { workerUrl: WORKER_BASE_URL });
     }

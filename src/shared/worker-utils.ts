@@ -182,7 +182,7 @@ async function tryStartWorker(): Promise<boolean> {
     const workerScript = path.join(MARKETPLACE_ROOT, 'scripts', 'worker-service.cjs');
     const bunRunner = path.join(MARKETPLACE_ROOT, 'scripts', 'bun-runner.js');
 
-    logger.info('SYSTEM', 'Worker not healthy — attempting auto-start from hook');
+    logger.info('SYSTEM', 'Worker not healthy — attempting auto-start');
 
     // Spawn worker start synchronously with a short timeout.
     // The start command itself spawns the daemon and waits for health.
@@ -226,10 +226,10 @@ export async function ensureWorkerRunning(): Promise<boolean> {
   // Worker not healthy — try to start it (fixes post-compaction crash scenario)
   const started = await tryStartWorker();
   if (started) {
-    logger.info('SYSTEM', 'Worker auto-started successfully from hook');
+    logger.info('SYSTEM', 'Worker auto-started successfully');
     return true;
   }
 
-  logger.warn('SYSTEM', 'Worker not healthy and auto-start failed, hook will proceed gracefully');
+  logger.warn('SYSTEM', 'Worker not healthy and auto-start failed');
   return false;
 }
