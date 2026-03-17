@@ -209,6 +209,8 @@ export class SessionManager {
     });
 
     // Derive project from dbPath if database has empty project (EP)
+    // Standard layout: <project>/.claude/mem.db → derive from grandparent
+    // Non-standard (env override): best-effort from parent — acceptable as fallback
     if ((!session.project || session.project.trim() === '') && dbPath) {
       const parent = path.basename(path.dirname(dbPath));
       const derived = parent === '.claude'
