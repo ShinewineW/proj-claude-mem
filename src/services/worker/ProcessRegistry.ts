@@ -91,9 +91,37 @@ function notifySlotAvailable(): void {
  * Wait for a pool slot to become available (promise-based, not polling)
  * @param maxConcurrent Max number of concurrent agents
  * @param timeoutMs Max time to wait before giving up
+ * @param isProcessStale Optional callback to detect zombie processes for active reclamation.
+ *   Called with (pid, sessionDbId, dbPath). If returns true, the process is killed to free a slot.
  */
-export async function waitForSlot(maxConcurrent: number, timeoutMs: number = 60_000): Promise<void> {
+export async function waitForSlot(
+  maxConcurrent: number,
+  timeoutMs: number = 60_000,
+  isProcessStale?: (pid: number, sessionDbId: number, dbPath?: string) => boolean
+): Promise<void> {
   if (processRegistry.size < maxConcurrent) return;
+
+  // Active reclamation: check if any pool occupant is a zombie
+  if (isProcessStale) {
+    for (const [pid, info] of processRegistry) {
+      if (isProcessStale(pid, info.sessionDbId, info.dbPath)) {
+        logger.warn('PROCESS', `Reclaiming stale pool slot — killing PID ${pid} (session ${info.sessionDbId})`, {
+          pid,
+          sessionDbId: info.sessionDbId,
+          dbPath: info.dbPath,
+          ageMs: Date.now() - info.spawnedAt
+        });
+        try {
+          info.process.kill('SIGKILL');
+        } catch {
+          // Already dead
+        }
+        unregisterProcess(pid);
+
+        if (processRegistry.size < maxConcurrent) return;
+      }
+    }
+  }
 
   logger.info('PROCESS', `Pool limit reached (${processRegistry.size}/${maxConcurrent}), waiting for slot...`);
 
@@ -109,7 +137,6 @@ export async function waitForSlot(maxConcurrent: number, timeoutMs: number = 60_
       if (processRegistry.size < maxConcurrent) {
         resolve();
       } else {
-        // Still full, re-queue
         slotWaiters.push(onSlot);
       }
     };
