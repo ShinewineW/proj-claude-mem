@@ -743,7 +743,7 @@ export class WorkerService {
         if (pendingCount > 0) {
           // Guard: prevent infinite restart loops (R1)
           const MAX_CONSECUTIVE_RESTARTS = 5;
-          session.consecutiveRestarts = (session.consecutiveRestarts || 0) + 1;
+          session.consecutiveRestarts += 1;
           if (session.consecutiveRestarts > MAX_CONSECUTIVE_RESTARTS) {
             logger.error('SESSION', 'Max consecutive restarts exceeded, abandoning session', {
               sessionDbId: session.sessionDbId,

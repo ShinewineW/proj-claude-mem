@@ -364,6 +364,10 @@ export class SessionManager {
 
     const sessionDuration = Date.now() - session.startTime;
 
+    // Mark session as closing early to prevent .finally() from restarting generator
+    // during the drain window (R2). Since we're about to delete, restarts are futile.
+    session.closing = true;
+
     // NEW: Wait for pending summarize messages before aborting
     // This prevents summary loss when session-complete arrives before
     // the SDKAgent finishes processing the summarize message.
@@ -398,9 +402,6 @@ export class SessionManager {
       // Don't let drain errors block session cleanup
       logger.warn('SESSION', 'Error during summarize drain check, proceeding with delete', { sessionDbId }, error as Error);
     }
-
-    // Mark session as closing to prevent .finally() from restarting generator (R2)
-    session.closing = true;
 
     // 1. Abort the SDK agent
     session.abortController.abort();

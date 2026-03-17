@@ -543,11 +543,21 @@ export class PendingMessageStore {
       tool_name: persistent.tool_name || undefined,
       tool_input: persistent.tool_input ? (() => {
         try { return JSON.parse(persistent.tool_input); }
-        catch { return undefined; }
+        catch (e) {
+          logger.warn('QUEUE', 'Corrupt tool_input JSON, returning undefined', {
+            messageId: persistent.id, error: (e as Error).message
+          });
+          return undefined;
+        }
       })() : undefined,
       tool_response: persistent.tool_response ? (() => {
         try { return JSON.parse(persistent.tool_response); }
-        catch { return undefined; }
+        catch (e) {
+          logger.warn('QUEUE', 'Corrupt tool_response JSON, returning undefined', {
+            messageId: persistent.id, error: (e as Error).message
+          });
+          return undefined;
+        }
       })() : undefined,
       prompt_number: persistent.prompt_number || undefined,
       cwd: persistent.cwd || undefined,
