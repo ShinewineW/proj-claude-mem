@@ -66,7 +66,14 @@ export function getSummariesByIds(
 
   const { orderBy = 'date_desc', limit, project } = options;
   const orderClause = orderBy === 'date_asc' ? 'ASC' : 'DESC';
-  const limitClause = limit ? `LIMIT ${limit}` : '';
+
+  // Validate limit to prevent SQL injection
+  if (limit !== undefined && limit !== null) {
+    if (typeof limit !== 'number' || !Number.isInteger(limit) || limit < 1) {
+      throw new Error('Invalid limit: must be a positive integer');
+    }
+  }
+
   const placeholders = ids.map(() => '?').join(',');
   const params: (number | string)[] = [...ids];
 
@@ -80,8 +87,9 @@ export function getSummariesByIds(
     SELECT * FROM session_summaries
     ${whereClause}
     ORDER BY created_at_epoch ${orderClause}
-    ${limitClause}
+    ${limit ? 'LIMIT ?' : ''}
   `);
 
-  return stmt.all(...params) as SessionSummaryRecord[];
+  const allParams = limit ? [...params, limit] : params;
+  return stmt.all(...allParams) as SessionSummaryRecord[];
 }

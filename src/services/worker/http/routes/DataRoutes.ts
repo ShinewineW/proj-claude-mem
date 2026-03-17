@@ -141,6 +141,15 @@ export class DataRoutes extends BaseRouteHandler {
       return;
     }
 
+    // Validate limit parameter
+    if (limit !== undefined) {
+      limit = Number(limit);
+      if (!Number.isInteger(limit) || limit < 1 || limit > 1000) {
+        this.badRequest(res, 'limit must be a positive integer <= 1000');
+        return;
+      }
+    }
+
     const dbPath = (req.body.dbPath as string) || undefined;
     const store = this.dbManager.getSessionStore(dbPath);
     const observations = store.getObservationsByIds(ids, { orderBy, limit, project });

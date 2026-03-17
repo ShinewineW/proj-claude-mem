@@ -146,7 +146,14 @@ export function getUserPromptsByIds(
 
   const { orderBy = 'date_desc', limit, project } = options;
   const orderClause = orderBy === 'date_asc' ? 'ASC' : 'DESC';
-  const limitClause = limit ? `LIMIT ${limit}` : '';
+
+  // Validate limit to prevent SQL injection
+  if (limit !== undefined && limit !== null) {
+    if (typeof limit !== 'number' || !Number.isInteger(limit) || limit < 1) {
+      throw new Error('Invalid limit: must be a positive integer');
+    }
+  }
+
   const placeholders = ids.map(() => '?').join(',');
   const params: (number | string)[] = [...ids];
 
@@ -162,8 +169,9 @@ export function getUserPromptsByIds(
     JOIN sdk_sessions s ON up.content_session_id = s.content_session_id
     WHERE up.id IN (${placeholders}) ${projectFilter}
     ORDER BY up.created_at_epoch ${orderClause}
-    ${limitClause}
+    ${limit ? 'LIMIT ?' : ''}
   `);
 
-  return stmt.all(...params) as UserPromptRecord[];
+  const allParams = limit ? [...params, limit] : params;
+  return stmt.all(...allParams) as UserPromptRecord[];
 }

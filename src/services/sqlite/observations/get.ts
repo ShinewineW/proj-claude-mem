@@ -33,7 +33,13 @@ export function getObservationsByIds(
 
   const { orderBy = 'date_desc', limit, project, type, concepts, files } = options;
   const orderClause = orderBy === 'date_asc' ? 'ASC' : 'DESC';
-  const limitClause = limit ? `LIMIT ${limit}` : '';
+
+  // Validate limit to prevent SQL injection
+  if (limit !== undefined && limit !== null) {
+    if (typeof limit !== 'number' || !Number.isInteger(limit) || limit < 1) {
+      throw new Error('Invalid limit: must be a positive integer');
+    }
+  }
 
   // Build placeholders for IN clause
   const placeholders = ids.map(() => '?').join(',');
@@ -89,10 +95,11 @@ export function getObservationsByIds(
     FROM observations
     ${whereClause}
     ORDER BY created_at_epoch ${orderClause}
-    ${limitClause}
+    ${limit ? 'LIMIT ?' : ''}
   `);
 
-  return stmt.all(...params) as ObservationRecord[];
+  const allParams = limit ? [...params, limit] : params;
+  return stmt.all(...allParams) as ObservationRecord[];
 }
 
 /**
