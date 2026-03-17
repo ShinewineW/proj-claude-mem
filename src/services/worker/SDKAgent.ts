@@ -101,7 +101,9 @@ export class SDKAgent {
       const occupantSession = this.sessionManager.getSession(sessionDbId, dbPath);
       // Session deleted/reaped — process is definitely orphaned
       if (!occupantSession) return true;
-      // Generator finished but process didn't exit — zombie
+      // Generator finished but process didn't exit — zombie.
+      // generatorPromise is null only after generator exits (.finally sets it to null);
+      // processes can't be registered before startSession() runs (spawn happens inside query()).
       if (!occupantSession.generatorPromise) return true;
       return false;
     };
@@ -168,17 +170,27 @@ export class SDKAgent {
     // If the subprocess hangs mid-API-call, this loop blocks forever, preventing
     // ensureProcessExit() from running and permanently occupying a pool slot.
     // The watchdog timer aborts the session after 5 minutes of no response.
-    const watchdogMs = parseInt(
-      SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH).CLAUDE_MEM_RESPONSE_WATCHDOG_MS || '0', 10
-    ) || SDKAgent.RESPONSE_WATCHDOG_MS;
+    //
+    // ABORT GUARANTEE: Even if SDK's query() iterator doesn't check AbortSignal
+    // internally, the abort chain still works because:
+    //   1. spawn() receives `signal` option — OS sends SIGTERM to subprocess
+    //   2. Subprocess death closes stdin/stdout pipes → for-await loop ends
+    //   3. ensureProcessExit() in finally sends SIGKILL after 5s as last resort
+    const watchdogMs = parseInt(settings.CLAUDE_MEM_RESPONSE_WATCHDOG_MS || '0', 10)
+      || SDKAgent.RESPONSE_WATCHDOG_MS;
     let watchdogTimer: ReturnType<typeof setTimeout> | undefined;
+    let watchdogFiredCount = 0;
 
     const resetWatchdog = () => {
       if (watchdogTimer) clearTimeout(watchdogTimer);
       watchdogTimer = setTimeout(() => {
-        logger.error('SDK', 'Response watchdog timeout — subprocess hung, aborting', {
+        watchdogFiredCount++;
+        const severity = watchdogFiredCount > 1 ? 'CRITICAL' : 'ERROR';
+        const logFn = watchdogFiredCount > 1 ? logger.error : logger.error;
+        logFn.call(logger, 'SDK', `Response watchdog timeout (fire #${watchdogFiredCount}) — subprocess hung, aborting`, {
           sessionDbId: session.sessionDbId,
           watchdogMs,
+          watchdogFiredCount,
           lastActivity: new Date(session.lastGeneratorActivity).toISOString()
         });
         session.abortController.abort();
