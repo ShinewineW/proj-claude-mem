@@ -92,8 +92,21 @@ export class SDKAgent {
 
     // Wait for agent pool slot (configurable via CLAUDE_MEM_MAX_CONCURRENT_AGENTS)
     const settings = SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH);
-    const maxConcurrent = parseInt(settings.CLAUDE_MEM_MAX_CONCURRENT_AGENTS, 10) || 2;
-    await waitForSlot(maxConcurrent);
+    const maxConcurrent = parseInt(settings.CLAUDE_MEM_MAX_CONCURRENT_AGENTS, 10) || 4;
+
+    // Active reclamation callback: detect zombie processes occupying pool slots.
+    // Uses dbPath (stored on TrackedProcess) for O(1) composite key lookup,
+    // preventing cross-project session collisions (B6 architecture).
+    const isProcessStale = (_pid: number, sessionDbId: number, dbPath?: string): boolean => {
+      const occupantSession = this.sessionManager.getSession(sessionDbId, dbPath);
+      // Session deleted/reaped — process is definitely orphaned
+      if (!occupantSession) return true;
+      // Generator finished but process didn't exit — zombie
+      if (!occupantSession.generatorPromise) return true;
+      return false;
+    };
+
+    await waitForSlot(maxConcurrent, undefined, isProcessStale);
 
     // Build isolated environment from ~/.claude-mem/.env
     // This prevents Issue #733: random ANTHROPIC_API_KEY from project .env files
