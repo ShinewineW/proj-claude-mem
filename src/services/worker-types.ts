@@ -43,6 +43,7 @@ export interface ActiveSession {
   // CLAIM-CONFIRM FIX: Track IDs of messages currently being processed
   // These IDs will be confirmed (deleted) after successful storage
   processingMessageIds: number[];
+  closing?: boolean;  // Set by deleteSession() before abort to prevent restart in .finally() (R2)
 }
 
 export interface PendingMessage {

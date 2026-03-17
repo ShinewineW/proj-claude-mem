@@ -195,6 +195,8 @@ export class WorkerService {
   // Periodic fallback file replay + cleanup
   private fallbackCleanupInterval: ReturnType<typeof setInterval> | null = null;
 
+  private isReaping: boolean = false;  // Guard against concurrent reaper runs (R3)
+
   // AI interaction tracking for health endpoint
   private lastAiInteraction: {
     timestamp: number;
@@ -528,6 +530,8 @@ export class WorkerService {
 
       // Reap stale sessions to unblock orphan process cleanup (Issue #1168)
       this.staleSessionReaperInterval = setInterval(async () => {
+        if (this.isReaping) return;  // Skip if previous run still active (R3)
+        this.isReaping = true;
         try {
           const reaped = await this.sessionManager.reapStaleSessions();
           if (reaped > 0) {
@@ -535,6 +539,8 @@ export class WorkerService {
           }
         } catch (e) {
           logger.error('SYSTEM', 'Stale session reaper error', { error: e instanceof Error ? e.message : String(e) });
+        } finally {
+          this.isReaping = false;
         }
       }, 2 * 60 * 1000);
 
@@ -694,6 +700,7 @@ export class WorkerService {
             success: true,
             provider: providerName,
           };
+          session.consecutiveRestarts = 0;  // Reset on success (R1)
         }
 
         // Do NOT restart after unrecoverable errors - prevents infinite loops
@@ -721,10 +728,32 @@ export class WorkerService {
           return;
         }
 
+        // Prevent orphaned generator restart during session deletion (R2)
+        if (session.closing) {
+          logger.debug('SYSTEM', 'Session closing, skipping generator restart', {
+            sessionDbId: session.sessionDbId
+          });
+          this.broadcastProcessingStatus();
+          return;
+        }
+
         // Check if there's pending work that needs processing with a fresh AbortController
         const pendingCount = pendingStore.getPendingCount(session.sessionDbId);
 
         if (pendingCount > 0) {
+          // Guard: prevent infinite restart loops (R1)
+          const MAX_CONSECUTIVE_RESTARTS = 5;
+          session.consecutiveRestarts = (session.consecutiveRestarts || 0) + 1;
+          if (session.consecutiveRestarts > MAX_CONSECUTIVE_RESTARTS) {
+            logger.error('SESSION', 'Max consecutive restarts exceeded, abandoning session', {
+              sessionDbId: session.sessionDbId,
+              restarts: session.consecutiveRestarts,
+              pendingCount
+            });
+            this.broadcastProcessingStatus();
+            return;
+          }
+
           logger.info('SYSTEM', 'Pending work remains after generator exit, restarting with fresh AbortController', {
             sessionId: session.sessionDbId,
             pendingCount
@@ -969,7 +998,7 @@ export class WorkerService {
 
         if (entry.type === 'observation') {
           this.sessionManager.queueObservation(sessionDbId, {
-            tool_name: entry.payload.tool_name as string,
+            tool_name: (entry.payload.tool_name as string) ?? 'unknown',
             tool_input: entry.payload.tool_input,
             tool_response: entry.payload.tool_response,
             cwd: entry.cwd,

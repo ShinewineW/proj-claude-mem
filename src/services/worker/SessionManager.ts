@@ -9,6 +9,7 @@
  */
 
 import { EventEmitter } from 'events';
+import path from 'path';
 import { DatabaseManager } from './DatabaseManager.js';
 import { logger } from '../../utils/logger.js';
 import type { ActiveSession, PendingMessage, PendingMessageWithId, ObservationData } from '../worker-types.js';
@@ -207,6 +208,17 @@ export class SessionManager {
       lastPromptNumber: promptNumber || this.dbManager.getSessionStore(dbPath).getPromptNumberFromUserPrompts(dbSession.content_session_id)
     });
 
+    // Derive project from dbPath if database has empty project (EP)
+    if ((!session.project || session.project.trim() === '') && dbPath) {
+      const derived = path.basename(path.dirname(path.dirname(dbPath)));
+      if (derived && derived.trim() !== '') {
+        logger.warn('SESSION', 'Session has empty project, derived from dbPath', {
+          sessionDbId, derived
+        });
+        session.project = derived;
+      }
+    }
+
     this.sessions.set(key, session);
 
     // Create event emitter for queue notifications
@@ -386,6 +398,9 @@ export class SessionManager {
       // Don't let drain errors block session cleanup
       logger.warn('SESSION', 'Error during summarize drain check, proceeding with delete', { sessionDbId }, error as Error);
     }
+
+    // Mark session as closing to prevent .finally() from restarting generator (R2)
+    session.closing = true;
 
     // 1. Abort the SDK agent
     session.abortController.abort();
