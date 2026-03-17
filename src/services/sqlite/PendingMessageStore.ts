@@ -541,8 +541,14 @@ export class PendingMessageStore {
     return {
       type: persistent.message_type,
       tool_name: persistent.tool_name || undefined,
-      tool_input: persistent.tool_input ? JSON.parse(persistent.tool_input) : undefined,
-      tool_response: persistent.tool_response ? JSON.parse(persistent.tool_response) : undefined,
+      tool_input: persistent.tool_input ? (() => {
+        try { return JSON.parse(persistent.tool_input); }
+        catch { return undefined; }
+      })() : undefined,
+      tool_response: persistent.tool_response ? (() => {
+        try { return JSON.parse(persistent.tool_response); }
+        catch { return undefined; }
+      })() : undefined,
       prompt_number: persistent.prompt_number || undefined,
       cwd: persistent.cwd || undefined,
       last_assistant_message: persistent.last_assistant_message || undefined

@@ -63,7 +63,7 @@ function writeAllowlist(data: Allowlist): void {
 
 const LOCK_STALE_MS = 10_000;
 
-function acquireLock(lockPath: string, maxWaitMs: number = 3000): boolean {
+function acquireLock(lockPath: string, maxWaitMs: number = 10000): boolean {
   const deadline = Date.now() + maxWaitMs;
   while (Date.now() < deadline) {
     try {

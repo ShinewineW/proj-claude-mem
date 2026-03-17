@@ -50,7 +50,7 @@ export class SessionQueueProcessor {
 
           if (!receivedMessage && !signal.aborted) {
             // Timeout occurred - check if we've been idle too long
-            const idleDuration = Date.now() - lastActivityTime;
+            const idleDuration = Math.max(0, Date.now() - lastActivityTime); // Guard: clock skew (B3)
             if (idleDuration >= IDLE_TIMEOUT_MS) {
               logger.info('SESSION', 'Idle timeout reached, triggering abort to kill subprocess', {
                 sessionDbId,

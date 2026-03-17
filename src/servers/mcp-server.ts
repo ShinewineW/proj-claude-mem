@@ -56,7 +56,7 @@ const PROJECT_ROOT = resolveProjectRoot(process.cwd());
 // Cached for 5 seconds to avoid re-reading JSON file on every tool call.
 let _cachedEnabled: boolean | null = null;
 let _cacheTimestamp = 0;
-const CACHE_TTL_MS = 5_000;
+const CACHE_TTL_MS = 1_000;
 
 function getProjectDbPath(): string | null {
   const now = Date.now();
