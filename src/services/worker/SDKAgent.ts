@@ -176,7 +176,7 @@ export class SDKAgent {
     //   1. spawn() receives `signal` option — OS sends SIGTERM to subprocess
     //   2. Subprocess death closes stdin/stdout pipes → for-await loop ends
     //   3. ensureProcessExit() in finally sends SIGKILL after 5s as last resort
-    const watchdogMs = parseInt(settings.CLAUDE_MEM_RESPONSE_WATCHDOG_MS || '0', 10)
+    const watchdogMs = parseInt(settings.CLAUDE_MEM_RESPONSE_WATCHDOG_MS, 10)
       || SDKAgent.RESPONSE_WATCHDOG_MS;
     let watchdogTimer: ReturnType<typeof setTimeout> | undefined;
     let watchdogFiredCount = 0;
@@ -185,9 +185,7 @@ export class SDKAgent {
       if (watchdogTimer) clearTimeout(watchdogTimer);
       watchdogTimer = setTimeout(() => {
         watchdogFiredCount++;
-        const severity = watchdogFiredCount > 1 ? 'CRITICAL' : 'ERROR';
-        const logFn = watchdogFiredCount > 1 ? logger.error : logger.error;
-        logFn.call(logger, 'SDK', `Response watchdog timeout (fire #${watchdogFiredCount}) — subprocess hung, aborting`, {
+        logger.error('SDK', `Response watchdog timeout (fire #${watchdogFiredCount}) — subprocess hung, aborting`, {
           sessionDbId: session.sessionDbId,
           watchdogMs,
           watchdogFiredCount,
