@@ -98,6 +98,7 @@ export class SessionRoutes extends BaseRouteHandler {
    * The next generator will use the new provider with shared conversationHistory.
    */
   private static readonly STALE_GENERATOR_THRESHOLD_MS = 30_000; // 30 seconds (#1099)
+  private static readonly MAX_CONSECUTIVE_RESTARTS = 3;
 
   private ensureGeneratorRunning(sessionDbId: number, source: string, dbPath?: string): void {
     const session = this.sessionManager.getSession(sessionDbId, dbPath);
@@ -115,6 +116,16 @@ export class SessionRoutes extends BaseRouteHandler {
 
     // Start generator if not running
     if (!session.generatorPromise) {
+      // GUARD: Don't restart if the session already exhausted its restart budget.
+      // 'init' is always preceded by initializeSession() which resets consecutiveRestarts
+      // to 0 when a new prompt arrives, so the limit is vacuously false for init calls.
+      // Observation/summarize events within the same prompt cycle must respect the limit.
+      if (session.consecutiveRestarts > SessionRoutes.MAX_CONSECUTIVE_RESTARTS && source !== 'init') {
+        logger.debug('SESSION', 'Skipping generator start — restart limit already exceeded', {
+          sessionDbId, source, consecutiveRestarts: session.consecutiveRestarts
+        });
+        return;
+      }
       this.spawnInProgress.set(key, true);
       this.startGeneratorWithProvider(session, selectedProvider, source);
       return;
@@ -245,10 +256,6 @@ export class SessionRoutes extends BaseRouteHandler {
             const pendingStore = this.sessionManager.getPendingMessageStore(session.dbPath);
             const pendingCount = pendingStore.getPendingCount(sessionDbId);
 
-            // CRITICAL: Limit consecutive restarts to prevent infinite loops
-            // This prevents runaway API costs when there's a persistent error (e.g., memorySessionId not captured)
-            const MAX_CONSECUTIVE_RESTARTS = 3;
-
             if (pendingCount > 0) {
               // GUARD: Prevent duplicate crash recovery spawns
               if (this.crashRecoveryScheduled.has(key)) {
@@ -258,16 +265,27 @@ export class SessionRoutes extends BaseRouteHandler {
 
               session.consecutiveRestarts = (session.consecutiveRestarts || 0) + 1;
 
-              if (session.consecutiveRestarts > MAX_CONSECUTIVE_RESTARTS) {
-                logger.error('SESSION', `CRITICAL: Generator restart limit exceeded - stopping to prevent runaway costs`, {
+              if (session.consecutiveRestarts > SessionRoutes.MAX_CONSECUTIVE_RESTARTS) {
+                // Abandon ALL remaining messages (pending + processing) to prevent permanent queue stall
+                let abandonedCount = 0;
+                try {
+                  abandonedCount = pendingStore.markAllSessionMessagesAbandoned(sessionDbId);
+                } catch (abandonErr) {
+                  logger.error('SESSION', 'Failed to abandon messages after restart limit', {
+                    sessionId: sessionDbId
+                  }, abandonErr as Error);
+                }
+                logger.error('SESSION', `CRITICAL: Generator restart limit exceeded - abandoning ${abandonedCount} messages`, {
                   sessionId: sessionDbId,
                   pendingCount,
+                  abandonedCount,
                   consecutiveRestarts: session.consecutiveRestarts,
-                  maxRestarts: MAX_CONSECUTIVE_RESTARTS,
-                  action: 'Generator will NOT restart. Check logs for root cause. Messages remain in pending state.'
+                  maxRestarts: SessionRoutes.MAX_CONSECUTIVE_RESTARTS,
+                  action: 'Generator will NOT restart. All pending messages marked failed.'
                 });
                 // Don't restart - abort to prevent further API calls
                 session.abortController.abort();
+                this.workerService.broadcastProcessingStatus();
                 return;
               }
 

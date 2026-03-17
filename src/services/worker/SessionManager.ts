@@ -127,6 +127,8 @@ export class SessionManager {
         });
         session.userPrompt = currentUserPrompt;
         session.lastPromptNumber = promptNumber || session.lastPromptNumber;
+        // New prompt cycle — reset restart budget so the generator can try again
+        session.consecutiveRestarts = 0;
       } else {
         logger.debug('SESSION', 'No currentUserPrompt provided for existing session', {
           sessionDbId,

@@ -703,18 +703,28 @@ export class WorkerService {
           session.consecutiveRestarts = 0;  // Reset on success (R1)
         }
 
+        // Create pendingStore early — needed by both unrecoverable-error and restart-limit paths
+        const { PendingMessageStore } = require('./sqlite/PendingMessageStore.js');
+        const pendingStore = new PendingMessageStore(this.dbManager.getSessionStore(session.dbPath).db, 3);
+
         // Do NOT restart after unrecoverable errors - prevents infinite loops
         if (hadUnrecoverableError) {
-          logger.warn('SYSTEM', 'Skipping restart due to unrecoverable error', {
-            sessionId: session.sessionDbId
+          // Abandon ALL remaining messages — error will persist on retry
+          let abandonedCount = 0;
+          try {
+            abandonedCount = pendingStore.markAllSessionMessagesAbandoned(session.sessionDbId);
+          } catch (abandonErr) {
+            logger.error('SYSTEM', 'Failed to abandon messages after unrecoverable error', {
+              sessionId: session.sessionDbId
+            }, abandonErr as Error);
+          }
+          logger.warn('SYSTEM', `Skipping restart due to unrecoverable error, abandoned ${abandonedCount} messages`, {
+            sessionId: session.sessionDbId,
+            abandonedCount
           });
           this.broadcastProcessingStatus();
           return;
         }
-
-        // Store for pending-count check below (must use session's project DB)
-        const { PendingMessageStore } = require('./sqlite/PendingMessageStore.js');
-        const pendingStore = new PendingMessageStore(this.dbManager.getSessionStore(session.dbPath).db, 3);
 
         // Idle timeout means no new work arrived for 3 minutes - don't restart
         // No need to reset stale processing messages here — claimNextMessage() self-heals
@@ -745,10 +755,20 @@ export class WorkerService {
           const MAX_CONSECUTIVE_RESTARTS = 5;
           session.consecutiveRestarts += 1;
           if (session.consecutiveRestarts > MAX_CONSECUTIVE_RESTARTS) {
-            logger.error('SESSION', 'Max consecutive restarts exceeded, abandoning session', {
+            // Abandon ALL remaining messages to prevent permanent queue stall
+            let abandonedCount = 0;
+            try {
+              abandonedCount = pendingStore.markAllSessionMessagesAbandoned(session.sessionDbId);
+            } catch (abandonErr) {
+              logger.error('SESSION', 'Failed to abandon messages after restart limit', {
+                sessionDbId: session.sessionDbId
+              }, abandonErr as Error);
+            }
+            logger.error('SESSION', `Max consecutive restarts exceeded, abandoned ${abandonedCount} messages`, {
               sessionDbId: session.sessionDbId,
               restarts: session.consecutiveRestarts,
-              pendingCount
+              pendingCount,
+              abandonedCount
             });
             this.broadcastProcessingStatus();
             return;
