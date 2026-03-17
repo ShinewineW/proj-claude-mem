@@ -632,6 +632,17 @@ export class SessionManager {
   }
 
   /**
+   * Get distinct project names that have active sessions (for viewer dashboard)
+   */
+  getActiveProjectNames(): Set<string> {
+    const names = new Set<string>();
+    for (const session of this.sessions.values()) {
+      if (session.project) names.add(session.project);
+    }
+    return names;
+  }
+
+  /**
    * Get total queue depth across all sessions (for activity indicator)
    */
   getTotalQueueDepth(): number {

@@ -13,25 +13,21 @@ export function formatDate(epoch: number): string {
 }
 
 /**
- * Format seconds into hours and minutes
- * @param seconds - Uptime in seconds
- * @returns Formatted string like "12h 34m" or "-" if no value
+ * Format epoch to short time string for feed items.
+ * Today: "14:32", this year: "3/17 14:32", older: "2025/3/17"
  */
-export function formatUptime(seconds?: number): string {
-  if (!seconds) return '-';
-  const hours = Math.floor(seconds / 3600);
-  const minutes = Math.floor((seconds % 3600) / 60);
-  return `${hours}h ${minutes}m`;
+export function formatShortTime(epoch: number): string {
+  const date = new Date(epoch);
+  const now = new Date();
+  const hh = String(date.getHours()).padStart(2, '0');
+  const mm = String(date.getMinutes()).padStart(2, '0');
+
+  if (date.toDateString() === now.toDateString()) {
+    return `${hh}:${mm}`;
+  }
+  if (date.getFullYear() === now.getFullYear()) {
+    return `${date.getMonth() + 1}/${date.getDate()} ${hh}:${mm}`;
+  }
+  return `${date.getFullYear()}/${date.getMonth() + 1}/${date.getDate()}`;
 }
 
-/**
- * Format bytes into human-readable size
- * @param bytes - Size in bytes
- * @returns Formatted string like "1.5 MB" or "-" if no value
- */
-export function formatBytes(bytes?: number): string {
-  if (!bytes) return '-';
-  if (bytes < 1024) return bytes + ' B';
-  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
-  return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
-}

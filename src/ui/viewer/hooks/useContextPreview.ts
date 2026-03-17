@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { API_ENDPOINTS } from '../constants/api';
 import type { Settings } from '../types';
 
 interface UseContextPreviewResult {
@@ -22,7 +23,7 @@ export function useContextPreview(settings: Settings): UseContextPreviewResult {
   useEffect(() => {
     async function fetchProjects() {
       try {
-        const response = await fetch('/api/projects');
+        const response = await fetch(API_ENDPOINTS.PROJECTS);
         const data = await response.json();
         if (data.projects && data.projects.length > 0) {
           setProjects(data.projects);

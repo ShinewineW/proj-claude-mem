@@ -25,6 +25,10 @@ export interface Summary {
   learned?: string;
   completed?: string;
   next_steps?: string;
+  files_read?: string;
+  files_edited?: string;
+  notes?: string;
+  prompt_number?: number;
   created_at_epoch: number;
 }
 
@@ -42,6 +46,27 @@ export type FeedItem =
   | (Summary & { itemType: 'summary' })
   | (UserPrompt & { itemType: 'prompt' });
 
+export interface ProjectLatestItem {
+  itemType: 'observation' | 'summary' | 'prompt';
+  id: number;
+  title?: string;
+  text?: string;
+  type?: string;
+  prompt_text?: string;
+  created_at_epoch: number;
+}
+
+export interface ProjectInfo {
+  project: string;
+  dbPath: string;
+  projectRoot: string;
+  obsCount: number;
+  sumCount: number;
+  promptCount: number;
+  hasActiveSession: boolean;
+  latestItems?: ProjectLatestItem[];
+}
+
 export interface StreamEvent {
   type: 'initial_load' | 'new_observation' | 'new_summary' | 'new_prompt' | 'processing_status';
   observations?: Observation[];
@@ -52,6 +77,7 @@ export interface StreamEvent {
   summary?: Summary;
   prompt?: UserPrompt;
   isProcessing?: boolean;
+  queueDepth?: number;
 }
 
 export interface Settings {
@@ -86,21 +112,3 @@ export interface Settings {
   CLAUDE_MEM_CONTEXT_SHOW_LAST_MESSAGE?: string;
 }
 
-export interface WorkerStats {
-  version?: string;
-  uptime?: number;
-  activeSessions?: number;
-  sseClients?: number;
-}
-
-export interface DatabaseStats {
-  size?: number;
-  observations?: number;
-  sessions?: number;
-  summaries?: number;
-}
-
-export interface Stats {
-  worker?: WorkerStats;
-  database?: DatabaseStats;
-}

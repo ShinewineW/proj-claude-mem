@@ -293,7 +293,7 @@ export class SessionRoutes extends BaseRouteHandler {
                 sessionId: sessionDbId,
                 pendingCount,
                 consecutiveRestarts: session.consecutiveRestarts,
-                maxRestarts: MAX_CONSECUTIVE_RESTARTS
+                maxRestarts: SessionRoutes.MAX_CONSECUTIVE_RESTARTS
               });
 
               // Abort OLD controller before replacing to prevent child process leaks
@@ -783,6 +783,19 @@ export class SessionRoutes extends BaseRouteHandler {
 
     // Step 5: Save cleaned user prompt
     store.saveUserPrompt(contentSessionId, promptNumber, cleanedPrompt);
+
+    // Broadcast new prompt to SSE clients (for web UI)
+    const latestPrompt = store.getLatestUserPrompt(contentSessionId);
+    if (latestPrompt) {
+      this.eventBroadcaster.broadcastNewPrompt({
+        id: latestPrompt.id,
+        content_session_id: latestPrompt.content_session_id,
+        project: latestPrompt.project,
+        prompt_number: latestPrompt.prompt_number,
+        prompt_text: latestPrompt.prompt_text,
+        created_at_epoch: latestPrompt.created_at_epoch
+      });
+    }
 
     // Step 6: Check if SDK agent is already running for this session (#1079)
     // If contextInjected is true, the hook should skip re-initializing the SDK agent

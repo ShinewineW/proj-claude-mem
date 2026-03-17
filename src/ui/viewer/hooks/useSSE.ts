@@ -47,21 +47,33 @@ export function useSSE() {
       };
 
       eventSource.onmessage = (event) => {
-        const data: StreamEvent = JSON.parse(event.data);
+        let data: StreamEvent;
+        try {
+          data = JSON.parse(event.data);
+        } catch {
+          return; // skip malformed SSE frame
+        }
 
         switch (data.type) {
           case 'initial_load':
             console.log('[SSE] Initial load:', {
               projects: data.projects?.length || 0
             });
-            // Only load projects list - data will come via pagination
+            // Reset SSE state on (re)connect to prevent duplicates
+            setObservations([]);
+            setSummaries([]);
+            setPrompts([]);
             setProjects(data.projects || []);
             break;
 
           case 'new_observation':
             if (data.observation) {
-              console.log('[SSE] New observation:', data.observation.id);
-              setObservations(prev => [data.observation, ...prev]);
+              const obs = data.observation;
+              console.log('[SSE] New observation:', obs.id);
+              setObservations(prev => {
+                if (prev.some(o => o.id === obs.id)) return prev;
+                return [obs, ...prev];
+              });
             }
             break;
 
@@ -69,7 +81,10 @@ export function useSSE() {
             if (data.summary) {
               const summary = data.summary;
               console.log('[SSE] New summary:', summary.id);
-              setSummaries(prev => [summary, ...prev]);
+              setSummaries(prev => {
+                if (prev.some(s => s.id === summary.id)) return prev;
+                return [summary, ...prev];
+              });
             }
             break;
 
@@ -77,7 +92,10 @@ export function useSSE() {
             if (data.prompt) {
               const prompt = data.prompt;
               console.log('[SSE] New prompt:', prompt.id);
-              setPrompts(prev => [prompt, ...prev]);
+              setPrompts(prev => {
+                if (prev.some(p => p.id === prompt.id)) return prev;
+                return [prompt, ...prev];
+              });
             }
             break;
 

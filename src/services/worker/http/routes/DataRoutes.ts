@@ -20,6 +20,9 @@ import type { WorkerService } from '../../../worker-service.js';
 import { BaseRouteHandler } from '../BaseRouteHandler.js';
 
 export class DataRoutes extends BaseRouteHandler {
+  private projectsCache: { data: unknown; expiresAt: number } | null = null;
+  private static readonly PROJECTS_CACHE_TTL_MS = 30_000;
+
   constructor(
     private paginationHelper: PaginationHelper,
     private dbManager: DatabaseManager,
@@ -46,7 +49,9 @@ export class DataRoutes extends BaseRouteHandler {
 
     // Metadata endpoints
     app.get('/api/stats', this.handleGetStats.bind(this));
+    app.get('/api/stats/trend', this.handleGetStatsTrend.bind(this));
     app.get('/api/projects', this.handleGetProjects.bind(this));
+    app.get('/api/recent', this.handleGetRecent.bind(this));
 
     // Processing status endpoints
     app.get('/api/processing-status', this.handleGetProcessingStatus.bind(this));
@@ -294,8 +299,25 @@ export class DataRoutes extends BaseRouteHandler {
       return;
     }
 
-    // No dbPath: aggregate from allowlist + global DB
-    const allProjects: Array<{ project: string; dbPath: string }> = [];
+    // No dbPath: aggregate from allowlist + global DB (with 30s cache)
+    if (this.projectsCache && Date.now() < this.projectsCache.expiresAt) {
+      res.json(this.projectsCache.data);
+      return;
+    }
+
+    const allProjects: Array<{
+      project: string;
+      dbPath: string;
+      projectRoot?: string;
+      obsCount?: number;
+      sumCount?: number;
+      promptCount?: number;
+      hasActiveSession?: boolean;
+      latestItems?: Array<{ itemType: string; id: number; title?: string; text?: string; type?: string; prompt_text?: string; created_at_epoch: number }>;
+    }> = [];
+
+    // Pre-compute active project names for hasActiveSession enrichment
+    const activeProjectNames = this.sessionManager.getActiveProjectNames();
 
     // 1. Query global DB (may contain legacy data before per-project isolation)
     try {
@@ -339,9 +361,44 @@ export class DataRoutes extends BaseRouteHandler {
             `).all() as Array<{ project: string }>;
           }
 
+          // Count queries for enrichment
+          const obsCount = (projDb.prepare('SELECT COUNT(*) as count FROM observations').get() as { count: number }).count;
+          const sumCount = (projDb.prepare('SELECT COUNT(*) as count FROM session_summaries').get() as { count: number }).count;
+          const promptCount = (projDb.prepare('SELECT COUNT(*) as count FROM user_prompts').get() as { count: number }).count;
+
+          // Query 1 latest non-ask (observation or summary) + 1 latest ask (prompt)
+          const latestNonAsk = projDb.prepare(`
+            SELECT 'observation' as itemType, id, title, text, type, created_at_epoch
+            FROM observations ORDER BY created_at_epoch DESC LIMIT 1
+          `).all() as Array<{ itemType: string; id: number; title: string; text: string; type: string; created_at_epoch: number }>;
+          const latestSummary = projDb.prepare(`
+            SELECT 'summary' as itemType, id, request as title, investigated as text, created_at_epoch
+            FROM session_summaries ORDER BY created_at_epoch DESC LIMIT 1
+          `).all() as Array<{ itemType: string; id: number; title: string; text: string; created_at_epoch: number }>;
+          // Pick the most recent between observation and summary
+          const nonAskCandidates = [...latestNonAsk, ...latestSummary]
+            .sort((a, b) => b.created_at_epoch - a.created_at_epoch);
+          const latestAsk = projDb.prepare(`
+            SELECT 'prompt' as itemType, id, prompt_text, created_at_epoch
+            FROM user_prompts ORDER BY created_at_epoch DESC LIMIT 1
+          `).all() as Array<{ itemType: string; id: number; prompt_text: string; created_at_epoch: number }>;
+          const latestItems = [
+            ...(nonAskCandidates.length > 0 ? [nonAskCandidates[0]] : []),
+            ...latestAsk,
+          ];
+
           for (const row of rows) {
             if (!allProjects.some(p => p.project === row.project && p.dbPath === projDbPath)) {
-              allProjects.push({ project: row.project, dbPath: projDbPath });
+              allProjects.push({
+                project: row.project,
+                dbPath: projDbPath,
+                projectRoot,
+                obsCount,
+                sumCount,
+                promptCount,
+                hasActiveSession: activeProjectNames.has(row.project),
+                latestItems
+              });
             }
           }
         } catch (projError) {
@@ -357,10 +414,139 @@ export class DataRoutes extends BaseRouteHandler {
     }
 
     // Return both flat list (backward compat) and enriched list
-    res.json({
+    const responseData = {
       projects: allProjects.map(p => p.project),
       projectDatabases: allProjects
-    });
+    };
+    this.projectsCache = { data: responseData, expiresAt: Date.now() + DataRoutes.PROJECTS_CACHE_TTL_MS };
+    res.json(responseData);
+  });
+
+  /**
+   * Get recent items across all enabled projects
+   * GET /api/recent?limit=20
+   *
+   * Returns observations, summaries, and user_prompts merged and sorted by epoch desc.
+   */
+  private handleGetRecent = this.wrapHandler((req: Request, res: Response): void => {
+    const limit = Math.min(Math.max(parseInt(req.query.limit as string, 10) || 20, 1), 100);
+
+    const allItems: Array<{ itemType: string; project: string; [key: string]: unknown }> = [];
+
+    try {
+    const { listEnabledProjects } = require('../../../../shared/project-allowlist.js');
+    const { resolveProjectDbPath } = require('../../../../shared/paths.js');
+    const enabled = listEnabledProjects();
+
+    for (const projectRoot of Object.keys(enabled)) {
+      try {
+        const projDbPath = resolveProjectDbPath(projectRoot);
+        const projDb = this.dbManager.getSessionStore(projDbPath).db;
+
+        const recentObs = projDb.prepare(`
+          SELECT 'observation' as itemType, id, title, subtitle, narrative, text, facts, concepts,
+                 files_read, files_modified, type, project, created_at, created_at_epoch,
+                 memory_session_id, prompt_number
+          FROM observations ORDER BY created_at_epoch DESC LIMIT ?
+        `).all(limit) as Array<{ itemType: string; project: string; created_at_epoch: number }>;
+
+        const recentSums = projDb.prepare(`
+          SELECT 'summary' as itemType, id, memory_session_id as session_id, request, investigated,
+                 learned, completed, next_steps, files_read, files_edited, notes, prompt_number,
+                 project, created_at_epoch
+          FROM session_summaries ORDER BY created_at_epoch DESC LIMIT ?
+        `).all(limit) as Array<{ itemType: string; project: string; created_at_epoch: number }>;
+
+        const recentPrompts = projDb.prepare(`
+          SELECT 'prompt' as itemType, up.id, up.content_session_id, s.project, up.prompt_number,
+                 up.prompt_text, up.created_at, up.created_at_epoch
+          FROM user_prompts up
+          JOIN sdk_sessions s ON up.content_session_id = s.content_session_id
+          ORDER BY up.created_at_epoch DESC LIMIT ?
+        `).all(limit) as Array<{ itemType: string; project: string; created_at_epoch: number }>;
+
+        allItems.push(...recentObs, ...recentSums, ...recentPrompts);
+      } catch (projError) {
+        logger.warn('DATA', `Failed to query recent items for ${projectRoot}`, {
+          error: projError instanceof Error ? projError.message : String(projError)
+        });
+      }
+    }
+    } catch (allowlistError) {
+      logger.warn('DATA', 'Failed to scan allowlist for recent items', {
+        error: allowlistError instanceof Error ? allowlistError.message : String(allowlistError)
+      });
+    }
+
+    // Sort by epoch desc and take top `limit`
+    allItems.sort((a, b) => (b.created_at_epoch as number) - (a.created_at_epoch as number));
+    const items = allItems.slice(0, limit);
+
+    res.json({ items });
+  });
+
+  /**
+   * Get activity trend stats across all enabled projects
+   * GET /api/stats/trend?days=7
+   *
+   * Returns daily observation and summary counts for the specified time window.
+   */
+  private handleGetStatsTrend = this.wrapHandler((req: Request, res: Response): void => {
+    const days = Math.min(Math.max(parseInt(req.query.days as string, 10) || 7, 1), 365);
+    const sinceEpoch = Date.now() - days * 86400000;
+
+    const obsMap = new Map<string, number>();
+    const sumMap = new Map<string, number>();
+
+    try {
+      const { listEnabledProjects } = require('../../../../shared/project-allowlist.js');
+      const { resolveProjectDbPath } = require('../../../../shared/paths.js');
+      const enabled = listEnabledProjects();
+
+      for (const projectRoot of Object.keys(enabled)) {
+        try {
+          const projDbPath = resolveProjectDbPath(projectRoot);
+          const projDb = this.dbManager.getSessionStore(projDbPath).db;
+
+          const obsTrend = projDb.prepare(`
+            SELECT date(created_at) as day, COUNT(*) as count
+            FROM observations WHERE created_at_epoch > ?
+            GROUP BY date(created_at) ORDER BY day
+          `).all(sinceEpoch) as Array<{ day: string; count: number }>;
+
+          for (const row of obsTrend) {
+            obsMap.set(row.day, (obsMap.get(row.day) || 0) + row.count);
+          }
+
+          const sumTrend = projDb.prepare(`
+            SELECT date(created_at) as day, COUNT(*) as count
+            FROM session_summaries WHERE created_at_epoch > ?
+            GROUP BY date(created_at) ORDER BY day
+          `).all(sinceEpoch) as Array<{ day: string; count: number }>;
+
+          for (const row of sumTrend) {
+            sumMap.set(row.day, (sumMap.get(row.day) || 0) + row.count);
+          }
+        } catch (projError) {
+          logger.warn('DATA', `Failed to query trend data for ${projectRoot}`, {
+            error: projError instanceof Error ? projError.message : String(projError)
+          });
+        }
+      }
+    } catch (allowlistError) {
+      logger.warn('DATA', 'Failed to scan allowlist for trend data', {
+        error: allowlistError instanceof Error ? allowlistError.message : String(allowlistError)
+      });
+    }
+
+    const observations = [...obsMap.entries()]
+      .map(([day, count]) => ({ day, count }))
+      .sort((a, b) => a.day.localeCompare(b.day));
+    const summaries = [...sumMap.entries()]
+      .map(([day, count]) => ({ day, count }))
+      .sort((a, b) => a.day.localeCompare(b.day));
+
+    res.json({ observations, summaries });
   });
 
   /**
