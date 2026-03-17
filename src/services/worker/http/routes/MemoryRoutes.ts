@@ -35,6 +35,12 @@ export class MemoryRoutes extends BaseRouteHandler {
       return;
     }
 
+    const MAX_TEXT_LENGTH = 1_000_000; // 1MB, consistent with MAX_TOOL_FIELD_SIZE
+    if (text.length > MAX_TEXT_LENGTH) {
+      this.badRequest(res, `text exceeds maximum length of ${MAX_TEXT_LENGTH} characters`);
+      return;
+    }
+
     const sessionStore = this.dbManager.getSessionStore(requestDbPath || undefined);
     const chromaSync = this.dbManager.getChromaSync(requestDbPath || undefined);
 
