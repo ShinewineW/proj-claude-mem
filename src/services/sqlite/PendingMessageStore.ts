@@ -534,6 +534,16 @@ export class PendingMessageStore {
     return result.changes;
   }
 
+  private safeParseJson(json: string, field: string, messageId: number): unknown | undefined {
+    try { return JSON.parse(json); }
+    catch (e) {
+      logger.warn('QUEUE', `Corrupt ${field} JSON, returning undefined`, {
+        messageId, error: (e as Error).message
+      });
+      return undefined;
+    }
+  }
+
   /**
    * Convert a PersistentPendingMessage back to PendingMessage format
    */
@@ -541,24 +551,8 @@ export class PendingMessageStore {
     return {
       type: persistent.message_type,
       tool_name: persistent.tool_name || undefined,
-      tool_input: persistent.tool_input ? (() => {
-        try { return JSON.parse(persistent.tool_input); }
-        catch (e) {
-          logger.warn('QUEUE', 'Corrupt tool_input JSON, returning undefined', {
-            messageId: persistent.id, error: (e as Error).message
-          });
-          return undefined;
-        }
-      })() : undefined,
-      tool_response: persistent.tool_response ? (() => {
-        try { return JSON.parse(persistent.tool_response); }
-        catch (e) {
-          logger.warn('QUEUE', 'Corrupt tool_response JSON, returning undefined', {
-            messageId: persistent.id, error: (e as Error).message
-          });
-          return undefined;
-        }
-      })() : undefined,
+      tool_input: persistent.tool_input ? this.safeParseJson(persistent.tool_input, 'tool_input', persistent.id) : undefined,
+      tool_response: persistent.tool_response ? this.safeParseJson(persistent.tool_response, 'tool_response', persistent.id) : undefined,
       prompt_number: persistent.prompt_number || undefined,
       cwd: persistent.cwd || undefined,
       last_assistant_message: persistent.last_assistant_message || undefined

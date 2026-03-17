@@ -7,6 +7,7 @@ import { Database } from 'bun:sqlite';
 import { logger } from '../../../utils/logger.js';
 import type { ObservationRecord } from '../../../types/database.js';
 import type { GetObservationsByIdsOptions, ObservationSessionRow } from './types.js';
+import { assertValidLimit } from '../query-utils.js';
 
 /**
  * Get a single observation by ID
@@ -34,12 +35,7 @@ export function getObservationsByIds(
   const { orderBy = 'date_desc', limit, project, type, concepts, files } = options;
   const orderClause = orderBy === 'date_asc' ? 'ASC' : 'DESC';
 
-  // Validate limit to prevent SQL injection
-  if (limit !== undefined && limit !== null) {
-    if (typeof limit !== 'number' || !Number.isInteger(limit) || limit < 1) {
-      throw new Error('Invalid limit: must be a positive integer');
-    }
-  }
+  assertValidLimit(limit);
 
   // Build placeholders for IN clause
   const placeholders = ids.map(() => '?').join(',');

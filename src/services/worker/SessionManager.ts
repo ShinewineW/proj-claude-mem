@@ -210,7 +210,10 @@ export class SessionManager {
 
     // Derive project from dbPath if database has empty project (EP)
     if ((!session.project || session.project.trim() === '') && dbPath) {
-      const derived = path.basename(path.dirname(path.dirname(dbPath)));
+      const parent = path.basename(path.dirname(dbPath));
+      const derived = parent === '.claude'
+        ? path.basename(path.dirname(path.dirname(dbPath)))
+        : path.basename(path.dirname(dbPath));
       if (derived && derived.trim() !== '') {
         logger.warn('SESSION', 'Session has empty project, derived from dbPath', {
           sessionDbId, derived

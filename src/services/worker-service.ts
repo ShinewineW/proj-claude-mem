@@ -997,8 +997,14 @@ export class WorkerService {
         const sessionDbId = existing.id;
 
         if (entry.type === 'observation') {
+          const toolName = entry.payload.tool_name as string | undefined;
+          if (!toolName) {
+            logger.warn('SYSTEM', 'Fallback entry missing tool_name, skipping', { filepath });
+            deleteFallbackFile(filepath);
+            continue;
+          }
           this.sessionManager.queueObservation(sessionDbId, {
-            tool_name: (entry.payload.tool_name as string) ?? 'unknown',
+            tool_name: toolName,
             tool_input: entry.payload.tool_input,
             tool_response: entry.payload.tool_response,
             cwd: entry.cwd,

@@ -53,7 +53,7 @@ const WORKER_BASE_URL = `http://${WORKER_HOST}:${WORKER_PORT}`;
 const PROJECT_ROOT = resolveProjectRoot(process.cwd());
 
 // Check allowlist per-request to reflect runtime /mem-enable and /mem-disable.
-// Cached for 5 seconds to avoid re-reading JSON file on every tool call.
+// Cached for 1 second to avoid re-reading JSON file on every tool call.
 let _cachedEnabled: boolean | null = null;
 let _cacheTimestamp = 0;
 const CACHE_TTL_MS = 1_000;

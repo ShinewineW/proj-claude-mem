@@ -5,6 +5,7 @@ import type { Database } from 'bun:sqlite';
 import { logger } from '../../../utils/logger.js';
 import type { SessionSummaryRecord } from '../../../types/database.js';
 import type { SessionSummary, GetByIdsOptions } from './types.js';
+import { assertValidLimit } from '../query-utils.js';
 
 /**
  * Get summary for a specific session
@@ -67,12 +68,7 @@ export function getSummariesByIds(
   const { orderBy = 'date_desc', limit, project } = options;
   const orderClause = orderBy === 'date_asc' ? 'ASC' : 'DESC';
 
-  // Validate limit to prevent SQL injection
-  if (limit !== undefined && limit !== null) {
-    if (typeof limit !== 'number' || !Number.isInteger(limit) || limit < 1) {
-      throw new Error('Invalid limit: must be a positive integer');
-    }
-  }
+  assertValidLimit(limit);
 
   const placeholders = ids.map(() => '?').join(',');
   const params: (number | string)[] = [...ids];

@@ -15,6 +15,7 @@ import {
 } from '../../types/database.js';
 import type { PendingMessageStore } from './PendingMessageStore.js';
 import { computeObservationContentHash, findDuplicateObservation } from './observations/store.js';
+import { assertValidLimit } from './query-utils.js';
 
 /**
  * Session data store for SDK sessions, observations, and summaries
@@ -1255,12 +1256,7 @@ export class SessionStore {
     const { orderBy = 'date_desc', limit, project, type, concepts, files } = options;
     const orderClause = orderBy === 'date_asc' ? 'ASC' : 'DESC';
 
-    // Validate limit to prevent SQL injection
-    if (limit !== undefined && limit !== null) {
-      if (typeof limit !== 'number' || !Number.isInteger(limit) || limit < 1) {
-        throw new Error('Invalid limit: must be a positive integer');
-      }
-    }
+    assertValidLimit(limit);
 
     // Build placeholders for IN clause
     const placeholders = ids.map(() => '?').join(',');
@@ -1956,12 +1952,7 @@ export class SessionStore {
     const { orderBy = 'date_desc', limit, project } = options;
     const orderClause = orderBy === 'date_asc' ? 'ASC' : 'DESC';
 
-    // Validate limit to prevent SQL injection
-    if (limit !== undefined && limit !== null) {
-      if (typeof limit !== 'number' || !Number.isInteger(limit) || limit < 1) {
-        throw new Error('Invalid limit: must be a positive integer');
-      }
-    }
+    assertValidLimit(limit);
 
     const placeholders = ids.map(() => '?').join(',');
     const params: any[] = [...ids];
@@ -1996,12 +1987,7 @@ export class SessionStore {
     const { orderBy = 'date_desc', limit, project } = options;
     const orderClause = orderBy === 'date_asc' ? 'ASC' : 'DESC';
 
-    // Validate limit to prevent SQL injection
-    if (limit !== undefined && limit !== null) {
-      if (typeof limit !== 'number' || !Number.isInteger(limit) || limit < 1) {
-        throw new Error('Invalid limit: must be a positive integer');
-      }
-    }
+    assertValidLimit(limit);
 
     const placeholders = ids.map(() => '?').join(',');
     const params: any[] = [...ids];
