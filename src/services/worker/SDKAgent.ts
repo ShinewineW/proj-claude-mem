@@ -28,6 +28,8 @@ import { createPidCapturingSpawn, getProcessBySession, ensureProcessExit, waitFo
 import { query } from '@anthropic-ai/claude-agent-sdk';
 
 export class SDKAgent {
+  private static readonly RESPONSE_WATCHDOG_MS = 5 * 60 * 1000; // 5 minutes
+
   private dbManager: DatabaseManager;
   private sessionManager: SessionManager;
 
@@ -148,8 +150,32 @@ export class SDKAgent {
 
     // Process SDK messages — cleanup in finally ensures subprocess termination
     // even if the loop throws (e.g., context overflow, invalid API key)
+    //
+    // WATCHDOG: The for-await loop has no built-in timeout on the response side.
+    // If the subprocess hangs mid-API-call, this loop blocks forever, preventing
+    // ensureProcessExit() from running and permanently occupying a pool slot.
+    // The watchdog timer aborts the session after 5 minutes of no response.
+    const watchdogMs = parseInt(
+      SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH).CLAUDE_MEM_RESPONSE_WATCHDOG_MS || '0', 10
+    ) || SDKAgent.RESPONSE_WATCHDOG_MS;
+    let watchdogTimer: ReturnType<typeof setTimeout> | undefined;
+
+    const resetWatchdog = () => {
+      if (watchdogTimer) clearTimeout(watchdogTimer);
+      watchdogTimer = setTimeout(() => {
+        logger.error('SDK', 'Response watchdog timeout — subprocess hung, aborting', {
+          sessionDbId: session.sessionDbId,
+          watchdogMs,
+          lastActivity: new Date(session.lastGeneratorActivity).toISOString()
+        });
+        session.abortController.abort();
+      }, watchdogMs);
+    };
+
     try {
+      resetWatchdog();
       for await (const message of queryResult) {
+        resetWatchdog();
         // Capture or update memory session ID from SDK message
         // IMPORTANT: The SDK may return a DIFFERENT session_id on resume than what we sent!
         // We must always sync the DB to match what the SDK actually uses.
@@ -274,6 +300,9 @@ export class SDKAgent {
         }
       }
     } finally {
+      // Clear watchdog timer
+      if (watchdogTimer) clearTimeout(watchdogTimer);
+
       // Ensure subprocess is terminated after query completes (or on error)
       const tracked = getProcessBySession(session.sessionDbId);
       if (tracked && !tracked.process.killed && tracked.process.exitCode === null) {
