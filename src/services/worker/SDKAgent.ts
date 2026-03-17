@@ -143,7 +143,7 @@ export class SDKAgent {
         abortController: session.abortController,
         pathToClaudeCodeExecutable: claudePath,
         // Custom spawn function captures PIDs to fix zombie process accumulation
-        spawnClaudeCodeProcess: createPidCapturingSpawn(session.sessionDbId),
+        spawnClaudeCodeProcess: createPidCapturingSpawn(session.sessionDbId, session.dbPath),
         env: isolatedEnv  // Use isolated credentials from ~/.claude-mem/.env, not process.env
       }
     });

@@ -27,6 +27,7 @@ interface TrackedProcess {
   sessionDbId: number;
   spawnedAt: number;
   process: ChildProcess;
+  dbPath?: string;  // Per-project DB path for composite key session lookup
 }
 
 // PID Registry - tracks spawned Claude subprocesses
@@ -35,8 +36,8 @@ const processRegistry = new Map<number, TrackedProcess>();
 /**
  * Register a spawned process in the registry
  */
-export function registerProcess(pid: number, sessionDbId: number, process: ChildProcess): void {
-  processRegistry.set(pid, { pid, sessionDbId, spawnedAt: Date.now(), process });
+export function registerProcess(pid: number, sessionDbId: number, process: ChildProcess, dbPath?: string): void {
+  processRegistry.set(pid, { pid, sessionDbId, spawnedAt: Date.now(), process, dbPath });
   logger.info('PROCESS', `Registered PID ${pid} for session ${sessionDbId}`, { pid, sessionDbId });
 }
 
@@ -325,7 +326,7 @@ export async function reapOrphanedProcesses(activeSessionIds: Set<number>): Prom
  * NOTE: Session isolation is handled via the `cwd` option in SDKAgent.ts,
  * NOT via CLAUDE_CONFIG_DIR (which breaks authentication).
  */
-export function createPidCapturingSpawn(sessionDbId: number) {
+export function createPidCapturingSpawn(sessionDbId: number, dbPath?: string) {
   return (spawnOptions: {
     command: string;
     args: string[];
@@ -361,7 +362,7 @@ export function createPidCapturingSpawn(sessionDbId: number) {
 
     // Register PID
     if (child.pid) {
-      registerProcess(child.pid, sessionDbId, child);
+      registerProcess(child.pid, sessionDbId, child, dbPath);
 
       // Auto-unregister on exit
       child.on('exit', (code: number | null, signal: string | null) => {
