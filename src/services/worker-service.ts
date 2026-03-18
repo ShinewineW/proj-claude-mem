@@ -218,6 +218,10 @@ export class WorkerService {
     this.geminiAgent = new GeminiAgent(this.dbManager, this.sessionManager);
     this.openRouterAgent = new OpenRouterAgent(this.dbManager, this.sessionManager);
 
+    // Wire fallback: Gemini/OpenRouter → Claude SDK on recoverable errors (429, 500, etc.)
+    this.geminiAgent.setFallbackAgent(this.sdkAgent);
+    this.openRouterAgent.setFallbackAgent(this.sdkAgent);
+
     this.paginationHelper = new PaginationHelper(this.dbManager);
     this.sessionEventBroadcaster = new SessionEventBroadcaster(this.sseBroadcaster, this);
 

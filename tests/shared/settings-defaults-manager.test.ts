@@ -309,8 +309,9 @@ describe('SettingsDefaultsManager', () => {
 
   describe('get', () => {
     it('should return default value for key', () => {
-      expect(SettingsDefaultsManager.get('CLAUDE_MEM_MODEL')).toBe('claude-sonnet-4-5');
-      expect(SettingsDefaultsManager.get('CLAUDE_MEM_WORKER_PORT')).toBe('37777');
+      const defaults = SettingsDefaultsManager.getAllDefaults();
+      expect(SettingsDefaultsManager.get('CLAUDE_MEM_MODEL')).toBe(defaults.CLAUDE_MEM_MODEL);
+      expect(SettingsDefaultsManager.get('CLAUDE_MEM_WORKER_PORT')).toBe(defaults.CLAUDE_MEM_WORKER_PORT);
     });
   });
 

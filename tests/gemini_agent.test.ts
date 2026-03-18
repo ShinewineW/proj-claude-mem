@@ -316,6 +316,37 @@ describe('GeminiAgent', () => {
     expect(fallbackAgent.startSession).not.toHaveBeenCalled();
   });
 
+  it('should throw on rate limit error when fallbackAgent is not wired', async () => {
+    // Regression test: before fix, worker-service.ts never called setFallbackAgent(),
+    // so this.fallbackAgent was null and 429 errors crashed the generator instead of
+    // falling back to Claude. This test ensures the bug is visible when wiring is missing.
+    const session = {
+      sessionDbId: 1,
+      contentSessionId: 'test-session',
+      memorySessionId: 'mem-session-123',
+      project: 'test-project',
+      userPrompt: 'test prompt',
+      conversationHistory: [],
+      lastPromptNumber: 1,
+      cumulativeInputTokens: 0,
+      cumulativeOutputTokens: 0,
+      pendingMessages: [],
+      abortController: new AbortController(),
+      generatorPromise: null,
+      earliestPendingTimestamp: null,
+      currentProvider: null,
+      startTime: Date.now(),
+      processingMessageIds: []
+    } as any;
+
+    global.fetch = mock(() => Promise.resolve(new Response('Resource has been exhausted (e.g. check quota).', { status: 429 })));
+
+    // Deliberately do NOT call agent.setFallbackAgent() — simulates the production bug
+    const unwiredAgent = new GeminiAgent(agent['dbManager'], agent['sessionManager']);
+
+    await expect(unwiredAgent.startSession(session)).rejects.toThrow('Gemini API error: 429');
+  });
+
   it('should respect rate limits when rate limiting enabled', async () => {
     // Enable rate limiting - this means requests will be throttled
     // Note: CLAUDE_MEM_GEMINI_RATE_LIMITING_ENABLED !== 'false' means enabled

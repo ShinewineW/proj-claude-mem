@@ -352,12 +352,12 @@ export function ContextSettingsModal({
                   tooltip="Claude model used for generating observations"
                 >
                   <select
-                    value={formState.CLAUDE_MEM_MODEL || 'haiku'}
+                    value={formState.CLAUDE_MEM_MODEL || 'claude-haiku-4-5-20251001'}
                     onChange={(e) => updateSetting('CLAUDE_MEM_MODEL', e.target.value)}
                   >
-                    <option value="haiku">haiku (fastest)</option>
-                    <option value="sonnet">sonnet (balanced)</option>
-                    <option value="opus">opus (highest quality)</option>
+                    <option value="claude-haiku-4-5-20251001">haiku (fastest)</option>
+                    <option value="claude-sonnet-4-5">sonnet (balanced)</option>
+                    <option value="claude-opus-4-5-20250415">opus (highest quality)</option>
                   </select>
                 </FormField>
               )}
