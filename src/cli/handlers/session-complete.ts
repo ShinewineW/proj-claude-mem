@@ -39,6 +39,8 @@ export const sessionCompleteHandler: EventHandler = {
 
     try {
       // Call the session complete endpoint by contentSessionId
+      // No AbortSignal — removed to avoid Windows Bun libuv assertion on cleanup.
+      // Claude Code's 150s hook timeout serves as the outer bound.
       const response = await fetch(`http://127.0.0.1:${port}/api/sessions/complete`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

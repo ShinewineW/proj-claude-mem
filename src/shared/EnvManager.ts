@@ -91,8 +91,9 @@ function serializeEnvFile(env: Record<string, string>): string {
   for (const [key, value] of Object.entries(env)) {
     if (value) {
       // Quote values that contain spaces or special characters
-      const needsQuotes = /[\s#=]/.test(value);
-      lines.push(`${key}=${needsQuotes ? `"${value}"` : value}`);
+      const escaped = value.replace(/"/g, '\\"');
+      const needsQuotes = /[\s#="]/.test(value);
+      lines.push(`${key}=${needsQuotes ? `"${escaped}"` : escaped}`);
     }
   }
 

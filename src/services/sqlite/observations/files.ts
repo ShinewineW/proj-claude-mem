@@ -31,17 +31,25 @@ export function getFilesForSession(
   for (const row of rows) {
     // Parse files_read
     if (row.files_read) {
-      const files = JSON.parse(row.files_read);
-      if (Array.isArray(files)) {
-        files.forEach(f => filesReadSet.add(f));
+      try {
+        const files = JSON.parse(row.files_read);
+        if (Array.isArray(files)) {
+          files.forEach(f => filesReadSet.add(f));
+        }
+      } catch {
+        logger.debug('DB', 'Malformed files_read JSON, skipping row');
       }
     }
 
     // Parse files_modified
     if (row.files_modified) {
-      const files = JSON.parse(row.files_modified);
-      if (Array.isArray(files)) {
-        files.forEach(f => filesModifiedSet.add(f));
+      try {
+        const files = JSON.parse(row.files_modified);
+        if (Array.isArray(files)) {
+          files.forEach(f => filesModifiedSet.add(f));
+        }
+      } catch {
+        logger.debug('DB', 'Malformed files_modified JSON, skipping row');
       }
     }
   }

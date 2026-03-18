@@ -752,7 +752,7 @@ export class WorkerService {
 
         if (pendingCount > 0) {
           // Guard: prevent infinite restart loops (R1)
-          const MAX_CONSECUTIVE_RESTARTS = 5;
+          const MAX_CONSECUTIVE_RESTARTS = 3; // Must match SessionRoutes.MAX_CONSECUTIVE_RESTARTS
           session.consecutiveRestarts += 1;
           if (session.consecutiveRestarts > MAX_CONSECUTIVE_RESTARTS) {
             // Abandon ALL remaining messages to prevent permanent queue stall

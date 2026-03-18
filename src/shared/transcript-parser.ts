@@ -25,7 +25,12 @@ export function extractLastMessage(
   let foundMatchingRole = false;
 
   for (let i = lines.length - 1; i >= 0; i--) {
-    const line = JSON.parse(lines[i]);
+    let line: any;
+    try {
+      line = JSON.parse(lines[i]);
+    } catch {
+      continue; // skip malformed lines (truncated writes, whitespace)
+    }
     if (line.type === role) {
       foundMatchingRole = true;
 

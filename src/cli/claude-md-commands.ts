@@ -244,7 +244,7 @@ function formatObservationsForClaudeMd(observations: ObservationRow[], folderPat
         lastTime = time;
 
         const icon = getTypeIcon(obs.type);
-        const title = obs.title || 'Untitled';
+        const title = (obs.title || 'Untitled').replace(/\|/g, '\\|');
         const tokens = estimateTokens(obs);
 
         lines.push(`| #${obs.id} | ${timeDisplay} | ${icon} | ${title} | ~${tokens} |`);
