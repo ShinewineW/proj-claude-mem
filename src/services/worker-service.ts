@@ -708,16 +708,20 @@ export class WorkerService {
         if (hadUnrecoverableError) {
           // Abandon ALL remaining messages — error will persist on retry
           let abandonedCount = 0;
+          let retriedCount = 0;
           try {
-            abandonedCount = pendingStore.markAllSessionMessagesAbandoned(session.sessionDbId);
+            const result = pendingStore.markAllSessionMessagesAbandoned(session.sessionDbId);
+            abandonedCount = result.failed;
+            retriedCount = result.retried;
           } catch (abandonErr) {
             logger.error('SYSTEM', 'Failed to abandon messages after unrecoverable error', {
               sessionId: session.sessionDbId
             }, abandonErr as Error);
           }
-          logger.warn('SYSTEM', `Skipping restart due to unrecoverable error, abandoned ${abandonedCount} messages`, {
+          logger.warn('SYSTEM', `Skipping restart due to unrecoverable error, abandoned ${abandonedCount} messages (${retriedCount} retryable)`, {
             sessionId: session.sessionDbId,
-            abandonedCount
+            abandonedCount,
+            retriedCount
           });
           this.broadcastProcessingStatus();
           return;
@@ -754,18 +758,22 @@ export class WorkerService {
           if (session.consecutiveRestarts > MAX_CONSECUTIVE_RESTARTS) {
             // Abandon ALL remaining messages to prevent permanent queue stall
             let abandonedCount = 0;
+            let retriedCount = 0;
             try {
-              abandonedCount = pendingStore.markAllSessionMessagesAbandoned(session.sessionDbId);
+              const result = pendingStore.markAllSessionMessagesAbandoned(session.sessionDbId);
+              abandonedCount = result.failed;
+              retriedCount = result.retried;
             } catch (abandonErr) {
               logger.error('SESSION', 'Failed to abandon messages after restart limit', {
                 sessionDbId: session.sessionDbId
               }, abandonErr as Error);
             }
-            logger.error('SESSION', `Max consecutive restarts exceeded, abandoned ${abandonedCount} messages`, {
+            logger.error('SESSION', `Max consecutive restarts exceeded, abandoned ${abandonedCount} messages (${retriedCount} retryable)`, {
               sessionDbId: session.sessionDbId,
               restarts: session.consecutiveRestarts,
               pendingCount,
-              abandonedCount
+              abandonedCount,
+              retriedCount
             });
             this.broadcastProcessingStatus();
             return;
@@ -846,11 +854,12 @@ export class WorkerService {
 
     // No fallback or both failed: mark messages abandoned and remove session so queue doesn't grow
     const pendingStore = this.sessionManager.getPendingMessageStore(session.dbPath);
-    const abandoned = pendingStore.markAllSessionMessagesAbandoned(sessionDbId);
-    if (abandoned > 0) {
+    const { retried, failed: abandoned } = pendingStore.markAllSessionMessagesAbandoned(sessionDbId);
+    if (retried + abandoned > 0) {
       logger.warn('SDK', 'No fallback available; marked pending messages abandoned', {
         sessionId: sessionDbId,
-        abandoned
+        abandoned,
+        retried
       });
     }
     this.sessionManager.removeSessionImmediate(sessionDbId, session.dbPath);
@@ -966,9 +975,9 @@ export class WorkerService {
       } catch (error) {
         logger.error('SYSTEM', `Failed to process session ${sessionDbId}`, { dbPath }, error as Error);
         try {
-          const abandonCount = this.sessionManager.getPendingMessageStore(dbPath).markAllSessionMessagesAbandoned(sessionDbId);
-          if (abandonCount > 0) {
-            logger.info('SYSTEM', `Abandoned ${abandonCount} orphaned messages for unrecoverable session ${sessionDbId}`, { dbPath });
+          const { failed: abandonCount, retried } = this.sessionManager.getPendingMessageStore(dbPath).markAllSessionMessagesAbandoned(sessionDbId);
+          if (abandonCount + retried > 0) {
+            logger.info('SYSTEM', `Abandoned ${abandonCount} orphaned messages for session ${sessionDbId} (${retried} retryable)`, { dbPath });
           }
         } catch (abandonError) {
           logger.warn('SYSTEM', `Failed to abandon messages for session ${sessionDbId}`, { dbPath }, abandonError as Error);

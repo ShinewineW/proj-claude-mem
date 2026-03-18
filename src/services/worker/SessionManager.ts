@@ -394,9 +394,9 @@ export class SessionManager {
           // Mark any remaining pending/processing messages as failed
           // so they don't become permanent orphans
           try {
-            const abandonCount = pendingStore.markAllSessionMessagesAbandoned(sessionDbId);
-            if (abandonCount > 0) {
-              logger.warn('SESSION', `Marked ${abandonCount} pending messages as abandoned after drain timeout`, { sessionDbId });
+            const { failed: abandonCount, retried } = pendingStore.markAllSessionMessagesAbandoned(sessionDbId);
+            if (abandonCount + retried > 0) {
+              logger.warn('SESSION', `Marked ${abandonCount} messages abandoned after drain timeout (${retried} retryable)`, { sessionDbId });
             }
           } catch (abandonError) {
             logger.warn('SESSION', 'Failed to mark messages as abandoned', { sessionDbId }, abandonError as Error);

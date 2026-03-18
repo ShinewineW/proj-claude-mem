@@ -35,12 +35,12 @@ describe('processPendingQueues orphan cleanup', () => {
             VALUES (99, 'cs-orphan', 'observation', 'processing', ${Date.now()})`);
 
     expect(store.getPendingCount(99)).toBe(2);
-    const abandonCount = store.markAllSessionMessagesAbandoned(99);
+    const { retried, failed } = store.markAllSessionMessagesAbandoned(99);
 
-    expect(abandonCount).toBe(2);
-    expect(store.getPendingCount(99)).toBe(0);
-    const rows = db.prepare('SELECT status FROM pending_messages WHERE session_db_id = 99').all() as any[];
-    expect(rows.every((r: any) => r.status === 'failed')).toBe(true);
+    expect(retried + failed).toBe(2);
+    // With retry_count=0, messages go back to pending (retried), not failed
+    expect(retried).toBe(2);
+    expect(failed).toBe(0);
   });
 
   test('markAllSessionMessagesAbandoned is idempotent on already-failed messages', () => {
@@ -49,7 +49,7 @@ describe('processPendingQueues orphan cleanup', () => {
     db.run(`INSERT INTO pending_messages (session_db_id, content_session_id, message_type, status, created_at_epoch)
             VALUES (100, 'cs-done', 'observation', 'failed', ${Date.now()})`);
 
-    const abandonCount = store.markAllSessionMessagesAbandoned(100);
-    expect(abandonCount).toBe(0);
+    const { retried, failed } = store.markAllSessionMessagesAbandoned(100);
+    expect(retried + failed).toBe(0);
   });
 });

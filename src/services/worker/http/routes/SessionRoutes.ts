@@ -215,11 +215,12 @@ export class SessionRoutes extends BaseRouteHandler {
         // Mark all processing messages as failed so they can be retried or abandoned
         const pendingStore = this.sessionManager.getPendingMessageStore(session.dbPath);
         try {
-          const failedCount = pendingStore.markSessionMessagesFailed(session.sessionDbId);
-          if (failedCount > 0) {
-            logger.error('SESSION', `Marked messages as failed after generator error`, {
+          const { retried, failed: failedCount } = pendingStore.markSessionMessagesFailed(session.sessionDbId);
+          if (retried + failedCount > 0) {
+            logger.error('SESSION', `Marked messages after generator error`, {
               sessionId: session.sessionDbId,
-              failedCount
+              retried,
+              failed: failedCount
             });
           }
         } catch (dbError) {
@@ -268,20 +269,23 @@ export class SessionRoutes extends BaseRouteHandler {
               if (session.consecutiveRestarts > SessionRoutes.MAX_CONSECUTIVE_RESTARTS) {
                 // Abandon ALL remaining messages (pending + processing) to prevent permanent queue stall
                 let abandonedCount = 0;
+                let retriedCount = 0;
                 try {
-                  abandonedCount = pendingStore.markAllSessionMessagesAbandoned(sessionDbId);
+                  const result = pendingStore.markAllSessionMessagesAbandoned(sessionDbId);
+                  abandonedCount = result.failed;
+                  retriedCount = result.retried;
                 } catch (abandonErr) {
                   logger.error('SESSION', 'Failed to abandon messages after restart limit', {
                     sessionId: sessionDbId
                   }, abandonErr as Error);
                 }
-                logger.error('SESSION', `CRITICAL: Generator restart limit exceeded - abandoning ${abandonedCount} messages`, {
+                logger.error('SESSION', `CRITICAL: Generator restart limit exceeded - abandoned ${abandonedCount} messages (${retriedCount} retryable)`, {
                   sessionId: sessionDbId,
                   pendingCount,
                   abandonedCount,
+                  retriedCount,
                   consecutiveRestarts: session.consecutiveRestarts,
-                  maxRestarts: SessionRoutes.MAX_CONSECUTIVE_RESTARTS,
-                  action: 'Generator will NOT restart. All pending messages marked failed.'
+                  maxRestarts: SessionRoutes.MAX_CONSECUTIVE_RESTARTS
                 });
                 // Don't restart - abort to prevent further API calls
                 session.abortController.abort();

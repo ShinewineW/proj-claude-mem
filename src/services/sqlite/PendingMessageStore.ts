@@ -258,41 +258,61 @@ export class PendingMessageStore {
   }
 
   /**
-   * Mark all processing messages for a session as failed
-   * Used in error recovery when session generator crashes
-   * @returns Number of messages marked failed
+   * Mark processing messages for a session as failed, with per-message retry.
+   * Messages with retry_count < maxRetries go back to 'pending' for retry.
+   * Messages at retry limit are permanently failed.
    */
-  markSessionMessagesFailed(sessionDbId: number): number {
+  markSessionMessagesFailed(sessionDbId: number): { retried: number; failed: number } {
     const now = Date.now();
+    const rows = this.db.prepare(
+      `SELECT id, retry_count FROM pending_messages WHERE session_db_id = ? AND status = 'processing'`
+    ).all(sessionDbId) as { id: number; retry_count: number }[];
 
-    // Atomic update - all processing messages for session → failed
-    // Note: This bypasses retry logic since generator failures are session-level,
-    // not message-level. Individual message failures use markFailed() instead.
-    const stmt = this.db.prepare(`
-      UPDATE pending_messages
-      SET status = 'failed', failed_at_epoch = ?
-      WHERE session_db_id = ? AND status = 'processing'
-    `);
-
-    const result = stmt.run(now, sessionDbId);
-    return result.changes;
+    let retried = 0;
+    let failed = 0;
+    for (const row of rows) {
+      if (row.retry_count < this.maxRetries) {
+        this.db.prepare(
+          `UPDATE pending_messages SET status = 'pending', retry_count = retry_count + 1, started_processing_at_epoch = NULL WHERE id = ?`
+        ).run(row.id);
+        retried++;
+      } else {
+        this.db.prepare(
+          `UPDATE pending_messages SET status = 'failed', failed_at_epoch = ? WHERE id = ?`
+        ).run(now, row.id);
+        failed++;
+      }
+    }
+    return { retried, failed };
   }
 
   /**
-   * Mark all pending and processing messages for a session as failed (abandoned).
-   * Used when SDK session is terminated and no fallback agent is available:
-   * prevents the session from appearing in getSessionsWithPendingMessages forever.
-   * @returns Number of messages marked failed
+   * Mark all pending and processing messages for a session as abandoned, with per-message retry.
+   * Messages with retry_count < maxRetries go back to 'pending' for retry.
+   * Messages at retry limit are permanently failed.
    */
-  markAllSessionMessagesAbandoned(sessionDbId: number): number {
+  markAllSessionMessagesAbandoned(sessionDbId: number): { retried: number; failed: number } {
     const now = Date.now();
-    const stmt = this.db.prepare(`
-      UPDATE pending_messages
-      SET status = 'failed', failed_at_epoch = ?
-      WHERE session_db_id = ? AND status IN ('pending', 'processing')
-    `);
-    const result = stmt.run(now, sessionDbId);
-    return result.changes;
+    const rows = this.db.prepare(
+      `SELECT id, retry_count FROM pending_messages WHERE session_db_id = ? AND status IN ('pending', 'processing')`
+    ).all(sessionDbId) as { id: number; retry_count: number }[];
+
+    let retried = 0;
+    let failed = 0;
+    for (const row of rows) {
+      if (row.retry_count < this.maxRetries) {
+        this.db.prepare(
+          `UPDATE pending_messages SET status = 'pending', retry_count = retry_count + 1, started_processing_at_epoch = NULL WHERE id = ?`
+        ).run(row.id);
+        retried++;
+      } else {
+        this.db.prepare(
+          `UPDATE pending_messages SET status = 'failed', failed_at_epoch = ? WHERE id = ?`
+        ).run(now, row.id);
+        failed++;
+      }
+    }
+    return { retried, failed };
   }
 
   /**
@@ -360,7 +380,7 @@ export class PendingMessageStore {
       // Max retries exceeded, mark as permanently failed
       const stmt = this.db.prepare(`
         UPDATE pending_messages
-        SET status = 'failed', completed_at_epoch = ?
+        SET status = 'failed', failed_at_epoch = ?
         WHERE id = ?
       `);
       stmt.run(now, messageId);
