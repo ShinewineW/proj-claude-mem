@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Settings } from '../types';
 import { DEFAULT_SETTINGS } from '../constants/settings';
 import { API_ENDPOINTS } from '../constants/api';
+
 export function useSettings() {
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
 
