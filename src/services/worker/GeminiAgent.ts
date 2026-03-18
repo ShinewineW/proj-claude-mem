@@ -303,6 +303,14 @@ export class GeminiAgent {
       });
 
     } catch (error: unknown) {
+      // Clean up dangling user message to prevent consecutive user turns on retry.
+      // Gemini API requires alternating user/model turns; a trailing user message
+      // without a corresponding model response would cause the next startSession to fail.
+      const lastEntry = session.conversationHistory[session.conversationHistory.length - 1];
+      if (lastEntry?.role === 'user') {
+        session.conversationHistory.pop();
+      }
+
       if (isAbortError(error)) {
         logger.warn('SDK', 'Gemini agent aborted', { sessionId: session.sessionDbId });
         throw error;

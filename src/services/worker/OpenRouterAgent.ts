@@ -184,17 +184,25 @@ export class OpenRouterAgent {
           }
 
           // Process response using shared ResponseProcessor
-          await processAgentResponse(
-            obsResponse.content || '',
-            session,
-            this.dbManager,
-            this.sessionManager,
-            worker,
-            tokensUsed,
-            originalTimestamp,
-            'OpenRouter',
-            lastCwd
-          );
+          if (obsResponse.content) {
+            await processAgentResponse(
+              obsResponse.content,
+              session,
+              this.dbManager,
+              this.sessionManager,
+              worker,
+              tokensUsed,
+              originalTimestamp,
+              'OpenRouter',
+              lastCwd
+            );
+          } else {
+            logger.warn('SDK', 'Empty OpenRouter observation response, skipping processing to preserve message', {
+              sessionId: session.sessionDbId,
+              messageId: session.processingMessageIds[session.processingMessageIds.length - 1]
+            });
+            // Don't confirm - leave message for stale recovery
+          }
 
         } else if (message.type === 'summarize') {
           // Build summary prompt
@@ -219,17 +227,25 @@ export class OpenRouterAgent {
           }
 
           // Process response using shared ResponseProcessor
-          await processAgentResponse(
-            summaryResponse.content || '',
-            session,
-            this.dbManager,
-            this.sessionManager,
-            worker,
-            tokensUsed,
-            originalTimestamp,
-            'OpenRouter',
-            lastCwd
-          );
+          if (summaryResponse.content) {
+            await processAgentResponse(
+              summaryResponse.content,
+              session,
+              this.dbManager,
+              this.sessionManager,
+              worker,
+              tokensUsed,
+              originalTimestamp,
+              'OpenRouter',
+              lastCwd
+            );
+          } else {
+            logger.warn('SDK', 'Empty OpenRouter summary response, skipping processing to preserve message', {
+              sessionId: session.sessionDbId,
+              messageId: session.processingMessageIds[session.processingMessageIds.length - 1]
+            });
+            // Don't confirm - leave message for stale recovery
+          }
         }
       }
 
@@ -243,6 +259,14 @@ export class OpenRouterAgent {
       });
 
     } catch (error: unknown) {
+      // Clean up dangling user message to prevent consecutive user turns on retry.
+      // A trailing user message without a corresponding assistant response would
+      // corrupt the shared conversationHistory for subsequent provider attempts.
+      const lastEntry = session.conversationHistory[session.conversationHistory.length - 1];
+      if (lastEntry?.role === 'user') {
+        session.conversationHistory.pop();
+      }
+
       if (isAbortError(error)) {
         logger.warn('SDK', 'OpenRouter agent aborted', { sessionId: session.sessionDbId });
         throw error;
