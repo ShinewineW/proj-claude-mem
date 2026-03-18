@@ -31,6 +31,7 @@ import {
 // Gemini API endpoint — use v1 (stable), not v1beta.
 // v1beta does not support newer models like gemini-3-flash.
 const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1/models';
+const FETCH_TIMEOUT_MS = 60_000;
 
 // Gemini model types (available via API)
 export type GeminiModel =
@@ -155,12 +156,10 @@ export class GeminiAgent {
 
       // Add to conversation history and query Gemini with full context
       session.conversationHistory.push({ role: 'user', content: initPrompt });
-      const initResponse = await this.queryGeminiMultiTurn(session.conversationHistory, apiKey, model, rateLimitingEnabled);
+      const fetchSignal = AbortSignal.any([session.abortController.signal, AbortSignal.timeout(FETCH_TIMEOUT_MS)]);
+      const initResponse = await this.queryGeminiMultiTurn(session.conversationHistory, apiKey, model, rateLimitingEnabled, fetchSignal);
 
       if (initResponse.content) {
-        // Add response to conversation history
-        session.conversationHistory.push({ role: 'assistant', content: initResponse.content });
-
         // Track token usage
         const tokensUsed = initResponse.tokensUsed || 0;
         session.cumulativeInputTokens += Math.floor(tokensUsed * 0.7);  // Rough estimate
@@ -219,13 +218,11 @@ export class GeminiAgent {
 
           // Add to conversation history and query Gemini with full context
           session.conversationHistory.push({ role: 'user', content: obsPrompt });
-          const obsResponse = await this.queryGeminiMultiTurn(session.conversationHistory, apiKey, model, rateLimitingEnabled);
+          const obsFetchSignal = AbortSignal.any([session.abortController.signal, AbortSignal.timeout(FETCH_TIMEOUT_MS)]);
+          const obsResponse = await this.queryGeminiMultiTurn(session.conversationHistory, apiKey, model, rateLimitingEnabled, obsFetchSignal);
 
           let tokensUsed = 0;
           if (obsResponse.content) {
-            // Add response to conversation history
-            session.conversationHistory.push({ role: 'assistant', content: obsResponse.content });
-
             tokensUsed = obsResponse.tokensUsed || 0;
             session.cumulativeInputTokens += Math.floor(tokensUsed * 0.7);
             session.cumulativeOutputTokens += Math.floor(tokensUsed * 0.3);
@@ -264,13 +261,11 @@ export class GeminiAgent {
 
           // Add to conversation history and query Gemini with full context
           session.conversationHistory.push({ role: 'user', content: summaryPrompt });
-          const summaryResponse = await this.queryGeminiMultiTurn(session.conversationHistory, apiKey, model, rateLimitingEnabled);
+          const sumFetchSignal = AbortSignal.any([session.abortController.signal, AbortSignal.timeout(FETCH_TIMEOUT_MS)]);
+          const summaryResponse = await this.queryGeminiMultiTurn(session.conversationHistory, apiKey, model, rateLimitingEnabled, sumFetchSignal);
 
           let tokensUsed = 0;
           if (summaryResponse.content) {
-            // Add response to conversation history
-            session.conversationHistory.push({ role: 'assistant', content: summaryResponse.content });
-
             tokensUsed = summaryResponse.tokensUsed || 0;
             session.cumulativeInputTokens += Math.floor(tokensUsed * 0.7);
             session.cumulativeOutputTokens += Math.floor(tokensUsed * 0.3);
@@ -350,7 +345,8 @@ export class GeminiAgent {
     history: ConversationMessage[],
     apiKey: string,
     model: GeminiModel,
-    rateLimitingEnabled: boolean
+    rateLimitingEnabled: boolean,
+    abortSignal?: AbortSignal
   ): Promise<{ content: string; tokensUsed?: number }> {
     const contents = this.conversationToGeminiContents(history);
     const totalChars = history.reduce((sum, m) => sum + m.content.length, 0);
@@ -377,6 +373,7 @@ export class GeminiAgent {
           maxOutputTokens: 4096,
         },
       }),
+      signal: abortSignal,
     });
 
     if (!response.ok) {

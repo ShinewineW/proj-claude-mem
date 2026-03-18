@@ -30,6 +30,7 @@ import {
 
 // OpenRouter API endpoint
 const OPENROUTER_API_URL = 'https://openrouter.ai/api/v1/chat/completions';
+const FETCH_TIMEOUT_MS = 60_000;
 
 // Context window management constants (defaults, overridable via settings)
 const DEFAULT_MAX_CONTEXT_MESSAGES = 20;  // Maximum messages to keep in conversation history
@@ -110,7 +111,8 @@ export class OpenRouterAgent {
 
       // Add to conversation history and query OpenRouter with full context
       session.conversationHistory.push({ role: 'user', content: initPrompt });
-      const initResponse = await this.queryOpenRouterMultiTurn(session.conversationHistory, apiKey, model, siteUrl, appName);
+      const fetchSignal = AbortSignal.any([session.abortController.signal, AbortSignal.timeout(FETCH_TIMEOUT_MS)]);
+      const initResponse = await this.queryOpenRouterMultiTurn(session.conversationHistory, apiKey, model, siteUrl, appName, fetchSignal);
 
       if (initResponse.content) {
         // Add response to conversation history
@@ -174,7 +176,8 @@ export class OpenRouterAgent {
 
           // Add to conversation history and query OpenRouter with full context
           session.conversationHistory.push({ role: 'user', content: obsPrompt });
-          const obsResponse = await this.queryOpenRouterMultiTurn(session.conversationHistory, apiKey, model, siteUrl, appName);
+          const obsFetchSignal = AbortSignal.any([session.abortController.signal, AbortSignal.timeout(FETCH_TIMEOUT_MS)]);
+          const obsResponse = await this.queryOpenRouterMultiTurn(session.conversationHistory, apiKey, model, siteUrl, appName, obsFetchSignal);
 
           let tokensUsed = 0;
           if (obsResponse.content) {
@@ -211,7 +214,8 @@ export class OpenRouterAgent {
 
           // Add to conversation history and query OpenRouter with full context
           session.conversationHistory.push({ role: 'user', content: summaryPrompt });
-          const summaryResponse = await this.queryOpenRouterMultiTurn(session.conversationHistory, apiKey, model, siteUrl, appName);
+          const sumFetchSignal = AbortSignal.any([session.abortController.signal, AbortSignal.timeout(FETCH_TIMEOUT_MS)]);
+          const summaryResponse = await this.queryOpenRouterMultiTurn(session.conversationHistory, apiKey, model, siteUrl, appName, sumFetchSignal);
 
           let tokensUsed = 0;
           if (summaryResponse.content) {
@@ -342,7 +346,8 @@ export class OpenRouterAgent {
     apiKey: string,
     model: string,
     siteUrl?: string,
-    appName?: string
+    appName?: string,
+    abortSignal?: AbortSignal
   ): Promise<{ content: string; tokensUsed?: number }> {
     // Truncate history to prevent runaway costs
     const truncatedHistory = this.truncateHistory(history);
@@ -370,6 +375,7 @@ export class OpenRouterAgent {
         temperature: 0.3,  // Lower temperature for structured extraction
         max_tokens: 4096,
       }),
+      signal: abortSignal,
     });
 
     if (!response.ok) {
