@@ -65,7 +65,7 @@ export function useContextPreview(settings: Settings): UseContextPreviewResult {
   useEffect(() => {
     const timeout = setTimeout(() => {
       refresh();
-    }, 300);
+    }, 800);
     return () => clearTimeout(timeout);
   }, [settings, refresh]);
 
