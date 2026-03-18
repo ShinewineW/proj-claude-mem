@@ -66,6 +66,21 @@ describe('FallbackErrorHandler', () => {
       });
     });
 
+    describe('returns true for TimeoutError from AbortSignal.timeout()', () => {
+      it('should return true for TimeoutError (DOMException from AbortSignal.timeout)', () => {
+        const timeoutError = new Error('The operation was aborted due to timeout');
+        timeoutError.name = 'TimeoutError';
+        expect(shouldFallbackToClaude(timeoutError)).toBe(true);
+      });
+
+      it('should not confuse TimeoutError with AbortError', () => {
+        const timeoutError = new Error('The operation was aborted due to timeout');
+        timeoutError.name = 'TimeoutError';
+        expect(isAbortError(timeoutError)).toBe(false);
+        expect(shouldFallbackToClaude(timeoutError)).toBe(true);
+      });
+    });
+
     describe('returns false for non-fallback errors', () => {
       it('should return false for 400 Bad Request', () => {
         expect(shouldFallbackToClaude('400 Bad Request')).toBe(false);
