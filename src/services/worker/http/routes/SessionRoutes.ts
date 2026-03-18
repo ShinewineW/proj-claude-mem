@@ -212,7 +212,9 @@ export class SessionRoutes extends BaseRouteHandler {
           error: error.message
         }, error);
 
-        // Mark all processing messages as failed so they can be retried or abandoned
+        // Retry processing messages (retry_count+1). Known tradeoff: if .finally() also
+        // calls markAllSessionMessagesAbandoned (restart limit exceeded), retry_count increments
+        // twice for one failure event. Accepted: burns 2 of 3 retries, only at restart limit.
         const pendingStore = this.sessionManager.getPendingMessageStore(session.dbPath);
         try {
           const { retried, failed: failedCount } = pendingStore.markSessionMessagesFailed(session.sessionDbId);

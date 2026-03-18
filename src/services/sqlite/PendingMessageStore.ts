@@ -258,14 +258,14 @@ export class PendingMessageStore {
   }
 
   /**
-   * Mark processing messages for a session as failed, with per-message retry.
-   * Messages with retry_count < maxRetries go back to 'pending' for retry.
+   * Retry or fail messages matching the given status filter.
+   * Messages with retry_count < maxRetries go back to 'pending'.
    * Messages at retry limit are permanently failed.
    */
-  markSessionMessagesFailed(sessionDbId: number): { retried: number; failed: number } {
+  private retryOrFail(sessionDbId: number, statusFilter: string): { retried: number; failed: number } {
     const now = Date.now();
     const rows = this.db.prepare(
-      `SELECT id, retry_count FROM pending_messages WHERE session_db_id = ? AND status = 'processing'`
+      `SELECT id, retry_count FROM pending_messages WHERE session_db_id = ? AND status IN (${statusFilter})`
     ).all(sessionDbId) as { id: number; retry_count: number }[];
 
     let retried = 0;
@@ -287,32 +287,17 @@ export class PendingMessageStore {
   }
 
   /**
+   * Mark processing messages for a session as failed, with per-message retry.
+   */
+  markSessionMessagesFailed(sessionDbId: number): { retried: number; failed: number } {
+    return this.retryOrFail(sessionDbId, `'processing'`);
+  }
+
+  /**
    * Mark all pending and processing messages for a session as abandoned, with per-message retry.
-   * Messages with retry_count < maxRetries go back to 'pending' for retry.
-   * Messages at retry limit are permanently failed.
    */
   markAllSessionMessagesAbandoned(sessionDbId: number): { retried: number; failed: number } {
-    const now = Date.now();
-    const rows = this.db.prepare(
-      `SELECT id, retry_count FROM pending_messages WHERE session_db_id = ? AND status IN ('pending', 'processing')`
-    ).all(sessionDbId) as { id: number; retry_count: number }[];
-
-    let retried = 0;
-    let failed = 0;
-    for (const row of rows) {
-      if (row.retry_count < this.maxRetries) {
-        this.db.prepare(
-          `UPDATE pending_messages SET status = 'pending', retry_count = retry_count + 1, started_processing_at_epoch = NULL WHERE id = ?`
-        ).run(row.id);
-        retried++;
-      } else {
-        this.db.prepare(
-          `UPDATE pending_messages SET status = 'failed', failed_at_epoch = ? WHERE id = ?`
-        ).run(now, row.id);
-        failed++;
-      }
-    }
-    return { retried, failed };
+    return this.retryOrFail(sessionDbId, `'pending', 'processing'`);
   }
 
   /**
