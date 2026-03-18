@@ -37,6 +37,7 @@ export class MigrationRunner {
       ['addSessionCustomTitleColumn', () => this.addSessionCustomTitleColumn()],
       ['addObservationAccessCountColumn', () => this.addObservationAccessCountColumn()],
       ['createRetentionMetadataTable', () => this.createRetentionMetadataTable()],
+      ['addSummaryContentHashColumn', () => this.addSummaryContentHashColumn()],
     ];
 
     for (const [name, fn] of steps) {
@@ -930,5 +931,27 @@ export class MigrationRunner {
 
     this.db.prepare('INSERT OR IGNORE INTO schema_versions (version, applied_at) VALUES (?, ?)').run(25, new Date().toISOString());
     logger.debug('DB', 'Created retention_metadata table');
+  }
+
+  /**
+   * Add content_hash column to session_summaries for deduplication (migration 26)
+   * Mirrors the observation dedup pattern (migration 22).
+   * Backfills existing rows with unique random hashes so they don't block new inserts.
+   */
+  private addSummaryContentHashColumn(): void {
+    const applied = this.db.prepare('SELECT version FROM schema_versions WHERE version = ?').get(26) as SchemaVersion | undefined;
+    if (applied) return;
+
+    // Check if column already exists (defends against partial migration)
+    const columns = this.db.prepare("PRAGMA table_info('session_summaries')").all() as Array<{ name: string }>;
+    if (!columns.some(c => c.name === 'content_hash')) {
+      this.db.run('ALTER TABLE session_summaries ADD COLUMN content_hash TEXT');
+    }
+
+    // Backfill existing rows with unique hashes (id-based to avoid collisions)
+    this.db.run("UPDATE session_summaries SET content_hash = substr(hex(randomblob(8)), 1, 16) WHERE content_hash IS NULL");
+
+    this.db.prepare('INSERT OR IGNORE INTO schema_versions (version, applied_at) VALUES (?, ?)').run(26, new Date().toISOString());
+    logger.debug('DB', 'Added content_hash column to session_summaries for dedup');
   }
 }

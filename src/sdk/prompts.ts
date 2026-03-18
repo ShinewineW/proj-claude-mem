@@ -111,7 +111,11 @@ export function buildObservationPrompt(obs: Observation): string {
     toolOutput = obs.tool_output;
   }
 
-  return `<observed_from_primary_session>
+  return `--- OBSERVATION ONLY ---
+Do NOT output <summary> tags. This is an observation, not a summary request.
+Your response MUST use <observation> tags ONLY. Any <summary> output will be discarded.
+
+<observed_from_primary_session>
   <what_happened>${obs.tool_name}</what_happened>
   <occurred_at>${new Date(obs.created_at_epoch).toISOString()}</occurred_at>${obs.cwd ? `\n  <working_directory>${obs.cwd}</working_directory>` : ''}
   <parameters>${JSON.stringify(toolInput, null, 2)}</parameters>
@@ -130,7 +134,11 @@ export function buildSummaryPrompt(session: SDKSession, mode: ModeConfig): strin
     return '';
   })();
 
-  return `${mode.prompts.header_summary_checkpoint}
+  return `--- MODE SWITCH: PROGRESS SUMMARY ---
+Do NOT output <observation> tags. This is a summary request, not an observation request.
+Your response MUST use <summary> tags ONLY. Any <observation> output will be discarded.
+
+${mode.prompts.header_summary_checkpoint}
 ${mode.prompts.summary_instruction}
 
 ${mode.prompts.summary_context_label}

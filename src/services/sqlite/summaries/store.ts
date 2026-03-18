@@ -1,13 +1,48 @@
 /**
  * Store session summaries in the database
  */
+import { createHash } from 'crypto';
 import type { Database } from 'bun:sqlite';
 import { logger } from '../../../utils/logger.js';
 import type { SummaryInput, StoreSummaryResult } from './types.js';
 
+/** Deduplication window: summaries with the same content hash within this window are skipped */
+const DEDUP_WINDOW_MS = 30_000;
+
+/**
+ * Compute a short content hash for summary deduplication.
+ * Uses (memory_session_id, request, investigated) as the semantic identity of a summary.
+ */
+export function computeSummaryContentHash(
+  memorySessionId: string,
+  request: string | null,
+  investigated: string | null = null
+): string {
+  return createHash('sha256')
+    .update(memorySessionId + (request || '') + (investigated || ''))
+    .digest('hex')
+    .slice(0, 16);
+}
+
+/**
+ * Check if a duplicate summary exists within the dedup window.
+ */
+export function findDuplicateSummary(
+  db: Database,
+  contentHash: string,
+  timestampEpoch: number
+): { id: number; created_at_epoch: number } | null {
+  const windowStart = timestampEpoch - DEDUP_WINDOW_MS;
+  const stmt = db.prepare(
+    'SELECT id, created_at_epoch FROM session_summaries WHERE content_hash = ? AND created_at_epoch > ?'
+  );
+  return (stmt.get(contentHash, windowStart) as { id: number; created_at_epoch: number } | null);
+}
+
 /**
  * Store a session summary (from SDK parsing)
  * Assumes session already exists - will fail with FK error if not
+ * Performs content-hash deduplication: skips INSERT if an identical summary exists within 30s
  *
  * @param db - Database instance
  * @param memorySessionId - SDK memory session ID
@@ -30,11 +65,26 @@ export function storeSummary(
   const timestampEpoch = overrideTimestampEpoch ?? Date.now();
   const timestampIso = new Date(timestampEpoch).toISOString();
 
+  // Content-hash deduplication (mirrors observation dedup pattern)
+  const contentHash = computeSummaryContentHash(memorySessionId, summary.request, summary.investigated);
+  const existing = findDuplicateSummary(db, contentHash, timestampEpoch);
+  if (existing) {
+    logger.info('DB', `Summary dedup: skipping duplicate within ${DEDUP_WINDOW_MS}ms window`, {
+      existingId: existing.id,
+      contentHash,
+      memorySessionId
+    });
+    return {
+      id: existing.id,
+      createdAtEpoch: existing.created_at_epoch
+    };
+  }
+
   const stmt = db.prepare(`
     INSERT INTO session_summaries
     (memory_session_id, project, request, investigated, learned, completed,
-     next_steps, notes, prompt_number, discovery_tokens, created_at, created_at_epoch)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     next_steps, notes, prompt_number, discovery_tokens, created_at, created_at_epoch, content_hash)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   const result = stmt.run(
@@ -49,7 +99,8 @@ export function storeSummary(
     promptNumber || null,
     discoveryTokens,
     timestampIso,
-    timestampEpoch
+    timestampEpoch,
+    contentHash
   );
 
   return {

@@ -11,6 +11,7 @@ import { logger } from '../../utils/logger.js';
 import type { ObservationInput } from './observations/types.js';
 import type { SummaryInput } from './summaries/types.js';
 import { computeObservationContentHash, findDuplicateObservation } from './observations/store.js';
+import { computeSummaryContentHash, findDuplicateSummary } from './summaries/store.js';
 
 /**
  * Result from storeObservations / storeObservationsAndMarkComplete transaction
@@ -104,31 +105,27 @@ export function storeObservationsAndMarkComplete(
       observationIds.push(Number(result.lastInsertRowid));
     }
 
-    // 2. Store summary if provided
+    // 2. Store summary if provided (with content-hash dedup)
     let summaryId: number | null = null;
     if (summary) {
-      const summaryStmt = db.prepare(`
-        INSERT INTO session_summaries
-        (memory_session_id, project, request, investigated, learned, completed,
-         next_steps, notes, prompt_number, discovery_tokens, created_at, created_at_epoch)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `);
-
-      const result = summaryStmt.run(
-        memorySessionId,
-        project,
-        summary.request,
-        summary.investigated,
-        summary.learned,
-        summary.completed,
-        summary.next_steps,
-        summary.notes,
-        promptNumber || null,
-        discoveryTokens,
-        timestampIso,
-        timestampEpoch
-      );
-      summaryId = Number(result.lastInsertRowid);
+      const summaryHash = computeSummaryContentHash(memorySessionId, summary.request, summary.investigated);
+      const existingSummary = findDuplicateSummary(db, summaryHash, timestampEpoch);
+      if (existingSummary) {
+        summaryId = existingSummary.id;
+      } else {
+        const result = db.prepare(`
+          INSERT INTO session_summaries
+          (memory_session_id, project, request, investigated, learned, completed,
+           next_steps, notes, prompt_number, discovery_tokens, created_at, created_at_epoch, content_hash)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(
+          memorySessionId, project,
+          summary.request, summary.investigated, summary.learned, summary.completed,
+          summary.next_steps, summary.notes,
+          promptNumber || null, discoveryTokens, timestampIso, timestampEpoch, summaryHash
+        );
+        summaryId = Number(result.lastInsertRowid);
+      }
     }
 
     // 3. Mark pending message as processed
@@ -227,31 +224,27 @@ export function storeObservations(
       observationIds.push(Number(result.lastInsertRowid));
     }
 
-    // 2. Store summary if provided
+    // 2. Store summary if provided (with content-hash dedup)
     let summaryId: number | null = null;
     if (summary) {
-      const summaryStmt = db.prepare(`
-        INSERT INTO session_summaries
-        (memory_session_id, project, request, investigated, learned, completed,
-         next_steps, notes, prompt_number, discovery_tokens, created_at, created_at_epoch)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `);
-
-      const result = summaryStmt.run(
-        memorySessionId,
-        project,
-        summary.request,
-        summary.investigated,
-        summary.learned,
-        summary.completed,
-        summary.next_steps,
-        summary.notes,
-        promptNumber || null,
-        discoveryTokens,
-        timestampIso,
-        timestampEpoch
-      );
-      summaryId = Number(result.lastInsertRowid);
+      const summaryHash = computeSummaryContentHash(memorySessionId, summary.request, summary.investigated);
+      const existingSummary = findDuplicateSummary(db, summaryHash, timestampEpoch);
+      if (existingSummary) {
+        summaryId = existingSummary.id;
+      } else {
+        const result = db.prepare(`
+          INSERT INTO session_summaries
+          (memory_session_id, project, request, investigated, learned, completed,
+           next_steps, notes, prompt_number, discovery_tokens, created_at, created_at_epoch, content_hash)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(
+          memorySessionId, project,
+          summary.request, summary.investigated, summary.learned, summary.completed,
+          summary.next_steps, summary.notes,
+          promptNumber || null, discoveryTokens, timestampIso, timestampEpoch, summaryHash
+        );
+        summaryId = Number(result.lastInsertRowid);
+      }
     }
 
     return { observationIds, summaryId, createdAtEpoch: timestampEpoch };

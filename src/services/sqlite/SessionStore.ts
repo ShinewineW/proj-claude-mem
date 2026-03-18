@@ -11,6 +11,7 @@ import {
 } from '../../types/database.js';
 import type { PendingMessageStore } from './PendingMessageStore.js';
 import { computeObservationContentHash, findDuplicateObservation } from './observations/store.js';
+import { computeSummaryContentHash, findDuplicateSummary } from './summaries/store.js';
 import { assertValidLimit } from './query-utils.js';
 import { MigrationRunner } from './migrations/runner.js';
 
@@ -734,51 +735,51 @@ export class SessionStore {
    * Store a session summary (from SDK parsing)
    * Assumes session already exists - will fail with FK error if not
    */
+  /**
+   * Insert a summary with content-hash dedup (30s window).
+   * Shared by storeSummary, storeObservations, storeObservationsAndMarkComplete.
+   */
+  private insertSummaryDeduped(
+    memorySessionId: string,
+    project: string,
+    summary: { request: string; investigated: string; learned: string; completed: string; next_steps: string; notes: string | null },
+    promptNumber: number | null,
+    discoveryTokens: number,
+    timestampIso: string,
+    timestampEpoch: number
+  ): { id: number; createdAtEpoch: number } {
+    const contentHash = computeSummaryContentHash(memorySessionId, summary.request, summary.investigated);
+    const existing = findDuplicateSummary(this.db, contentHash, timestampEpoch);
+    if (existing) {
+      return { id: existing.id, createdAtEpoch: existing.created_at_epoch };
+    }
+
+    const result = this.db.prepare(`
+      INSERT INTO session_summaries
+      (memory_session_id, project, request, investigated, learned, completed,
+       next_steps, notes, prompt_number, discovery_tokens, created_at, created_at_epoch, content_hash)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      memorySessionId, project,
+      summary.request, summary.investigated, summary.learned, summary.completed,
+      summary.next_steps, summary.notes,
+      promptNumber, discoveryTokens, timestampIso, timestampEpoch, contentHash
+    );
+
+    return { id: Number(result.lastInsertRowid), createdAtEpoch: timestampEpoch };
+  }
+
   storeSummary(
     memorySessionId: string,
     project: string,
-    summary: {
-      request: string;
-      investigated: string;
-      learned: string;
-      completed: string;
-      next_steps: string;
-      notes: string | null;
-    },
+    summary: { request: string; investigated: string; learned: string; completed: string; next_steps: string; notes: string | null },
     promptNumber?: number,
     discoveryTokens: number = 0,
     overrideTimestampEpoch?: number
   ): { id: number; createdAtEpoch: number } {
-    // Use override timestamp if provided (for processing backlog messages with original timestamps)
     const timestampEpoch = overrideTimestampEpoch ?? Date.now();
     const timestampIso = new Date(timestampEpoch).toISOString();
-
-    const stmt = this.db.prepare(`
-      INSERT INTO session_summaries
-      (memory_session_id, project, request, investigated, learned, completed,
-       next_steps, notes, prompt_number, discovery_tokens, created_at, created_at_epoch)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-
-    const result = stmt.run(
-      memorySessionId,
-      project,
-      summary.request,
-      summary.investigated,
-      summary.learned,
-      summary.completed,
-      summary.next_steps,
-      summary.notes,
-      promptNumber || null,
-      discoveryTokens,
-      timestampIso,
-      timestampEpoch
-    );
-
-    return {
-      id: Number(result.lastInsertRowid),
-      createdAtEpoch: timestampEpoch
-    };
+    return this.insertSummaryDeduped(memorySessionId, project, summary, promptNumber || null, discoveryTokens, timestampIso, timestampEpoch);
   }
 
   /**
@@ -862,32 +863,10 @@ export class SessionStore {
         observationIds.push(Number(result.lastInsertRowid));
       }
 
-      // 2. Store summary if provided
-      let summaryId: number | null = null;
-      if (summary) {
-        const summaryStmt = this.db.prepare(`
-          INSERT INTO session_summaries
-          (memory_session_id, project, request, investigated, learned, completed,
-           next_steps, notes, prompt_number, discovery_tokens, created_at, created_at_epoch)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `);
-
-        const result = summaryStmt.run(
-          memorySessionId,
-          project,
-          summary.request,
-          summary.investigated,
-          summary.learned,
-          summary.completed,
-          summary.next_steps,
-          summary.notes,
-          promptNumber || null,
-          discoveryTokens,
-          timestampIso,
-          timestampEpoch
-        );
-        summaryId = Number(result.lastInsertRowid);
-      }
+      // 2. Store summary if provided (with content-hash dedup)
+      const summaryId = summary
+        ? this.insertSummaryDeduped(memorySessionId, project, summary, promptNumber || null, discoveryTokens, timestampIso, timestampEpoch).id
+        : null;
 
       return { observationIds, summaryId, createdAtEpoch: timestampEpoch };
     });
@@ -986,32 +965,10 @@ export class SessionStore {
         observationIds.push(Number(result.lastInsertRowid));
       }
 
-      // 2. Store summary if provided
-      let summaryId: number | undefined;
-      if (summary) {
-        const summaryStmt = this.db.prepare(`
-          INSERT INTO session_summaries
-          (memory_session_id, project, request, investigated, learned, completed,
-           next_steps, notes, prompt_number, discovery_tokens, created_at, created_at_epoch)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `);
-
-        const result = summaryStmt.run(
-          memorySessionId,
-          project,
-          summary.request,
-          summary.investigated,
-          summary.learned,
-          summary.completed,
-          summary.next_steps,
-          summary.notes,
-          promptNumber || null,
-          discoveryTokens,
-          timestampIso,
-          timestampEpoch
-        );
-        summaryId = Number(result.lastInsertRowid);
-      }
+      // 2. Store summary if provided (with content-hash dedup)
+      const summaryId = summary
+        ? this.insertSummaryDeduped(memorySessionId, project, summary, promptNumber || null, discoveryTokens, timestampIso, timestampEpoch).id
+        : undefined;
 
       // 3. Mark pending message as processed
       // This UPDATE is part of the same transaction, so if it fails,
