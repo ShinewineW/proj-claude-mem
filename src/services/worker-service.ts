@@ -723,6 +723,16 @@ export class WorkerService {
             abandonedCount,
             retriedCount
           });
+          // Fix C: Remove dead session — prevents futile restart cycles on new hooks
+          try {
+            this.dbManager.getSessionStore(session.dbPath).markSessionFailed(session.sessionDbId);
+            this.sessionManager.removeSessionImmediate(session.sessionDbId, session.dbPath);
+            this.sessionEventBroadcaster.broadcastSessionCompleted(session.sessionDbId, session.project);
+          } catch (cleanupErr) {
+            logger.warn('SESSION', 'Failed to cleanup session after unrecoverable error', {
+              sessionDbId: session.sessionDbId
+            }, cleanupErr as Error);
+          }
           this.broadcastProcessingStatus();
           return;
         }
@@ -775,6 +785,16 @@ export class WorkerService {
               abandonedCount,
               retriedCount
             });
+            // Fix C: Remove dead session from memory — next hook auto-initializes fresh
+            try {
+              this.dbManager.getSessionStore(session.dbPath).markSessionFailed(session.sessionDbId);
+              this.sessionManager.removeSessionImmediate(session.sessionDbId, session.dbPath);
+              this.sessionEventBroadcaster.broadcastSessionCompleted(session.sessionDbId, session.project);
+            } catch (cleanupErr) {
+              logger.warn('SESSION', 'Failed to cleanup abandoned session', {
+                sessionDbId: session.sessionDbId
+              }, cleanupErr as Error);
+            }
             this.broadcastProcessingStatus();
             return;
           }

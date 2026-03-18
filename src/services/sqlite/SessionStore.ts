@@ -1380,6 +1380,18 @@ export class SessionStore {
   }
 
   /**
+   * Mark session as failed in database.
+   * Used when generator is abandoned (restart limit exceeded or unrecoverable error).
+   * Called BEFORE removeSessionImmediate so the DB status is 'failed' not 'completed'.
+   * Uses AND status='active' guard to avoid overwriting reaper's status.
+   */
+  markSessionFailed(sessionDbId: number): void {
+    this.db.prepare(
+      'UPDATE sdk_sessions SET status = ?, completed_at_epoch = ? WHERE id = ? AND status = ?'
+    ).run('failed', Date.now(), sessionDbId, 'active');
+  }
+
+  /**
    * Get or create a manual session for storing user-created observations
    * Manual sessions use a predictable ID format: "manual-{project}"
    */

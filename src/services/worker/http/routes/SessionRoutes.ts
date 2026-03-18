@@ -287,6 +287,16 @@ export class SessionRoutes extends BaseRouteHandler {
                   consecutiveRestarts: session.consecutiveRestarts,
                   maxRestarts: SessionRoutes.MAX_CONSECUTIVE_RESTARTS
                 });
+                // Fix C: Remove dead session from memory — next hook auto-initializes fresh
+                try {
+                  this.dbManager.getSessionStore(session.dbPath).markSessionFailed(sessionDbId);
+                  this.sessionManager.removeSessionImmediate(sessionDbId, session.dbPath);
+                  this.eventBroadcaster.broadcastSessionCompleted(sessionDbId, session.project);
+                } catch (cleanupErr) {
+                  logger.warn('SESSION', 'Failed to cleanup abandoned session', {
+                    sessionId: sessionDbId
+                  }, cleanupErr as Error);
+                }
                 // Don't restart - abort to prevent further API calls
                 session.abortController.abort();
                 this.workerService.broadcastProcessingStatus();
