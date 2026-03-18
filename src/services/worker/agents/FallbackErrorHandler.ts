@@ -23,6 +23,12 @@ import { logger } from '../../../utils/logger.js';
  * @returns true if the error should trigger fallback to Claude
  */
 export function shouldFallbackToClaude(error: unknown): boolean {
+  // AbortSignal.timeout() throws TimeoutError (DOMException), not AbortError.
+  // A per-request timeout means the API is slow/unresponsive — fallback is appropriate.
+  if (error instanceof Error && error.name === 'TimeoutError') {
+    return true;
+  }
+
   const message = getErrorMessage(error);
 
   return FALLBACK_ERROR_PATTERNS.some(pattern => message.includes(pattern));
