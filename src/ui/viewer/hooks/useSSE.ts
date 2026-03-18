@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { Observation, Summary, UserPrompt, StreamEvent } from '../types';
 import { API_ENDPOINTS } from '../constants/api';
 import { TIMING } from '../constants/timing';
@@ -11,6 +11,7 @@ export function useSSE() {
   const [isConnected, setIsConnected] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [queueDepth, setQueueDepth] = useState(0);
+  const [sseSessionStatus, setSseSessionStatus] = useState<Map<string, boolean>>(new Map());
   const eventSourceRef = useRef<EventSource | null>(null);
   const reconnectTimeoutRef = useRef<NodeJS.Timeout>();
 
@@ -64,6 +65,7 @@ export function useSSE() {
             setSummaries([]);
             setPrompts([]);
             setProjects(data.projects || []);
+            setSseSessionStatus(new Map());
             break;
 
           case 'new_observation':
@@ -106,6 +108,28 @@ export function useSSE() {
               setQueueDepth(data.queueDepth || 0);
             }
             break;
+
+          case 'session_started':
+            if (data.project) {
+              console.log('[SSE] Session started:', data.project, data.sessionDbId);
+              setSseSessionStatus(prev => {
+                const next = new Map(prev);
+                next.set(data.project!, true);
+                return next;
+              });
+            }
+            break;
+
+          case 'session_completed':
+            if (data.project) {
+              console.log('[SSE] Session completed:', data.project, data.sessionDbId);
+              setSseSessionStatus(prev => {
+                const next = new Map(prev);
+                next.set(data.project!, false);
+                return next;
+              });
+            }
+            break;
         }
       };
     };
@@ -123,5 +147,9 @@ export function useSSE() {
     };
   }, []);
 
-  return { observations, summaries, prompts, projects, isProcessing, queueDepth, isConnected };
+  const clearSseSessionStatus = useCallback(() => {
+    setSseSessionStatus(new Map());
+  }, []);
+
+  return { observations, summaries, prompts, projects, isProcessing, queueDepth, isConnected, sseSessionStatus, clearSseSessionStatus };
 }

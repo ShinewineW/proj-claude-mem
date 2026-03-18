@@ -32,9 +32,10 @@ interface StatsBarProps {
   queueDepth: number;
   sseObsCount?: number;
   sseSumCount?: number;
+  sseSessionStatus?: Map<string, boolean>;
 }
 
-export function StatsBar({ projects, queueDepth, sseObsCount = 0, sseSumCount = 0 }: StatsBarProps) {
+export function StatsBar({ projects, queueDepth, sseObsCount = 0, sseSumCount = 0, sseSessionStatus }: StatsBarProps) {
   const [trend, setTrend] = useState<TrendData | null>(null);
   const fetchedRef = useRef(false);
 
@@ -60,11 +61,15 @@ export function StatsBar({ projects, queueDepth, sseObsCount = 0, sseSumCount = 
 
   const stats = useMemo(() => {
     const totalProjects = projects.length;
-    const activeCount = projects.filter(p => p.hasActiveSession).length;
+    const activeCount = projects.filter(p =>
+      sseSessionStatus?.has(p.project)
+        ? sseSessionStatus.get(p.project)!
+        : p.hasActiveSession
+    ).length;
     const totalObs = projects.reduce((sum, p) => sum + p.obsCount, 0) + sseObsCount;
     const totalSum = projects.reduce((sum, p) => sum + p.sumCount, 0) + sseSumCount;
     return { totalProjects, activeCount, totalObs, totalSum };
-  }, [projects, sseObsCount, sseSumCount]);
+  }, [projects, sseObsCount, sseSumCount, sseSessionStatus]);
 
   const obsSparkPath = useMemo(() => {
     if (!trend) return 'M0,18 L20,17 L40,18 L60,19 L80,18';

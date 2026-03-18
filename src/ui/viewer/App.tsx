@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { DashboardHeader } from './components/DashboardHeader';
 import { StatsBar } from './components/StatsBar';
 import { ProjectGrid } from './components/ProjectGrid';
@@ -17,10 +17,15 @@ export function App() {
   const [logsModalOpen, setLogsModalOpen] = useState(false);
   const [selectedProject, setSelectedProject] = useState<ProjectInfo | null>(null);
 
-  const { observations, summaries, prompts, isProcessing, queueDepth, isConnected } = useSSE();
+  const { observations, summaries, prompts, isProcessing, queueDepth, isConnected, sseSessionStatus, clearSseSessionStatus } = useSSE();
   const { settings, saveSettings, isSaving, saveStatus } = useSettings();
   const { projects, isLoading: isProjectsLoading } = useProjects();
   const { items: recentItems } = useRecentActivity(observations, summaries, prompts);
+
+  // Clear SSE session status overlay when polling delivers fresh project data
+  useEffect(() => {
+    clearSseSessionStatus();
+  }, [projects, clearSseSessionStatus]);
 
   // Toggle context preview modal
   const toggleContextPreview = useCallback(() => {
@@ -46,6 +51,7 @@ export function App() {
         queueDepth={queueDepth}
         sseObsCount={observations.length}
         sseSumCount={summaries.length}
+        sseSessionStatus={sseSessionStatus}
       />
 
       <div className="main">
@@ -55,6 +61,7 @@ export function App() {
           sseObservations={observations}
           sseSummaries={summaries}
           ssePrompts={prompts}
+          sseSessionStatus={sseSessionStatus}
           onProjectClick={setSelectedProject}
         />
 

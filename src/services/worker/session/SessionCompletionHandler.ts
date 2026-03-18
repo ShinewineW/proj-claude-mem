@@ -11,7 +11,6 @@
 
 import { SessionManager } from '../SessionManager.js';
 import { SessionEventBroadcaster } from '../events/SessionEventBroadcaster.js';
-import { logger } from '../../../utils/logger.js';
 
 export class SessionCompletionHandler {
   constructor(
@@ -23,11 +22,13 @@ export class SessionCompletionHandler {
    * Complete session by database ID
    * Used by DELETE /api/sessions/:id and POST /api/sessions/:id/complete
    */
-  async completeByDbId(sessionDbId: number, dbPath?: string): Promise<void> {
+  async completeByDbId(sessionDbId: number, dbPath?: string, project?: string): Promise<void> {
     // Delete from session manager (aborts SDK agent)
     await this.sessionManager.deleteSession(sessionDbId, dbPath);
 
-    // Broadcast session completed event
-    this.eventBroadcaster.broadcastSessionCompleted(sessionDbId);
+    // Broadcast session completed event (skip if project unknown — avoids polluting frontend state)
+    if (project) {
+      this.eventBroadcaster.broadcastSessionCompleted(sessionDbId, project);
+    }
   }
 }

@@ -38,6 +38,7 @@ const EXCLUDED_PATTERNS = [
   /cli\/hook-command\.ts$/,  // CLI hook command uses console.log/error for hook protocol output
   /cli\/handlers\/user-message\.ts$/,  // User message handler uses console.error for user-visible context
   /services\/transcripts\/cli\.ts$/,  // CLI transcript subcommands use console.log for user-visible interactive output
+  /SessionCompletionHandler\.ts$/,  // Pure coordinator (2 delegating calls + 1 guard), no logging needed
 ];
 
 // Files that should always use logger (core business logic)

@@ -10,6 +10,7 @@ interface ProjectGridProps {
   sseObservations: Observation[];
   sseSummaries: Summary[];
   ssePrompts: UserPrompt[];
+  sseSessionStatus: Map<string, boolean>;
   onProjectClick: (project: ProjectInfo) => void;
 }
 
@@ -19,6 +20,7 @@ export function ProjectGrid({
   sseObservations,
   sseSummaries,
   ssePrompts,
+  sseSessionStatus,
   onProjectClick,
 }: ProjectGridProps) {
   const projectData = useMemo(() => {
@@ -148,10 +150,14 @@ export function ProjectGrid({
       <div className="project-grid">
         {projects.map(proj => {
           const data = projectData.get(proj.project) || { latestItems: [], sseExtraCounts: { obs: 0, sum: 0, ask: 0 } };
+          const effectiveHasActive = sseSessionStatus.has(proj.project)
+            ? sseSessionStatus.get(proj.project)!
+            : proj.hasActiveSession;
           return (
             <ProjectCard
               key={proj.project}
               project={proj}
+              hasActiveSession={effectiveHasActive}
               latestItems={data.latestItems}
               sseExtraCounts={data.sseExtraCounts}
               onClick={() => onProjectClick(proj)}

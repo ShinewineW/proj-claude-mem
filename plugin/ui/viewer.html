@@ -256,6 +256,7 @@
       transition: all var(--transition);
       position: relative;
       box-shadow: var(--shadow-card);
+      overflow: hidden;
     }
     .project-card:hover {
       background: var(--color-surface-hover);
@@ -267,10 +268,12 @@
       display: flex; justify-content: space-between;
       align-items: flex-start; margin-bottom: 6px;
     }
+    .card-top > div:first-child { min-width: 0; }
     .project-name {
       font-size: 16px; font-weight: 700;
       color: var(--color-text);
       font-family: var(--font-heading);
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     }
     .project-path {
       font-size: 11px; color: var(--color-text-muted);

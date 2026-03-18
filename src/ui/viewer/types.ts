@@ -68,7 +68,7 @@ export interface ProjectInfo {
 }
 
 export interface StreamEvent {
-  type: 'initial_load' | 'new_observation' | 'new_summary' | 'new_prompt' | 'processing_status';
+  type: 'initial_load' | 'new_observation' | 'new_summary' | 'new_prompt' | 'processing_status' | 'session_started' | 'session_completed';
   observations?: Observation[];
   summaries?: Summary[];
   prompts?: UserPrompt[];
@@ -78,6 +78,8 @@ export interface StreamEvent {
   prompt?: UserPrompt;
   isProcessing?: boolean;
   queueDepth?: number;
+  sessionDbId?: number;
+  project?: string;
 }
 
 export interface Settings {

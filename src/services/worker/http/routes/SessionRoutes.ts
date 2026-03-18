@@ -505,7 +505,8 @@ export class SessionRoutes extends BaseRouteHandler {
     if (sessionDbId === null) return;
 
     const dbPath = req.body?.dbPath;
-    await this.completionHandler.completeByDbId(sessionDbId, dbPath);
+    const project = this.sessionManager.getSession(sessionDbId, dbPath)?.project;
+    await this.completionHandler.completeByDbId(sessionDbId, dbPath, project);
 
     res.json({ status: 'deleted' });
   });
@@ -519,7 +520,8 @@ export class SessionRoutes extends BaseRouteHandler {
     if (sessionDbId === null) return;
 
     const dbPath = req.body?.dbPath;
-    await this.completionHandler.completeByDbId(sessionDbId, dbPath);
+    const project = this.sessionManager.getSession(sessionDbId, dbPath)?.project;
+    await this.completionHandler.completeByDbId(sessionDbId, dbPath, project);
 
     res.json({ success: true });
   });
@@ -694,7 +696,7 @@ export class SessionRoutes extends BaseRouteHandler {
     }
 
     // Complete the session (removes from active sessions map)
-    await this.completionHandler.completeByDbId(sessionDbId, dbPath);
+    await this.completionHandler.completeByDbId(sessionDbId, dbPath, activeSession.project);
 
     logger.info('SESSION', 'Session completed via API', {
       contentSessionId,
@@ -800,6 +802,13 @@ export class SessionRoutes extends BaseRouteHandler {
     // Step 6: Check if SDK agent is already running for this session (#1079)
     // If contextInjected is true, the hook should skip re-initializing the SDK agent
     const contextInjected = this.sessionManager.getSession(sessionDbId, dbPath) !== undefined;
+
+    // Broadcast session started for truly new sessions (enables real-time viewer updates)
+    // Use !contextInjected (session not in active map) instead of isNewSession
+    // because memory_session_id may still be NULL on subsequent prompts before SDK responds
+    if (!contextInjected) {
+      this.eventBroadcaster.broadcastSessionStarted(sessionDbId, project);
+    }
 
     // Debug-level log since CREATED already logged the key info
     logger.debug('SESSION', 'User prompt saved', {

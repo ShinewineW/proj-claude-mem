@@ -75,11 +75,12 @@ export class SessionEventBroadcaster {
    * Broadcast session completion
    * Updates processing status to reflect session removal
    */
-  broadcastSessionCompleted(sessionDbId: number): void {
+  broadcastSessionCompleted(sessionDbId: number, project: string): void {
     this.sseBroadcaster.broadcast({
       type: 'session_completed',
       timestamp: Date.now(),
-      sessionDbId
+      sessionDbId,
+      project
     });
 
     // Update processing status (session removed from queue)

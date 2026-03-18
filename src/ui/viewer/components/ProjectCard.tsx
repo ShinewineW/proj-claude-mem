@@ -10,12 +10,13 @@ export interface LatestItem {
 
 interface ProjectCardProps {
   project: ProjectInfo;
+  hasActiveSession: boolean;
   latestItems: LatestItem[];
   sseExtraCounts?: { obs: number; sum: number; ask: number };
   onClick: () => void;
 }
 
-export function ProjectCard({ project, latestItems, sseExtraCounts, onClick }: ProjectCardProps) {
+export function ProjectCard({ project, hasActiveSession, latestItems, sseExtraCounts, onClick }: ProjectCardProps) {
   const extra = sseExtraCounts || { obs: 0, sum: 0, ask: 0 };
   const displayPath = project.projectRoot.replace(/^\/Users\/[^/]+/, '~');
 
@@ -31,7 +32,7 @@ export function ProjectCard({ project, latestItems, sseExtraCounts, onClick }: P
           <div className="project-name">{project.project}</div>
           <div className="project-path">{displayPath}</div>
         </div>
-        {project.hasActiveSession ? (
+        {hasActiveSession ? (
           <div className="card-status active-session">
             <span className="pulse" />
             active

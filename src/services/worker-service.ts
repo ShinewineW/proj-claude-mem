@@ -857,7 +857,7 @@ export class WorkerService {
       });
     }
     this.sessionManager.removeSessionImmediate(sessionDbId, session.dbPath);
-    this.sessionEventBroadcaster.broadcastSessionCompleted(sessionDbId);
+    this.sessionEventBroadcaster.broadcastSessionCompleted(sessionDbId, session.project);
   }
 
   /**
