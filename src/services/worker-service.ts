@@ -112,7 +112,6 @@ import { SDKAgent } from './worker/SDKAgent.js';
 import { GeminiAgent, isGeminiSelected, isGeminiAvailable } from './worker/GeminiAgent.js';
 import { OpenRouterAgent, isOpenRouterSelected, isOpenRouterAvailable } from './worker/OpenRouterAgent.js';
 import { PaginationHelper } from './worker/PaginationHelper.js';
-import { SettingsManager } from './worker/SettingsManager.js';
 import { SearchManager } from './worker/SearchManager.js';
 import { FormattingService } from './worker/FormattingService.js';
 import { TimelineService } from './worker/TimelineService.js';
@@ -173,7 +172,6 @@ export class WorkerService {
   private geminiAgent: GeminiAgent;
   private openRouterAgent: OpenRouterAgent;
   private paginationHelper: PaginationHelper;
-  private settingsManager: SettingsManager;
   private sessionEventBroadcaster: SessionEventBroadcaster;
 
   // Route handlers
@@ -221,7 +219,6 @@ export class WorkerService {
     this.openRouterAgent = new OpenRouterAgent(this.dbManager, this.sessionManager);
 
     this.paginationHelper = new PaginationHelper(this.dbManager);
-    this.settingsManager = new SettingsManager(this.dbManager);
     this.sessionEventBroadcaster = new SessionEventBroadcaster(this.sseBroadcaster, this);
 
     // Set callback for when sessions are deleted
@@ -357,7 +354,7 @@ export class WorkerService {
     this.server.registerRoutes(new ViewerRoutes(this.sseBroadcaster, this.dbManager, this.sessionManager));
     this.server.registerRoutes(new SessionRoutes(this.sessionManager, this.dbManager, this.sdkAgent, this.geminiAgent, this.openRouterAgent, this.sessionEventBroadcaster, this));
     this.server.registerRoutes(new DataRoutes(this.paginationHelper, this.dbManager, this.sessionManager, this.sseBroadcaster, this, this.startTime));
-    this.server.registerRoutes(new SettingsRoutes(this.settingsManager));
+    this.server.registerRoutes(new SettingsRoutes());
     this.server.registerRoutes(new LogsRoutes());
     this.server.registerRoutes(new MemoryRoutes(this.dbManager, 'claude-mem'));
   }

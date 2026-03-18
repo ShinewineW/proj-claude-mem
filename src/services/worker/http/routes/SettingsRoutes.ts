@@ -10,15 +10,12 @@ import path from 'path';
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
 import { homedir } from 'os';
 import { logger } from '../../../../utils/logger.js';
-import { SettingsManager } from '../../SettingsManager.js';
 import { BaseRouteHandler } from '../BaseRouteHandler.js';
 import { SettingsDefaultsManager } from '../../../../shared/SettingsDefaultsManager.js';
 import { clearPortCache } from '../../../../shared/worker-utils.js';
 
 export class SettingsRoutes extends BaseRouteHandler {
-  constructor(
-    private settingsManager: SettingsManager
-  ) {
+  constructor() {
     super();
   }
 
