@@ -18,7 +18,7 @@ export function App() {
   const [selectedProject, setSelectedProject] = useState<ProjectInfo | null>(null);
 
   const { observations, summaries, prompts, isProcessing, queueDepth, isConnected, sseSessionStatus, clearSseSessionStatus } = useSSE();
-  const { settings, saveSettings, isSaving, saveStatus } = useSettings();
+  const { settings, saveSettings } = useSettings();
   const { projects, isLoading: isProjectsLoading } = useProjects();
   const { items: recentItems } = useRecentActivity(observations, summaries, prompts);
 
@@ -73,8 +73,6 @@ export function App() {
         onClose={toggleContextPreview}
         settings={settings}
         onSave={saveSettings}
-        isSaving={isSaving}
-        saveStatus={saveStatus}
       />
 
       <DetailPanel
