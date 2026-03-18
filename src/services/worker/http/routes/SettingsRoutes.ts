@@ -1,19 +1,16 @@
 /**
  * Settings Routes
  *
- * Handles settings management, MCP toggle, and branch switching.
+ * Handles settings management (read, update, validate).
  * Settings are stored in ~/.claude-mem/settings.json
  */
 
 import express, { Request, Response } from 'express';
 import path from 'path';
-import { readFileSync, writeFileSync, existsSync, renameSync, mkdirSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
 import { homedir } from 'os';
-import { getPackageRoot } from '../../../../shared/paths.js';
 import { logger } from '../../../../utils/logger.js';
 import { SettingsManager } from '../../SettingsManager.js';
-import { getBranchInfo, switchBranch, pullUpdates } from '../../BranchManager.js';
-import { ModeManager } from '../../domain/ModeManager.js';
 import { BaseRouteHandler } from '../BaseRouteHandler.js';
 import { SettingsDefaultsManager } from '../../../../shared/SettingsDefaultsManager.js';
 import { clearPortCache } from '../../../../shared/worker-utils.js';
@@ -29,15 +26,6 @@ export class SettingsRoutes extends BaseRouteHandler {
     // Settings endpoints
     app.get('/api/settings', this.handleGetSettings.bind(this));
     app.post('/api/settings', this.handleUpdateSettings.bind(this));
-
-    // MCP toggle endpoints
-    app.get('/api/mcp/status', this.handleGetMcpStatus.bind(this));
-    app.post('/api/mcp/toggle', this.handleToggleMcp.bind(this));
-
-    // Branch switching endpoints
-    app.get('/api/branch/status', this.handleGetBranchStatus.bind(this));
-    app.post('/api/branch/switch', this.handleSwitchBranch.bind(this));
-    app.post('/api/branch/update', this.handleUpdateBranch.bind(this));
   }
 
   /**
@@ -102,18 +90,13 @@ export class SettingsRoutes extends BaseRouteHandler {
       'CLAUDE_MEM_OPENROUTER_MAX_CONTEXT_MESSAGES',
       'CLAUDE_MEM_OPENROUTER_MAX_TOKENS',
       // System Configuration
-      'CLAUDE_MEM_DATA_DIR',
       'CLAUDE_MEM_LOG_LEVEL',
-      'CLAUDE_MEM_PYTHON_VERSION',
       'CLAUDE_CODE_PATH',
       // Token Economics
       'CLAUDE_MEM_CONTEXT_SHOW_READ_TOKENS',
       'CLAUDE_MEM_CONTEXT_SHOW_WORK_TOKENS',
       'CLAUDE_MEM_CONTEXT_SHOW_SAVINGS_AMOUNT',
       'CLAUDE_MEM_CONTEXT_SHOW_SAVINGS_PERCENT',
-      // Observation Filtering
-      'CLAUDE_MEM_CONTEXT_OBSERVATION_TYPES',
-      'CLAUDE_MEM_CONTEXT_OBSERVATION_CONCEPTS',
       // Display Configuration
       'CLAUDE_MEM_CONTEXT_FULL_COUNT',
       'CLAUDE_MEM_CONTEXT_FULL_FIELD',
@@ -138,94 +121,6 @@ export class SettingsRoutes extends BaseRouteHandler {
 
     logger.info('WORKER', 'Settings updated');
     res.json({ success: true, message: 'Settings updated successfully' });
-  });
-
-  /**
-   * GET /api/mcp/status - Check if MCP search server is enabled
-   */
-  private handleGetMcpStatus = this.wrapHandler((req: Request, res: Response): void => {
-    const enabled = this.isMcpEnabled();
-    res.json({ enabled });
-  });
-
-  /**
-   * POST /api/mcp/toggle - Toggle MCP search server on/off
-   * Body: { enabled: boolean }
-   */
-  private handleToggleMcp = this.wrapHandler((req: Request, res: Response): void => {
-    const { enabled } = req.body;
-
-    if (typeof enabled !== 'boolean') {
-      this.badRequest(res, 'enabled must be a boolean');
-      return;
-    }
-
-    this.toggleMcp(enabled);
-    res.json({ success: true, enabled: this.isMcpEnabled() });
-  });
-
-  /**
-   * GET /api/branch/status - Get current branch information
-   */
-  private handleGetBranchStatus = this.wrapHandler((req: Request, res: Response): void => {
-    const info = getBranchInfo();
-    res.json(info);
-  });
-
-  /**
-   * POST /api/branch/switch - Switch to a different branch
-   * Body: { branch: "main" | "beta/7.0" }
-   */
-  private handleSwitchBranch = this.wrapHandler(async (req: Request, res: Response): Promise<void> => {
-    const { branch } = req.body;
-
-    if (!branch) {
-      res.status(400).json({ success: false, error: 'Missing branch parameter' });
-      return;
-    }
-
-    // Validate branch name
-    const allowedBranches = ['main', 'beta/7.0', 'feature/bun-executable'];
-    if (!allowedBranches.includes(branch)) {
-      res.status(400).json({
-        success: false,
-        error: `Invalid branch. Allowed: ${allowedBranches.join(', ')}`
-      });
-      return;
-    }
-
-    logger.info('WORKER', 'Branch switch requested', { branch });
-
-    const result = await switchBranch(branch);
-
-    if (result.success) {
-      // Schedule worker restart after response is sent
-      setTimeout(() => {
-        logger.info('WORKER', 'Restarting worker after branch switch');
-        process.exit(0); // PM2 will restart the worker
-      }, 1000);
-    }
-
-    res.json(result);
-  });
-
-  /**
-   * POST /api/branch/update - Pull latest updates for current branch
-   */
-  private handleUpdateBranch = this.wrapHandler(async (req: Request, res: Response): Promise<void> => {
-    logger.info('WORKER', 'Branch update requested');
-
-    const result = await pullUpdates();
-
-    if (result.success) {
-      // Schedule worker restart after response is sent
-      setTimeout(() => {
-        logger.info('WORKER', 'Restarting worker after branch update');
-        process.exit(0); // PM2 will restart the worker
-      }, 1000);
-    }
-
-    res.json(result);
   });
 
   /**
@@ -279,14 +174,6 @@ export class SettingsRoutes extends BaseRouteHandler {
       const validLevels = ['DEBUG', 'INFO', 'WARN', 'ERROR', 'SILENT'];
       if (!validLevels.includes(settings.CLAUDE_MEM_LOG_LEVEL.toUpperCase())) {
         return { valid: false, error: 'CLAUDE_MEM_LOG_LEVEL must be one of: DEBUG, INFO, WARN, ERROR, SILENT' };
-      }
-    }
-
-    // Validate CLAUDE_MEM_PYTHON_VERSION (must be valid Python version format)
-    if (settings.CLAUDE_MEM_PYTHON_VERSION) {
-      const pythonVersionRegex = /^3\.\d{1,2}$/;
-      if (!pythonVersionRegex.test(settings.CLAUDE_MEM_PYTHON_VERSION)) {
-        return { valid: false, error: 'CLAUDE_MEM_PYTHON_VERSION must be in format "3.X" or "3.XX" (e.g., "3.13")' };
       }
     }
 
@@ -356,43 +243,7 @@ export class SettingsRoutes extends BaseRouteHandler {
       }
     }
 
-    // Skip observation types validation - any type string is valid since modes define their own types
-    // The database accepts any TEXT value, and mode-specific validation happens at parse time
-
-    // Skip observation concepts validation - any concept string is valid since modes define their own concepts
-    // The database accepts any TEXT value, and mode-specific validation happens at parse time
-
     return { valid: true };
-  }
-
-  /**
-   * Check if MCP search server is enabled
-   */
-  private isMcpEnabled(): boolean {
-    const packageRoot = getPackageRoot();
-    const mcpPath = path.join(packageRoot, 'plugin', '.mcp.json');
-    return existsSync(mcpPath);
-  }
-
-  /**
-   * Toggle MCP search server (rename .mcp.json <-> .mcp.json.disabled)
-   */
-  private toggleMcp(enabled: boolean): void {
-    const packageRoot = getPackageRoot();
-    const mcpPath = path.join(packageRoot, 'plugin', '.mcp.json');
-    const mcpDisabledPath = path.join(packageRoot, 'plugin', '.mcp.json.disabled');
-
-    if (enabled && existsSync(mcpDisabledPath)) {
-      // Enable: rename .mcp.json.disabled -> .mcp.json
-      renameSync(mcpDisabledPath, mcpPath);
-      logger.info('WORKER', 'MCP search server enabled');
-    } else if (!enabled && existsSync(mcpPath)) {
-      // Disable: rename .mcp.json -> .mcp.json.disabled
-      renameSync(mcpPath, mcpDisabledPath);
-      logger.info('WORKER', 'MCP search server disabled');
-    } else {
-      logger.debug('WORKER', 'MCP toggle no-op (already in desired state)', { enabled });
-    }
   }
 
   /**

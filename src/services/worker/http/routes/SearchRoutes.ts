@@ -17,6 +17,7 @@ import { FormattingService } from '../../FormattingService.js';
 import { TimelineService } from '../../TimelineService.js';
 import { BaseRouteHandler } from '../BaseRouteHandler.js';
 import { logger } from '../../../../utils/logger.js';
+import { resolveProjectByName } from '../../../../shared/project-allowlist.js';
 
 export class SearchRoutes extends BaseRouteHandler {
   private formattingService = new FormattingService();
@@ -201,11 +202,28 @@ export class SearchRoutes extends BaseRouteHandler {
    */
   private handleContextPreview = this.wrapHandler(async (req: Request, res: Response): Promise<void> => {
     const projectName = req.query.project as string;
-    const dbPath = (req.query.dbPath as string) || undefined;
+    let dbPath = (req.query.dbPath as string) || undefined;
 
     if (!projectName) {
       this.badRequest(res, 'Project parameter is required');
       return;
+    }
+
+    // Resolve dbPath from project name if not provided
+    if (!dbPath) {
+      let resolved;
+      try {
+        resolved = resolveProjectByName(projectName);
+      } catch {
+        this.badRequest(res, `Ambiguous project name "${projectName}" — multiple enabled projects share this name.`);
+        return;
+      }
+      if (!resolved) {
+        res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+        res.send(`Project "${projectName}" is not enabled for memory recording.\nUse /mem-enable to enable it.`);
+        return;
+      }
+      dbPath = resolved.dbPath;
     }
 
     // Import context generator (runs in worker, has access to database)

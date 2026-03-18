@@ -405,7 +405,8 @@ export class WorkerService {
 
       // One-time chroma wipe for users upgrading from versions with duplicate worker bugs.
       // Only runs in local mode (chroma is local-only). Backfill at line ~414 rebuilds from SQLite.
-      if (settings.CLAUDE_MEM_MODE === 'local' || !settings.CLAUDE_MEM_MODE) {
+      const chromaMode = settings.CLAUDE_MEM_CHROMA_MODE || 'local';
+      if (chromaMode === 'local') {
         runOneTimeChromaMigration();
       }
 
@@ -418,9 +419,8 @@ export class WorkerService {
         logger.info('SYSTEM', 'Chroma disabled via CLAUDE_MEM_CHROMA_ENABLED=false, skipping ChromaMcpManager');
       }
 
-      const modeId = settings.CLAUDE_MEM_MODE;
-      ModeManager.getInstance().loadMode(modeId);
-      logger.info('SYSTEM', `Mode loaded: ${modeId}`);
+      ModeManager.getInstance().loadMode('code');
+      logger.info('SYSTEM', 'Mode loaded: code');
 
       await this.dbManager.initialize(DB_PATH);
 
