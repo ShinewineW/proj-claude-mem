@@ -388,6 +388,31 @@ export class PendingMessageStore {
   }
 
   /**
+   * Delete dead letters: failed messages with exhausted retries OR legacy dead letters (>24h).
+   * Run on worker startup only.
+   */
+  cleanupDeadLetters(): number {
+    const twentyFourHoursAgo = Date.now() - 24 * 60 * 60 * 1000;
+    return this.db.prepare(`
+      DELETE FROM pending_messages
+      WHERE status = 'failed'
+        AND (retry_count >= ? OR failed_at_epoch < ?)
+    `).run(this.maxRetries, twentyFourHoursAgo).changes;
+  }
+
+  /**
+   * Delete orphan failed messages whose session no longer exists.
+   * Run on worker startup only.
+   */
+  cleanupOrphanMessages(): number {
+    return this.db.prepare(`
+      DELETE FROM pending_messages
+      WHERE status = 'failed'
+        AND session_db_id NOT IN (SELECT id FROM sdk_sessions)
+    `).run().changes;
+  }
+
+  /**
    * Reset stuck messages (processing -> pending if stuck longer than threshold)
    * @param thresholdMs Messages processing longer than this are considered stuck (0 = reset all)
    * @returns Number of messages reset

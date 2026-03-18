@@ -457,6 +457,30 @@ export class WorkerService {
         }
       }
 
+      // Fix A: Clean up dead letters and orphan messages
+      try {
+        const globalDead = pendingStore.cleanupDeadLetters();
+        const globalOrphans = pendingStore.cleanupOrphanMessages();
+        if (globalDead + globalOrphans > 0) {
+          logger.info('SYSTEM', 'Cleaned up dead letters', { deadLetters: globalDead, orphans: globalOrphans });
+        }
+        for (const projectRoot of Object.keys(enabledProjects)) {
+          try {
+            const projectDbPath = path.join(projectRoot, '.claude', 'mem.db');
+            const projPendingStore = new PendingMessageStore(this.dbManager.getSessionStore(projectDbPath).db, 3);
+            const projDead = projPendingStore.cleanupDeadLetters();
+            const projOrphans = projPendingStore.cleanupOrphanMessages();
+            if (projDead + projOrphans > 0) {
+              logger.info('SYSTEM', 'Cleaned up dead letters in project DB', { projectRoot, deadLetters: projDead, orphans: projOrphans });
+            }
+          } catch (error) {
+            logger.warn('SYSTEM', 'Failed to cleanup dead letters for project', { projectRoot }, error as Error);
+          }
+        }
+      } catch (cleanupError) {
+        logger.warn('SYSTEM', 'Dead letter cleanup failed (non-fatal)', {}, cleanupError as Error);
+      }
+
       // Replay fallback observations from hook failures
       try {
         const replayed = await this.replayFallbackEntries();
