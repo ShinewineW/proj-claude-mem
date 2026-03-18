@@ -57,6 +57,15 @@ describe('Dead letter cleanup', () => {
       store.enqueue(sessionDbId, 'cs-1', makeObs());
       expect(store.cleanupDeadLetters()).toBe(0);
     });
+
+    it('deletes failed messages with NULL failed_at_epoch (pre-migration legacy)', () => {
+      const id = store.enqueue(sessionDbId, 'cs-1', makeObs());
+      // Simulate pre-migration row: status=failed but no failed_at_epoch set
+      db.prepare('UPDATE pending_messages SET status = ?, retry_count = 0, failed_at_epoch = NULL WHERE id = ?')
+        .run('failed', id);
+
+      expect(store.cleanupDeadLetters()).toBe(1);
+    });
   });
 
   describe('cleanupOrphanMessages', () => {

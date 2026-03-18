@@ -381,7 +381,7 @@ export class PendingMessageStore {
     return this.db.prepare(`
       DELETE FROM pending_messages
       WHERE status = 'failed'
-        AND (retry_count >= ? OR failed_at_epoch < ?)
+        AND (retry_count >= ? OR failed_at_epoch IS NULL OR failed_at_epoch < ?)
     `).run(this.maxRetries, twentyFourHoursAgo).changes;
   }
 

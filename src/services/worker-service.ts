@@ -752,6 +752,7 @@ export class WorkerService {
             this.dbManager.getSessionStore(session.dbPath).markSessionFailed(session.sessionDbId);
             this.sessionManager.removeSessionImmediate(session.sessionDbId, session.dbPath);
             this.sessionEventBroadcaster.broadcastSessionCompleted(session.sessionDbId, session.project);
+            session.abortController.abort();
           } catch (cleanupErr) {
             logger.warn('SESSION', 'Failed to cleanup session after unrecoverable error', {
               sessionDbId: session.sessionDbId
@@ -814,6 +815,7 @@ export class WorkerService {
               this.dbManager.getSessionStore(session.dbPath).markSessionFailed(session.sessionDbId);
               this.sessionManager.removeSessionImmediate(session.sessionDbId, session.dbPath);
               this.sessionEventBroadcaster.broadcastSessionCompleted(session.sessionDbId, session.project);
+              session.abortController.abort();
             } catch (cleanupErr) {
               logger.warn('SESSION', 'Failed to cleanup abandoned session', {
                 sessionDbId: session.sessionDbId
