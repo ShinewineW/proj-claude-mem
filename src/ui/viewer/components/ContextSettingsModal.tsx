@@ -8,8 +8,6 @@ interface ContextSettingsModalProps {
   onClose: () => void;
   settings: Settings;
   onSave: (settings: Settings) => void;
-  isSaving: boolean;
-  saveStatus: string;
 }
 
 // Collapsible section component
@@ -125,14 +123,13 @@ export function ContextSettingsModal({
   onClose,
   settings,
   onSave,
-  isSaving,
-  saveStatus
 }: ContextSettingsModalProps) {
   const [formState, setFormState] = useState<Settings>(settings);
 
   // Update form state when settings prop changes
   useEffect(() => {
     setFormState(settings);
+    lastSavedRef.current = settings;
   }, [settings]);
 
   // Get context preview based on current form state
@@ -142,10 +139,6 @@ export function ContextSettingsModal({
     const newState = { ...formState, [key]: value };
     setFormState(newState);
   }, [formState]);
-
-  const handleSave = useCallback(() => {
-    onSave(formState);
-  }, [formState, onSave]);
 
   const toggleBoolean = useCallback((key: keyof Settings) => {
     const currentValue = formState[key];
@@ -163,6 +156,26 @@ export function ContextSettingsModal({
       return () => window.removeEventListener('keydown', handleEsc);
     }
   }, [isOpen, onClose]);
+
+  // Auto-save status
+  const [autoSaveStatus, setAutoSaveStatus] = useState<string>('');
+
+  // Track last saved state to prevent save loops
+  const lastSavedRef = React.useRef<Settings>(settings);
+
+  // Auto-save on formState change (500ms debounce, loop-safe)
+  useEffect(() => {
+    if (JSON.stringify(formState) === JSON.stringify(lastSavedRef.current)) {
+      return;
+    }
+    const timeout = setTimeout(() => {
+      onSave(formState);
+      lastSavedRef.current = formState;
+      setAutoSaveStatus('Saved');
+      setTimeout(() => setAutoSaveStatus(''), 1500);
+    }, 500);
+    return () => clearTimeout(timeout);
+  }, [formState]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!isOpen) return null;
 
@@ -301,6 +314,13 @@ export function ContextSettingsModal({
                     description="Total tokens saved by reusing context"
                     checked={formState.CLAUDE_MEM_CONTEXT_SHOW_SAVINGS_AMOUNT === 'true'}
                     onChange={() => toggleBoolean('CLAUDE_MEM_CONTEXT_SHOW_SAVINGS_AMOUNT')}
+                  />
+                  <ToggleSwitch
+                    id="show-savings-percent"
+                    label="Savings %"
+                    description="Percentage of tokens saved by reusing context"
+                    checked={formState.CLAUDE_MEM_CONTEXT_SHOW_SAVINGS_PERCENT === 'true'}
+                    onChange={() => toggleBoolean('CLAUDE_MEM_CONTEXT_SHOW_SAVINGS_PERCENT')}
                   />
                 </div>
               </div>
@@ -462,18 +482,11 @@ export function ContextSettingsModal({
           </div>
         </div>
 
-        {/* Footer with Save button */}
+        {/* Footer with auto-save indicator */}
         <div className="modal-footer">
-          <div className="save-status">
-            {saveStatus && <span className={saveStatus.includes('✓') ? 'success' : saveStatus.includes('✗') ? 'error' : ''}>{saveStatus}</span>}
-          </div>
-          <button
-            className="save-btn"
-            onClick={handleSave}
-            disabled={isSaving}
-          >
-            {isSaving ? 'Saving...' : 'Save'}
-          </button>
+          <span className={`auto-save-status ${autoSaveStatus ? 'saved' : ''}`}>
+            {autoSaveStatus}
+          </span>
         </div>
       </div>
     </div>
