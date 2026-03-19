@@ -30,7 +30,10 @@ import type { DatabaseManager } from './DatabaseManager.js';
 // API endpoints
 const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1/models';
 const OPENROUTER_API_URL = 'https://openrouter.ai/api/v1/chat/completions';
-const FETCH_TIMEOUT_MS = 60_000;
+// Must be < STALE_PROCESSING_THRESHOLD_MS (60s in PendingMessageStore) to prevent
+// the main channel's self-healing from resetting a bypass in-flight message to 'pending',
+// which would cause double-processing.
+const FETCH_TIMEOUT_MS = 45_000;
 
 export type BypassState = 'DISABLED' | 'ACTIVE' | 'TRIPPED';
 
@@ -270,6 +273,17 @@ export class BypassLane {
         continue;
       }
 
+      // Wait for main channel to establish memorySessionId before processing.
+      // Avoids race where bypass assigns a synthetic ID that gets orphaned.
+      if (!session.memorySessionId) {
+        pendingStore.retryMessage(message.id);
+        logger.debug('BYPASS', 'Skipping — waiting for main channel to establish memorySessionId', {
+          messageId: message.id,
+          sessionDbId: session.sessionDbId,
+        });
+        continue;
+      }
+
       try {
         await this.processObservation(message, session, signal);
         this.recordSuccess();
@@ -335,15 +349,7 @@ export class BypassLane {
     // Parse observations from XML response
     const observations = parseObservations(responseText, session.contentSessionId);
 
-    // Ensure session has memorySessionId
-    if (!session.memorySessionId) {
-      const syntheticId = `bypass-${session.contentSessionId}-${Date.now()}`;
-      session.memorySessionId = syntheticId;
-      this.dbManager.getSessionStore(session.dbPath).updateMemorySessionId(
-        session.sessionDbId,
-        syntheticId,
-      );
-    }
+    // memorySessionId guaranteed non-null by consumeLoop guard above
 
     // Store observations in DB (atomic)
     if (observations.length > 0) {
@@ -411,7 +417,8 @@ export class BypassLane {
       });
 
       if (!response.ok) {
-        const errorText = await response.text();
+        // Sanitize error text: Gemini may echo the URL (including API key) in error responses
+        const errorText = (await response.text()).replace(/key=[^&\s"]+/g, 'key=REDACTED');
         throw new Error(`Gemini API error: ${response.status} - ${errorText}`);
       }
 
