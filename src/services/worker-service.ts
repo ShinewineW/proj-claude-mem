@@ -109,8 +109,9 @@ import { DatabaseManager } from './worker/DatabaseManager.js';
 import { SessionManager } from './worker/SessionManager.js';
 import { SSEBroadcaster } from './worker/SSEBroadcaster.js';
 import { SDKAgent } from './worker/SDKAgent.js';
-import { GeminiAgent, isGeminiSelected, isGeminiAvailable } from './worker/GeminiAgent.js';
-import { OpenRouterAgent, isOpenRouterSelected, isOpenRouterAvailable } from './worker/OpenRouterAgent.js';
+import { BypassLane } from './worker/BypassLane.js';
+import { GeminiAgent, isGeminiAvailable } from './worker/GeminiAgent.js';
+import { OpenRouterAgent, isOpenRouterAvailable } from './worker/OpenRouterAgent.js';
 import { PaginationHelper } from './worker/PaginationHelper.js';
 import { SearchManager } from './worker/SearchManager.js';
 import { FormattingService } from './worker/FormattingService.js';
@@ -173,6 +174,7 @@ export class WorkerService {
   private openRouterAgent: OpenRouterAgent;
   private paginationHelper: PaginationHelper;
   private sessionEventBroadcaster: SessionEventBroadcaster;
+  private bypassLane: BypassLane;
 
   // Route handlers
   private searchRoutes: SearchRoutes | null = null;
@@ -222,6 +224,10 @@ export class WorkerService {
     this.geminiAgent.setFallbackAgent(this.sdkAgent);
     this.openRouterAgent.setFallbackAgent(this.sdkAgent);
 
+    // Bypass lane: parallel REST consumer for observation throughput
+    this.bypassLane = new BypassLane();
+    this.bypassLane.setDependencies(this.sessionManager, this.dbManager);
+
     this.paginationHelper = new PaginationHelper(this.dbManager);
     this.sessionEventBroadcaster = new SessionEventBroadcaster(this.sseBroadcaster, this);
 
@@ -250,9 +256,7 @@ export class WorkerService {
       onRestart: () => this.shutdown(),
       workerPath: __filename,
       getAiStatus: () => {
-        let provider = 'claude';
-        if (isOpenRouterSelected() && isOpenRouterAvailable()) provider = 'openrouter';
-        else if (isGeminiSelected() && isGeminiAvailable()) provider = 'gemini';
+        const provider = 'claude'; // Main channel always SDK; bypass lane handles REST
         return {
           provider,
           authMethod: getAuthMethodDescription(),
@@ -516,6 +520,9 @@ export class WorkerService {
       this.resolveInitialization();
       logger.info('SYSTEM', 'Core initialization complete (DB + search ready)');
 
+      // Initialize bypass lane (after DB is ready)
+      await this.bypassLane.initialize();
+
       // Auto-backfill Chroma for all projects if out of sync with SQLite (fire-and-forget)
       if (this.chromaMcpManager) {
         ChromaSync.backfillAllProjects(this.dbManager).then(() => {
@@ -599,16 +606,10 @@ export class WorkerService {
   }
 
   /**
-   * Get the appropriate agent based on provider settings.
-   * Same logic as SessionRoutes.getActiveAgent() for consistency.
+   * Get the agent for main channel processing.
+   * Always returns Claude SDK — bypass lane handles REST providers separately.
    */
-  private getActiveAgent(): SDKAgent | GeminiAgent | OpenRouterAgent {
-    if (isOpenRouterSelected() && isOpenRouterAvailable()) {
-      return this.openRouterAgent;
-    }
-    if (isGeminiSelected() && isGeminiAvailable()) {
-      return this.geminiAgent;
-    }
+  private getActiveAgent(): SDKAgent {
     return this.sdkAgent;
   }
 
@@ -644,6 +645,9 @@ export class WorkerService {
 
     // Track generator activity for stale detection (Issue #1099)
     session.lastGeneratorActivity = Date.now();
+
+    // Start bypass lane consumer for this session (no-op if bypass disabled)
+    this.bypassLane.startForSession(session);
 
     session.generatorPromise = agent.startSession(session, this)
       .catch(async (error: unknown) => {
@@ -759,6 +763,7 @@ export class WorkerService {
             this.sessionManager.removeSessionImmediate(session.sessionDbId, session.dbPath);
             this.sessionEventBroadcaster.broadcastSessionCompleted(session.sessionDbId, session.project);
             session.abortController.abort();
+            this.bypassLane.stopForSession(session.sessionDbId);
           } catch (cleanupErr) {
             logger.warn('SESSION', 'Failed to cleanup session after unrecoverable error', {
               sessionDbId: session.sessionDbId
@@ -776,6 +781,7 @@ export class WorkerService {
           });
           session.idleTimedOut = false; // Reset flag
           session.lastExitWasIdleTimeout = true; // Persist for reaper: skip futile proactive summarize
+          this.bypassLane.stopForSession(session.sessionDbId);
           this.broadcastProcessingStatus();
           return;
         }
@@ -785,6 +791,7 @@ export class WorkerService {
           logger.debug('SYSTEM', 'Session closing, skipping generator restart', {
             sessionDbId: session.sessionDbId
           });
+          this.bypassLane.stopForSession(session.sessionDbId);
           this.broadcastProcessingStatus();
           return;
         }
@@ -822,6 +829,7 @@ export class WorkerService {
               this.sessionManager.removeSessionImmediate(session.sessionDbId, session.dbPath);
               this.sessionEventBroadcaster.broadcastSessionCompleted(session.sessionDbId, session.project);
               session.abortController.abort();
+              this.bypassLane.stopForSession(session.sessionDbId);
             } catch (cleanupErr) {
               logger.warn('SESSION', 'Failed to cleanup abandoned session', {
                 sessionDbId: session.sessionDbId
@@ -915,6 +923,7 @@ export class WorkerService {
       });
     }
     this.sessionManager.removeSessionImmediate(sessionDbId, session.dbPath);
+    this.bypassLane.stopForSession(sessionDbId);
     this.sessionEventBroadcaster.broadcastSessionCompleted(sessionDbId, session.project);
   }
 
@@ -1145,6 +1154,9 @@ export class WorkerService {
       clearInterval(this.fallbackCleanupInterval);
       this.fallbackCleanupInterval = null;
     }
+
+    // Stop bypass lane
+    this.bypassLane.shutdown();
 
     await performGracefulShutdown({
       server: this.server.getHttpServer(),
