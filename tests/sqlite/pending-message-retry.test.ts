@@ -76,28 +76,35 @@ describe('PendingMessageStore — retry behavior', () => {
     });
   });
 
-  describe('markAllSessionMessagesAbandoned (pending + processing)', () => {
-    it('retries both pending and processing messages with retry_count < 3', () => {
+  describe('markAllSessionMessagesAbandoned (unconditional fail)', () => {
+    it('fails ALL pending and processing messages regardless of retry_count', () => {
+      enqueueWithState('pending', 0);
       enqueueWithState('pending', 1);
       enqueueWithState('processing', 0);
+      enqueueWithState('processing', 2);
       const result = store.markAllSessionMessagesAbandoned(sessionDbId);
-      expect(result.retried).toBe(2);
-      expect(result.failed).toBe(0);
-    });
-
-    it('permanently fails messages at retry_count >= 3', () => {
-      enqueueWithState('pending', 3);
-      enqueueWithState('processing', 3);
-      const result = store.markAllSessionMessagesAbandoned(sessionDbId);
-      expect(result.retried).toBe(0);
-      expect(result.failed).toBe(2);
+      expect(result.failed).toBe(4);
+      // Verify all are 'failed' with failed_at_epoch set
+      const rows = db.prepare('SELECT status, failed_at_epoch FROM pending_messages WHERE session_db_id = ?').all(sessionDbId) as any[];
+      for (const row of rows) {
+        expect(row.status).toBe('failed');
+        expect(row.failed_at_epoch).toBeGreaterThan(0);
+      }
     });
 
     it('does not touch already-failed messages', () => {
       enqueueWithState('failed', 0);
       const result = store.markAllSessionMessagesAbandoned(sessionDbId);
-      expect(result.retried).toBe(0);
       expect(result.failed).toBe(0);
+    });
+
+    it('only affects the specified session', () => {
+      enqueueWithState('pending', 0);
+      const other = createSDKSession(db, 'cs-other', 'test', 'p');
+      const otherId = store.enqueue(other, 'cs-other', makeObservation());
+      store.markAllSessionMessagesAbandoned(sessionDbId);
+      const otherMsg = db.prepare('SELECT status FROM pending_messages WHERE id = ?').get(otherId) as any;
+      expect(otherMsg.status).toBe('pending');
     });
   });
 

@@ -333,10 +333,20 @@ export class PendingMessageStore {
   }
 
   /**
-   * Mark all pending and processing messages for a session as abandoned, with per-message retry.
+   * Unconditionally mark all pending and processing messages for a session as 'failed'.
+   * Called when a session is being abandoned (generator crashed repeatedly, drain timeout, etc.).
+   * No retries — if the pipeline is fundamentally broken, retrying produces the same failure,
+   * and the session will be deleted from memory making retried messages orphans.
    */
   markAllSessionMessagesAbandoned(sessionDbId: number): { retried: number; failed: number } {
-    return this.retryOrFail(sessionDbId, `'pending', 'processing'`);
+    const now = Date.now();
+    const stmt = this.db.prepare(`
+      UPDATE pending_messages
+      SET status = 'failed', failed_at_epoch = ?
+      WHERE session_db_id = ? AND status IN ('pending', 'processing')
+    `);
+    const result = stmt.run(now, sessionDbId);
+    return { retried: 0, failed: result.changes };
   }
 
   /**
