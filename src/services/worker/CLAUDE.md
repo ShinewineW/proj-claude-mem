@@ -11,6 +11,7 @@
 | `OpenRouterAgent.ts` | OpenRouter API, 100+ models, shared conversation history |
 | `SearchManager.ts` | Search orchestration (Chroma → SQLite fallback) |
 | `ProcessRegistry.ts` | Track spawned subprocess PIDs for zombie cleanup |
+| `BypassLane.ts` | Parallel REST consumer for observations (Gemini/OpenRouter), circuit breaker, competing consumer on same queue |
 
 ## Subdirectories
 
@@ -28,6 +29,6 @@
 
 **Event-Driven Queuing**: `EventEmitter` per session for zero-latency notifications. `PendingMessageStore` persists to DB first (crash-safe). Idle timeout (5min) triggers subprocess abort.
 
-**Multi-Provider**: Shared `conversationHistory` on `ActiveSession` enables switching providers mid-session. Fallback: Gemini/OpenRouter → Claude on API failure.
+**Dual-Channel Processing**: Main channel always uses Claude SDK. Bypass lane (`BypassLane.ts`) processes observations in parallel via REST (Gemini/OpenRouter) when `CLAUDE_MEM_PROVIDER != 'claude'`. Competing consumers on same `pending_messages` queue via atomic `claimNextMessage()`. Fallback path: Gemini → OpenRouter → abandon (only on SDK process termination).
 
 **Drain Window**: `deleteSession()` polls `hasPendingSummarize()` every 500ms (max 10s) before aborting, preventing summary loss on session close.

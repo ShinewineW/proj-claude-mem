@@ -221,6 +221,57 @@ describe('BypassLane', () => {
     });
   });
 
+  describe('G4: recovery restarts consumers for active sessions', () => {
+    it('restarts consumers for active sessions after circuit breaker recovery', async () => {
+      const lane = new BypassLane();
+      (lane as any).state = 'TRIPPED';
+      (lane as any).probeProvider = async () => true;
+      // Mock consumeLoop to prevent actual execution
+      (lane as any).consumeLoop = async () => {};
+
+      // Set up mock sessionManager with 2 active sessions
+      const sessions = [
+        { sessionDbId: 10, dbPath: '/test/a/mem.db', abortController: new AbortController() },
+        { sessionDbId: 20, dbPath: '/test/b/mem.db', abortController: new AbortController() },
+      ];
+      (lane as any).sessionManager = {
+        getActiveSessions: () => sessions.values(),
+      };
+
+      await (lane as any).attemptRecovery();
+
+      expect(lane.getState()).toBe('ACTIVE');
+      // Both sessions should have consumers started
+      expect((lane as any).activeConsumers.has(10)).toBe(true);
+      expect((lane as any).activeConsumers.has(20)).toBe(true);
+    });
+
+    it('does not duplicate consumers for sessions that already have one', async () => {
+      const lane = new BypassLane();
+      (lane as any).state = 'TRIPPED';
+      (lane as any).probeProvider = async () => true;
+      (lane as any).consumeLoop = async () => {};
+
+      const existingAc = new AbortController();
+      (lane as any).activeConsumers.set(10, existingAc);
+
+      const sessions = [
+        { sessionDbId: 10, dbPath: '/test/a/mem.db', abortController: new AbortController() },
+        { sessionDbId: 20, dbPath: '/test/b/mem.db', abortController: new AbortController() },
+      ];
+      (lane as any).sessionManager = {
+        getActiveSessions: () => sessions.values(),
+      };
+
+      await (lane as any).attemptRecovery();
+
+      // Session 10 should keep its existing controller
+      expect((lane as any).activeConsumers.get(10)).toBe(existingAc);
+      // Session 20 should get a new one
+      expect((lane as any).activeConsumers.has(20)).toBe(true);
+    });
+  });
+
   describe('P6: combined abort signal', () => {
     it('session abort propagates to bypass consumer', async () => {
       const lane = new BypassLane();

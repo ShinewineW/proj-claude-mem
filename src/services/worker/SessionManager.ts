@@ -684,6 +684,10 @@ export class SessionManager {
     return this.sessions.size;
   }
 
+  getActiveSessions(): IterableIterator<ActiveSession> {
+    return this.sessions.values();
+  }
+
   /**
    * Get distinct project names that have active sessions (for viewer dashboard)
    */

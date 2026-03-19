@@ -22,11 +22,13 @@ import { SettingsDefaultsManager } from '../../../../shared/SettingsDefaultsMana
 import { USER_SETTINGS_PATH } from '../../../../shared/paths.js';
 import { getProcessBySession, ensureProcessExit } from '../../ProcessRegistry.js';
 import { getProjectName } from '../../../../utils/project-name.js';
+import type { BypassLane } from '../../BypassLane.js';
 
 export class SessionRoutes extends BaseRouteHandler {
   private completionHandler: SessionCompletionHandler;
   private spawnInProgress = new Map<string, boolean>();
   private crashRecoveryScheduled = new Set<string>();
+  private bypassLane: BypassLane | null = null;
 
   /** Composite key to prevent cross-project collisions on same auto-increment sessionDbId */
   private spawnKey(sessionDbId: number, dbPath?: string): string {
@@ -45,6 +47,11 @@ export class SessionRoutes extends BaseRouteHandler {
       sessionManager,
       eventBroadcaster
     );
+  }
+
+  /** Inject bypass lane reference (called from WorkerService after construction). */
+  setBypassLane(bypassLane: BypassLane): void {
+    this.bypassLane = bypassLane;
   }
 
   /**
@@ -110,6 +117,7 @@ export class SessionRoutes extends BaseRouteHandler {
         source
       });
       // Abort the stale generator and reset state
+      this.bypassLane?.stopForSession(session.sessionDbId); // Must precede AbortController replace (H1 pattern)
       session.abortController.abort();
       session.generatorPromise = null;
       session.abortController = new AbortController();
@@ -158,6 +166,9 @@ export class SessionRoutes extends BaseRouteHandler {
     // Track which provider is running and mark activity for stale detection (#1099)
     session.currentProvider = 'claude';
     session.lastGeneratorActivity = Date.now();
+
+    // G1 fix: Start bypass lane consumer for this session (no-op if bypass disabled)
+    this.bypassLane?.startForSession(session);
 
     session.generatorPromise = agent.startSession(session, this.workerService)
       .catch(error => {

@@ -197,9 +197,25 @@ export class BypassLane {
       this.state = 'ACTIVE';
       this.consecutiveFailures = 0;
       logger.success('BYPASS', 'Bypass lane recovered, state → ACTIVE');
+      this.restartConsumersForActiveSessions(); // All consumers exited when TRIPPED
     } else {
       logger.warn('BYPASS', 'Recovery probe failed, restarting cooldown');
       this.scheduleCooldownProbe();
+    }
+  }
+
+  /** Restart bypass consumers for all active sessions (after circuit breaker recovery). */
+  private restartConsumersForActiveSessions(): void {
+    if (!this.sessionManager) return;
+    let count = 0;
+    for (const session of this.sessionManager.getActiveSessions()) {
+      if (!this.activeConsumers.has(session.sessionDbId)) {
+        this.startForSession(session);
+        count++;
+      }
+    }
+    if (count > 0) {
+      logger.info('BYPASS', `Restarted consumers for ${count} active session(s) after recovery`);
     }
   }
 
@@ -331,7 +347,7 @@ export class BypassLane {
     try { toolResponse = message.tool_response ? JSON.parse(message.tool_response) : undefined; }
     catch { toolResponse = message.tool_response; }
 
-    // Build observation prompt (same format as GeminiAgent/OpenRouterAgent)
+    // Build observation prompt
     const obsPrompt = buildObservationPrompt({
       id: 0,
       tool_name: message.tool_name!,

@@ -358,19 +358,6 @@ export class PendingMessageStore {
     return result.changes > 0;
   }
 
-  /**
-   * Retry all stuck messages at once
-   */
-  retryAllStuck(thresholdMs: number): number {
-    const cutoff = Date.now() - thresholdMs;
-    const stmt = this.db.prepare(`
-      UPDATE pending_messages
-      SET status = 'pending', started_processing_at_epoch = NULL
-      WHERE status = 'processing' AND started_processing_at_epoch < ?
-    `);
-    const result = stmt.run(cutoff);
-    return result.changes;
-  }
 
   /**
    * Get recently processed messages (for UI feedback)
@@ -444,24 +431,6 @@ export class PendingMessageStore {
       WHERE status = 'failed'
         AND session_db_id NOT IN (SELECT id FROM sdk_sessions)
     `).run().changes;
-  }
-
-  /**
-   * Reset stuck messages (processing -> pending if stuck longer than threshold)
-   * @param thresholdMs Messages processing longer than this are considered stuck (0 = reset all)
-   * @returns Number of messages reset
-   */
-  resetStuckMessages(thresholdMs: number): number {
-    const cutoff = thresholdMs === 0 ? Date.now() : Date.now() - thresholdMs;
-
-    const stmt = this.db.prepare(`
-      UPDATE pending_messages
-      SET status = 'pending', started_processing_at_epoch = NULL
-      WHERE status = 'processing' AND started_processing_at_epoch < ?
-    `);
-
-    const result = stmt.run(cutoff);
-    return result.changes;
   }
 
   /**
