@@ -249,7 +249,7 @@ export class BypassLane {
           method: 'POST',
           headers: {
             'Authorization': `Bearer ${this.config.apiKey}`,
-            'HTTP-Referer': 'https://github.com/thedotmack/claude-mem',
+            'HTTP-Referer': 'https://github.com/ShinewineW/proj-claude-mem',
             'X-Title': 'claude-mem',
             'Content-Type': 'application/json',
           },
@@ -435,7 +435,7 @@ export class BypassLane {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${this.config.apiKey}`,
-          'HTTP-Referer': 'https://github.com/thedotmack/claude-mem',
+          'HTTP-Referer': 'https://github.com/ShinewineW/proj-claude-mem',
           'X-Title': 'claude-mem',
           'Content-Type': 'application/json',
         },
