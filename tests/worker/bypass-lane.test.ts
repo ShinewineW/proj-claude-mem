@@ -425,3 +425,28 @@ describe('F1: empty observation defense', () => {
     expect(lane.getState()).toBe('TRIPPED');
   });
 });
+
+describe('F2: stopForSession idempotency', () => {
+  it('calling stopForSession twice does not throw', () => {
+    const lane = new BypassLane();
+    (lane as any).state = 'ACTIVE';
+    const ac = new AbortController();
+    (lane as any).activeConsumers.set(1, ac);
+
+    lane.stopForSession(1);
+    expect(ac.signal.aborted).toBe(true);
+
+    // Second call — should be no-op, not throw
+    lane.stopForSession(1);
+    expect(ac.signal.aborted).toBe(true);
+  });
+
+  it('stopForSession after consumer .finally() cleanup is no-op', () => {
+    const lane = new BypassLane();
+    // Simulate .finally() already cleaned up the map entry
+    expect((lane as any).activeConsumers.has(1)).toBe(false);
+
+    // Should not throw
+    lane.stopForSession(1);
+  });
+});

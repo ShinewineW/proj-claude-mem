@@ -207,6 +207,9 @@ export class SessionRoutes extends BaseRouteHandler {
           await ensureProcessExit(tracked, 5000);
         }
 
+        // F2 fix: Stop bypass consumer on ANY generator exit (mirrors WorkerService pattern)
+        this.bypassLane?.stopForSession(session.sessionDbId);
+
         const sessionDbId = session.sessionDbId;
         const key = this.spawnKey(sessionDbId, session.dbPath);
         this.spawnInProgress.delete(key);
