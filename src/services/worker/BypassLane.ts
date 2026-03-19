@@ -80,7 +80,7 @@ export class BypassLane {
     if (provider === 'openrouter') {
       const apiKey = settings.CLAUDE_MEM_OPENROUTER_API_KEY || getCredential('OPENROUTER_API_KEY') || '';
       if (!apiKey) return null;
-      const model = settings.CLAUDE_MEM_OPENROUTER_MODEL || 'xiaomi/mimo-v2-flash:free';
+      const model = settings.CLAUDE_MEM_OPENROUTER_MODEL || 'google/gemma-3-4b-it:free';
       return { provider: 'openrouter', apiKey, model, cooldownMs };
     }
 
