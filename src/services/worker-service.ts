@@ -110,8 +110,6 @@ import { SessionManager } from './worker/SessionManager.js';
 import { SSEBroadcaster } from './worker/SSEBroadcaster.js';
 import { SDKAgent } from './worker/SDKAgent.js';
 import { BypassLane } from './worker/BypassLane.js';
-import { GeminiAgent, isGeminiAvailable } from './worker/GeminiAgent.js';
-import { OpenRouterAgent, isOpenRouterAvailable } from './worker/OpenRouterAgent.js';
 import { PaginationHelper } from './worker/PaginationHelper.js';
 import { SearchManager } from './worker/SearchManager.js';
 import { FormattingService } from './worker/FormattingService.js';
@@ -170,8 +168,6 @@ export class WorkerService {
   private sessionManager: SessionManager;
   private sseBroadcaster: SSEBroadcaster;
   private sdkAgent: SDKAgent;
-  private geminiAgent: GeminiAgent;
-  private openRouterAgent: OpenRouterAgent;
   private paginationHelper: PaginationHelper;
   private sessionEventBroadcaster: SessionEventBroadcaster;
   private bypassLane: BypassLane;
@@ -217,13 +213,6 @@ export class WorkerService {
     this.sessionManager = new SessionManager(this.dbManager);
     this.sseBroadcaster = new SSEBroadcaster();
     this.sdkAgent = new SDKAgent(this.dbManager, this.sessionManager);
-    this.geminiAgent = new GeminiAgent(this.dbManager, this.sessionManager);
-    this.openRouterAgent = new OpenRouterAgent(this.dbManager, this.sessionManager);
-
-    // Wire fallback: Gemini/OpenRouter → Claude SDK on recoverable errors (429, 500, etc.)
-    this.geminiAgent.setFallbackAgent(this.sdkAgent);
-    this.openRouterAgent.setFallbackAgent(this.sdkAgent);
-
     // Bypass lane: parallel REST consumer for observation throughput
     this.bypassLane = new BypassLane();
     this.bypassLane.setDependencies(this.sessionManager, this.dbManager);
@@ -678,14 +667,26 @@ export class WorkerService {
           return;
         }
 
-        // Fallback for terminated SDK sessions (provider abstraction)
+        // P3: Terminated SDK sessions — abandon messages and clean up.
+        // Bypass lane handles observation processing; no fallback agent needed.
         if (this.isSessionTerminatedError(error)) {
-          logger.warn('SDK', 'SDK resume failed, falling back to standalone processing', {
+          logger.warn('SDK', 'SDK session terminated, abandoning pending messages', {
             sessionId: session.sessionDbId,
             project: session.project,
-            reason: error instanceof Error ? error.message : String(error)
+            reason: error instanceof Error ? error.message : String(error),
           });
-          return this.runFallbackForTerminatedSession(session, error);
+          const pendingStore = this.sessionManager.getPendingMessageStore(session.dbPath);
+          const { failed: abandoned } = pendingStore.markAllSessionMessagesAbandoned(session.sessionDbId);
+          if (abandoned > 0) {
+            logger.warn('SDK', 'Marked pending messages as failed (terminated session)', {
+              sessionId: session.sessionDbId,
+              abandoned,
+            });
+          }
+          this.sessionManager.removeSessionImmediate(session.sessionDbId, session.dbPath);
+          this.bypassLane.stopForSession(session.sessionDbId);
+          this.sessionEventBroadcaster.broadcastSessionCompleted(session.sessionDbId, session.project);
+          return;
         }
 
         // Detect stale resume failures - SDK session context was lost
@@ -867,64 +868,6 @@ export class WorkerService {
       normalized.includes('session generator failed') ||
       normalized.includes('claude code process')
     );
-  }
-
-  /**
-   * When SDK resume fails due to terminated session: try Gemini then OpenRouter to drain
-   * pending messages; if no fallback available, mark messages abandoned and remove session.
-   */
-  private async runFallbackForTerminatedSession(
-    session: ReturnType<typeof this.sessionManager.getSession>,
-    _originalError: unknown
-  ): Promise<void> {
-    if (!session) return;
-
-    const sessionDbId = session.sessionDbId;
-
-    // Fallback agents need memorySessionId for storeObservations
-    if (!session.memorySessionId) {
-      const syntheticId = `fallback-${sessionDbId}-${Date.now()}`;
-      session.memorySessionId = syntheticId;
-      this.dbManager.getSessionStore(session.dbPath).updateMemorySessionId(sessionDbId, syntheticId);
-    }
-
-    if (isGeminiAvailable()) {
-      try {
-        await this.geminiAgent.startSession(session, this);
-        return;
-      } catch (e) {
-        logger.warn('SDK', 'Fallback Gemini failed, trying OpenRouter', {
-          sessionId: sessionDbId,
-          error: e instanceof Error ? e.message : String(e)
-        });
-      }
-    }
-
-    if (isOpenRouterAvailable()) {
-      try {
-        await this.openRouterAgent.startSession(session, this);
-        return;
-      } catch (e) {
-        logger.warn('SDK', 'Fallback OpenRouter failed', {
-          sessionId: sessionDbId,
-          error: e instanceof Error ? e.message : String(e)
-        });
-      }
-    }
-
-    // No fallback or both failed: mark messages abandoned and remove session so queue doesn't grow
-    const pendingStore = this.sessionManager.getPendingMessageStore(session.dbPath);
-    const { retried, failed: abandoned } = pendingStore.markAllSessionMessagesAbandoned(sessionDbId);
-    if (retried + abandoned > 0) {
-      logger.warn('SDK', 'No fallback available; marked pending messages abandoned', {
-        sessionId: sessionDbId,
-        abandoned,
-        retried
-      });
-    }
-    this.sessionManager.removeSessionImmediate(sessionDbId, session.dbPath);
-    this.bypassLane.stopForSession(sessionDbId);
-    this.sessionEventBroadcaster.broadcastSessionCompleted(sessionDbId, session.project);
   }
 
   /**
