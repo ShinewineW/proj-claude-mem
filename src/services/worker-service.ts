@@ -781,6 +781,7 @@ export class WorkerService {
           });
           session.idleTimedOut = false; // Reset flag
           session.lastExitWasIdleTimeout = true; // Persist for reaper: skip futile proactive summarize
+          this.bypassLane.stopForSession(session.sessionDbId);
           this.broadcastProcessingStatus();
           return;
         }
@@ -790,6 +791,7 @@ export class WorkerService {
           logger.debug('SYSTEM', 'Session closing, skipping generator restart', {
             sessionDbId: session.sessionDbId
           });
+          this.bypassLane.stopForSession(session.sessionDbId);
           this.broadcastProcessingStatus();
           return;
         }

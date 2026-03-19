@@ -15,10 +15,9 @@
  *   instead of processAgentResponse() which modifies shared session state
  */
 
-import path from 'path';
-import { homedir } from 'os';
 import { SettingsDefaultsManager } from '../../shared/SettingsDefaultsManager.js';
 import { getCredential } from '../../shared/EnvManager.js';
+import { USER_SETTINGS_PATH } from '../../shared/paths.js';
 import { logger } from '../../utils/logger.js';
 import { parseObservations } from '../../sdk/parser.js';
 import { buildObservationPrompt } from '../../sdk/prompts.js';
@@ -64,8 +63,7 @@ export class BypassLane {
 
   /** Read settings and determine bypass config. Returns null if bypass not applicable. */
   private resolveConfig(): BypassConfig | null {
-    const settingsPath = path.join(homedir(), '.claude-mem', 'settings.json');
-    const settings = SettingsDefaultsManager.loadFromFile(settingsPath);
+    const settings = SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH);
 
     const provider = settings.CLAUDE_MEM_PROVIDER;
     if (provider === 'claude' || !provider) return null;
@@ -284,8 +282,12 @@ export class BypassLane {
         continue;
       }
 
+      // Capture memorySessionId before async call to avoid TOCTOU race
+      // (main channel could clear/replace it during the API call)
+      const memorySessionId = session.memorySessionId!;
+
       try {
-        await this.processObservation(message, session, signal);
+        await this.processObservation(message, session, memorySessionId, signal);
         this.recordSuccess();
         logger.info('BYPASS', 'Observation processed via bypass lane', {
           messageId: message.id,
@@ -309,6 +311,7 @@ export class BypassLane {
   private async processObservation(
     message: PersistentPendingMessage,
     session: ActiveSession,
+    memorySessionId: string,
     signal: AbortSignal,
   ): Promise<void> {
     if (!this.config || !this.dbManager || !this.sessionManager) {
@@ -349,13 +352,11 @@ export class BypassLane {
     // Parse observations from XML response
     const observations = parseObservations(responseText, session.contentSessionId);
 
-    // memorySessionId guaranteed non-null by consumeLoop guard above
-
     // Store observations in DB (atomic)
     if (observations.length > 0) {
       const sessionStore = this.dbManager.getSessionStore(session.dbPath);
       const result = sessionStore.storeObservations(
-        session.memorySessionId,
+        memorySessionId,
         session.project,
         observations.map(obs => ({
           type: obs.type,
@@ -380,7 +381,7 @@ export class BypassLane {
           const obsId = result.observationIds[i];
           chromaSync.syncObservation(
             obsId,
-            session.memorySessionId,
+            memorySessionId,
             session.project,
             observations[i],
             message.prompt_number || 0,
@@ -446,7 +447,8 @@ export class BypassLane {
       });
 
       if (!response.ok) {
-        const errorText = await response.text();
+        // Truncate error body to prevent accidental credential echo in logs
+        const errorText = (await response.text()).substring(0, 500);
         throw new Error(`OpenRouter API error: ${response.status} - ${errorText}`);
       }
 
