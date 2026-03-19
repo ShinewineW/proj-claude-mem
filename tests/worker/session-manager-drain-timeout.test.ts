@@ -51,13 +51,12 @@ describe('SessionManager drain timeout marks messages abandoned', () => {
 
     const { retried, failed } = store.markAllSessionMessagesAbandoned(1);
 
-    // With retry_count=0 (default), message goes back to pending (retried)
-    expect(retried).toBe(1);
-    expect(failed).toBe(0);
+    // P2: unconditional fail — all messages marked failed regardless of retry_count
+    expect(retried).toBe(0);
+    expect(failed).toBe(1);
 
-    const row = db.prepare('SELECT status, retry_count FROM pending_messages WHERE session_db_id = 1').get() as any;
-    expect(row.status).toBe('pending');
-    expect(row.retry_count).toBe(1);
+    const row = db.prepare('SELECT status FROM pending_messages WHERE session_db_id = 1').get() as any;
+    expect(row.status).toBe('failed');
   });
 
   test('markAllSessionMessagesAbandoned does not affect other sessions', () => {

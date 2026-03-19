@@ -38,9 +38,9 @@ describe('processPendingQueues orphan cleanup', () => {
     const { retried, failed } = store.markAllSessionMessagesAbandoned(99);
 
     expect(retried + failed).toBe(2);
-    // With retry_count=0, messages go back to pending (retried), not failed
-    expect(retried).toBe(2);
-    expect(failed).toBe(0);
+    // P2: unconditional fail — all messages marked failed regardless of retry_count
+    expect(retried).toBe(0);
+    expect(failed).toBe(2);
   });
 
   test('markAllSessionMessagesAbandoned is idempotent on already-failed messages', () => {

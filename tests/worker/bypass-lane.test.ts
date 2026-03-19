@@ -208,6 +208,7 @@ describe('BypassLane', () => {
         dbPath: '/test/mem.db',
         memorySessionId: 'mem-1',
         project: 'test',
+        abortController: new AbortController(),
       } as any;
 
       lane.startForSession(session);
@@ -232,6 +233,78 @@ describe('BypassLane', () => {
       expect(config.apiKey).toBe('test-gemini-key');
       expect(config.model).toBe('gemini-2.5-flash');
       expect(config.cooldownMs).toBe(5000);
+    });
+  });
+
+  describe('P6: combined abort signal', () => {
+    it('session abort propagates to bypass consumer', async () => {
+      const lane = new BypassLane();
+      (lane as any).state = 'ACTIVE';
+
+      // Mock consumeLoop to capture the signal it receives
+      let capturedSignal: AbortSignal | null = null;
+      (lane as any).consumeLoop = async (_session: any, signal: AbortSignal) => {
+        capturedSignal = signal;
+        // Wait until aborted
+        await new Promise<void>(resolve => {
+          if (signal.aborted) return resolve();
+          signal.addEventListener('abort', () => resolve(), { once: true });
+        });
+      };
+
+      const sessionAc = new AbortController();
+      const session = {
+        sessionDbId: 1,
+        dbPath: '/test/mem.db',
+        memorySessionId: 'mem-1',
+        project: 'test',
+        abortController: sessionAc,
+      } as any;
+
+      lane.startForSession(session);
+
+      // Give the async consumeLoop a tick to start
+      await new Promise(r => setTimeout(r, 10));
+
+      // Session abort should propagate to bypass consumer
+      sessionAc.abort();
+
+      await new Promise(r => setTimeout(r, 10));
+      expect(capturedSignal).not.toBeNull();
+      expect(capturedSignal!.aborted).toBe(true);
+    });
+
+    it('stopForSession still works independently of session abort', async () => {
+      const lane = new BypassLane();
+      (lane as any).state = 'ACTIVE';
+
+      let capturedSignal: AbortSignal | null = null;
+      (lane as any).consumeLoop = async (_session: any, signal: AbortSignal) => {
+        capturedSignal = signal;
+        await new Promise<void>(resolve => {
+          if (signal.aborted) return resolve();
+          signal.addEventListener('abort', () => resolve(), { once: true });
+        });
+      };
+
+      const sessionAc = new AbortController();
+      const session = {
+        sessionDbId: 2,
+        dbPath: '/test/mem.db',
+        memorySessionId: 'mem-2',
+        project: 'test',
+        abortController: sessionAc,
+      } as any;
+
+      lane.startForSession(session);
+      await new Promise(r => setTimeout(r, 10));
+
+      // stopForSession should abort via bypass's own controller
+      lane.stopForSession(2);
+      await new Promise(r => setTimeout(r, 10));
+      expect(capturedSignal!.aborted).toBe(true);
+      // Session abort controller should NOT have been touched
+      expect(sessionAc.signal.aborted).toBe(false);
     });
   });
 });

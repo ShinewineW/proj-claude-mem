@@ -119,11 +119,16 @@ export class BypassLane {
     if (this.state !== 'ACTIVE') return;
     if (this.activeConsumers.has(session.sessionDbId)) return;
 
-    const ac = new AbortController();
-    this.activeConsumers.set(session.sessionDbId, ac);
+    const ownAc = new AbortController();
+    this.activeConsumers.set(session.sessionDbId, ownAc);
 
-    this.consumeLoop(session, ac.signal).catch(error => {
-      if (!ac.signal.aborted) {
+    // P6: Combine bypass's own AbortController with session's AbortController.
+    // When SessionRoutes aborts the session, the bypass consumer also stops,
+    // even though SessionRoutes has no reference to BypassLane.
+    const combinedSignal = AbortSignal.any([ownAc.signal, session.abortController.signal]);
+
+    this.consumeLoop(session, combinedSignal).catch(error => {
+      if (!combinedSignal.aborted) {
         logger.error('BYPASS', 'Consumer loop error', {
           sessionDbId: session.sessionDbId,
         }, error as Error);
@@ -250,23 +255,16 @@ export class BypassLane {
     const POLL_INTERVAL_MS = 2000;
 
     while (!signal.aborted && this.state === 'ACTIVE') {
-      const message = pendingStore.claimNextMessage(session.sessionDbId);
+      // P1a: Use claimNextObservation instead of claimNextMessage.
+      // - Only claims observation messages (never summarize → eliminates Path 2 spin)
+      // - No self-healing (prevents Path 8 double-processing)
+      const message = pendingStore.claimNextObservation(session.sessionDbId);
 
       if (!message) {
         await new Promise<void>(resolve => {
           const timer = setTimeout(resolve, POLL_INTERVAL_MS);
           const onAbort = () => { clearTimeout(timer); resolve(); };
           signal.addEventListener('abort', onAbort, { once: true });
-        });
-        continue;
-      }
-
-      // Skip summarize messages — release back for main channel
-      if (!this.shouldProcessMessage(message)) {
-        pendingStore.retryMessage(message.id);
-        logger.debug('BYPASS', 'Released non-observation message back to pending', {
-          messageId: message.id,
-          type: message.message_type,
         });
         continue;
       }
@@ -278,6 +276,12 @@ export class BypassLane {
         logger.debug('BYPASS', 'Skipping — waiting for main channel to establish memorySessionId', {
           messageId: message.id,
           sessionDbId: session.sessionDbId,
+        });
+        // P1b: Sleep before continue to prevent spin (Path 3)
+        await new Promise<void>(resolve => {
+          const timer = setTimeout(resolve, POLL_INTERVAL_MS);
+          const onAbort = () => { clearTimeout(timer); resolve(); };
+          signal.addEventListener('abort', onAbort, { once: true });
         });
         continue;
       }
@@ -302,6 +306,12 @@ export class BypassLane {
         });
         pendingStore.markFailed(message.id);
         this.recordFailure();
+        // P1c: Sleep after sync throw to prevent fast-cycling (Path 5b)
+        await new Promise<void>(resolve => {
+          const timer = setTimeout(resolve, 1000);
+          const onAbort = () => { clearTimeout(timer); resolve(); };
+          signal.addEventListener('abort', onAbort, { once: true });
+        });
         if (this.state === 'TRIPPED') return;
       }
     }
