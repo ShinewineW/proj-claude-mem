@@ -844,9 +844,13 @@ export class WorkerService {
             sessionId: session.sessionDbId,
             pendingCount
           });
+          // Stop bypass consumer before replacing AbortController (H1 fix):
+          // bypass holds a combinedSignal referencing the old abortController.signal.
+          // Without stopping first, the new abortController.abort() won't reach it.
+          this.bypassLane.stopForSession(session.sessionDbId);
           // Reset AbortController for restart
           session.abortController = new AbortController();
-          // Restart processor
+          // Restart processor (re-starts bypass consumer with fresh combinedSignal)
           this.startSessionProcessor(session, 'pending-work-restart');
         }
 
@@ -1142,6 +1146,7 @@ export class WorkerService {
  * Platform: macOS/Linux only (lsof). Windows is not a deployment target.
  */
 async function forceKillByPort(port: number): Promise<boolean> {
+  if (!Number.isFinite(port) || port < 1 || port > 65535) return false;
   const { execSync } = await import('child_process');
 
   // Tier 2: SIGTERM
