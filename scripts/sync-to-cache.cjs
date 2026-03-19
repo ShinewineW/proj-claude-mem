@@ -5,11 +5,11 @@
  * Replaces sync-marketplace.cjs by skipping the marketplace intermediate step.
  * Claude Code loads plugins from the cache path registered in installed_plugins.json.
  *
- * Flow: rsync plugin/ → cache → npm install → register → restart worker
+ * Flow: rsync plugin/ → cache → npm install → register (cache + marketplace discovery) → restart worker
  */
 
 const { execSync } = require('child_process');
-const { existsSync, readFileSync, mkdirSync, copyFileSync, writeFileSync } = require('fs');
+const { existsSync, readFileSync, mkdirSync, copyFileSync, writeFileSync, symlinkSync, rmSync, lstatSync } = require('fs');
 const path = require('path');
 const os = require('os');
 
@@ -31,6 +31,12 @@ try {
   const pluginDir = path.join(rootDir, 'plugin');
   const version = getPluginVersion();
   const CACHE_VERSION_PATH = path.join(CACHE_BASE_PATH, version);
+
+  // Compute git commit SHA for plugin integrity registration
+  const gitSha = (() => {
+    try { return execSync('git rev-parse HEAD', { cwd: rootDir, encoding: 'utf-8' }).trim(); }
+    catch { return 'unknown'; }
+  })();
 
   // Ensure cache directory exists
   mkdirSync(CACHE_VERSION_PATH, { recursive: true });
@@ -83,6 +89,7 @@ try {
       version: version,
       installedAt: new Date().toISOString(),
       lastUpdated: new Date().toISOString(),
+      gitCommitSha: gitSha,
     }];
     writeFileSync(installedPath, JSON.stringify(installed, null, 2));
     console.log(`Registered ${pluginKey} in installed_plugins.json`);
@@ -106,6 +113,57 @@ try {
     }
   } catch (e) {
     console.warn('Warning: Could not update settings.json:', e.message);
+  }
+
+  // Create marketplace discovery symlinks so CC can find hooks.json and plugin.json
+  const MARKETPLACE_PLUGIN_PATH = path.join(os.homedir(), '.claude', 'plugins', 'marketplaces', 'thedotmack', 'plugin');
+  try {
+    mkdirSync(MARKETPLACE_PLUGIN_PATH, { recursive: true });
+    const SYMLINK_TARGETS = ['hooks', '.claude-plugin', '.mcp.json', 'scripts', 'skills', 'modes', 'ui', 'package.json'];
+    for (const name of SYMLINK_TARGETS) {
+      const src = path.join(CACHE_VERSION_PATH, name);
+      const dst = path.join(MARKETPLACE_PLUGIN_PATH, name);
+      // Remove existing symlink before creating new one; refuse to delete real directories
+      try {
+        const stat = lstatSync(dst);
+        if (stat.isSymbolicLink() || !stat.isDirectory()) {
+          rmSync(dst, { force: true });
+        } else {
+          rmSync(dst, { recursive: true, force: true });
+        }
+      } catch (e) { if (e.code !== 'ENOENT') throw e; }
+      // Only create symlink if the source exists in cache
+      if (existsSync(src)) {
+        symlinkSync(src, dst);
+      }
+    }
+    console.log('Created marketplace discovery symlinks at', MARKETPLACE_PLUGIN_PATH);
+  } catch (e) {
+    console.warn('Warning: Could not create marketplace symlinks:', e.message);
+  }
+
+  // Register thedotmack in known_marketplaces.json so CC discovery works
+  const knownMarketplacesPath = path.join(os.homedir(), '.claude', 'plugins', 'known_marketplaces.json');
+  try {
+    let known = {};
+    try {
+      known = existsSync(knownMarketplacesPath)
+        ? JSON.parse(readFileSync(knownMarketplacesPath, 'utf-8'))
+        : {};
+    } catch { known = {}; }
+    if (typeof known !== 'object' || Array.isArray(known)) known = {};
+    known['thedotmack'] = {
+      source: {
+        source: 'github',
+        repo: 'ShinewineW/proj-claude-mem',
+      },
+      installLocation: path.join(os.homedir(), '.claude', 'plugins', 'marketplaces', 'thedotmack'),
+      lastUpdated: new Date().toISOString(),
+    };
+    writeFileSync(knownMarketplacesPath, JSON.stringify(known, null, 2));
+    console.log('Registered thedotmack in known_marketplaces.json');
+  } catch (e) {
+    console.warn('Warning: Could not update known_marketplaces.json:', e.message);
   }
 
   console.log('\x1b[32m%s\x1b[0m', 'Sync to cache complete!');

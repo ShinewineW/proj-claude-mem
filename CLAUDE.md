@@ -36,7 +36,7 @@ Claude-mem is a Claude Code plugin providing persistent memory across sessions. 
 ## Build Commands
 
 ```bash
-/opt/homebrew/bin/bun run build-and-sync   # Build, sync to marketplace, restart worker
+/opt/homebrew/bin/bun run build-and-sync   # Build, sync to cache + marketplace discovery, restart worker
 /opt/homebrew/bin/bun test                  # Run all tests
 ```
 
@@ -48,7 +48,8 @@ Settings are managed in `~/.claude-mem/settings.json`. The file is auto-created 
 
 - **Source**: `<project-root>/src/`
 - **Built Plugin**: `<project-root>/plugin/`
-- **Deployed Plugin (cache)**: `~/.claude/plugins/cache/thedotmack/claude-mem/<version>/`
+- **Plugin Execution (cache)**: `~/.claude/plugins/cache/thedotmack/claude-mem/<version>/`
+- **Plugin Discovery (marketplace)**: `~/.claude/plugins/marketplaces/thedotmack/plugin/` (symlinks to cache; CC loads hooks from here)
 - **Database (per-project)**: `<repo>/.claude/mem.db` (auto-gitignored)
 - **Database (global fallback)**: `~/.claude-mem/claude-mem.db`
 - **Chroma**: `~/.claude-mem/chroma/`
