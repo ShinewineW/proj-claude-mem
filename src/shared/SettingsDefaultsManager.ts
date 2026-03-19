@@ -67,6 +67,8 @@ export interface SettingsDefaults {
   CLAUDE_MEM_RETENTION_DAYS: string;              // grace period in days
   CLAUDE_MEM_RETENTION_SCORE_THRESHOLD: string;   // minimum score to keep (0.0-1.0)
   CLAUDE_MEM_RETENTION_MAX_KEPT: string;          // hard cap on >grace-period observations
+  // Bypass Lane
+  CLAUDE_MEM_BYPASS_COOLDOWN_MS: string;          // Cooldown period before retrying tripped bypass lane (default: 20min)
 }
 
 export class SettingsDefaultsManager {
@@ -129,6 +131,8 @@ export class SettingsDefaultsManager {
     CLAUDE_MEM_RETENTION_DAYS: '30',
     CLAUDE_MEM_RETENTION_SCORE_THRESHOLD: '0.3',
     CLAUDE_MEM_RETENTION_MAX_KEPT: '3000',
+    // Bypass Lane
+    CLAUDE_MEM_BYPASS_COOLDOWN_MS: '1200000',  // 20 minutes
   };
 
   /**
