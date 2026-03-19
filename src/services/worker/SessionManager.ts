@@ -517,7 +517,7 @@ export class SessionManager {
 
       // Skip sessions with pending work
       const pendingCount = this.getPendingStore(session.dbPath).getPendingCount(session.sessionDbId);
-      if (pendingCount > 0) continue;
+      if (pendingCount > 0 && session.generatorPromise) continue;
 
       // Sessions with proactive summarize already queued: reap immediately
       // (skip idle time check — the summarize was the final lifecycle step)
