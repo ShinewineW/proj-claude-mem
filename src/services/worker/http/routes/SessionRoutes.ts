@@ -13,8 +13,6 @@ import { cleanToolField } from './observation-utils.js';
 import { SessionManager } from '../../SessionManager.js';
 import { DatabaseManager } from '../../DatabaseManager.js';
 import { SDKAgent } from '../../SDKAgent.js';
-import { GeminiAgent } from '../../GeminiAgent.js';
-import { OpenRouterAgent } from '../../OpenRouterAgent.js';
 import type { WorkerService } from '../../../worker-service.js';
 import { BaseRouteHandler } from '../BaseRouteHandler.js';
 import { SessionEventBroadcaster } from '../../events/SessionEventBroadcaster.js';
@@ -39,8 +37,6 @@ export class SessionRoutes extends BaseRouteHandler {
     private sessionManager: SessionManager,
     private dbManager: DatabaseManager,
     private sdkAgent: SDKAgent,
-    private geminiAgent: GeminiAgent,
-    private openRouterAgent: OpenRouterAgent,
     private eventBroadcaster: SessionEventBroadcaster,
     private workerService: WorkerService
   ) {
@@ -67,13 +63,8 @@ export class SessionRoutes extends BaseRouteHandler {
   }
 
   /**
-   * Ensures agent generator is running for a session
-   * Auto-starts if not already running to process pending queue
-   * Uses either Claude SDK or Gemini based on settings
-   *
-   * Provider switching: If provider setting changed while generator is running,
-   * we let the current generator finish naturally (max 5s linger timeout).
-   * The next generator will use the new provider with shared conversationHistory.
+   * Ensures SDK agent generator is running for a session.
+   * Auto-starts if not already running to process pending queue.
    */
   private static readonly STALE_GENERATOR_THRESHOLD_MS = 30_000; // 30 seconds (#1099)
   private static readonly MAX_CONSECUTIVE_RESTARTS = 3;
@@ -129,25 +120,14 @@ export class SessionRoutes extends BaseRouteHandler {
       return;
     }
 
-    // Generator is running - check if provider changed
-    if (session.currentProvider && session.currentProvider !== selectedProvider) {
-      logger.info('SESSION', `Provider changed, will switch after current generator finishes`, {
-        sessionId: sessionDbId,
-        currentProvider: session.currentProvider,
-        selectedProvider,
-        historyLength: session.conversationHistory.length
-      });
-      // Let current generator finish naturally, next one will use new provider
-      // The shared conversationHistory ensures context is preserved
-    }
   }
 
   /**
-   * Start a generator with the specified provider
+   * Start the SDK generator for a session.
    */
   private startGeneratorWithProvider(
     session: ReturnType<typeof this.sessionManager.getSession>,
-    provider: 'claude' | 'gemini' | 'openrouter',
+    _provider: 'claude',
     source: string
   ): void {
     if (!session) return;
@@ -162,8 +142,8 @@ export class SessionRoutes extends BaseRouteHandler {
       session.abortController = new AbortController();
     }
 
-    const agent = provider === 'openrouter' ? this.openRouterAgent : (provider === 'gemini' ? this.geminiAgent : this.sdkAgent);
-    const agentName = provider === 'openrouter' ? 'OpenRouter' : (provider === 'gemini' ? 'Gemini' : 'Claude SDK');
+    const agent = this.sdkAgent;
+    const agentName = 'Claude SDK';
 
     // Use database count for accurate telemetry (in-memory array is always empty due to FK constraint fix)
     const pendingStore = this.sessionManager.getPendingMessageStore(session.dbPath);
@@ -176,7 +156,7 @@ export class SessionRoutes extends BaseRouteHandler {
     });
 
     // Track which provider is running and mark activity for stale detection (#1099)
-    session.currentProvider = provider;
+    session.currentProvider = 'claude';
     session.lastGeneratorActivity = Date.now();
 
     session.generatorPromise = agent.startSession(session, this.workerService)
@@ -186,7 +166,7 @@ export class SessionRoutes extends BaseRouteHandler {
         
         logger.error('SESSION', `Generator failed`, {
           sessionId: session.sessionDbId,
-          provider: provider,
+          provider: 'claude',
           error: error.message
         }, error);
 
