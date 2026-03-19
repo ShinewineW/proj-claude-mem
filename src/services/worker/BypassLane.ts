@@ -33,6 +33,8 @@ const OPENROUTER_API_URL = 'https://openrouter.ai/api/v1/chat/completions';
 // the main channel's self-healing from resetting a bypass in-flight message to 'pending',
 // which would cause double-processing.
 const FETCH_TIMEOUT_MS = 45_000;
+// Gemini free tier: 15 RPM = minimum 4s between requests
+const GEMINI_RATE_LIMIT_INTERVAL_MS = 4_000;
 
 export type BypassState = 'DISABLED' | 'ACTIVE' | 'TRIPPED';
 
@@ -328,12 +330,11 @@ export class BypassLane {
         if (this.config?.provider === 'gemini') {
           const settings = this.getSettings();
           if (settings.CLAUDE_MEM_GEMINI_RATE_LIMITING_ENABLED === 'true') {
-            const GEMINI_INTERVAL_MS = 4000;
             const now = Date.now();
             const elapsed = now - this.lastGeminiRequestTime;
             this.lastGeminiRequestTime = now;
             // Math.min caps delay to prevent unbounded sleep on clock skew
-            const delay = Math.min(GEMINI_INTERVAL_MS, Math.max(0, GEMINI_INTERVAL_MS - elapsed));
+            const delay = Math.min(GEMINI_RATE_LIMIT_INTERVAL_MS, Math.max(0, GEMINI_RATE_LIMIT_INTERVAL_MS - elapsed));
             if (delay > 0) {
               await this.abortableSleep(delay, signal);
             }

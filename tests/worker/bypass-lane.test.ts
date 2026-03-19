@@ -424,6 +424,61 @@ describe('F1: empty observation defense', () => {
     (lane as any).recordFailure();
     expect(lane.getState()).toBe('TRIPPED');
   });
+
+  it('consumeLoop calls markFailed + recordFailure when processObservation throws', async () => {
+    const lane = new BypassLane();
+    (lane as any).state = 'ACTIVE';
+    (lane as any).config = { provider: 'openrouter', apiKey: 'test', model: 'test', cooldownMs: 5000 };
+
+    const mockMarkFailed = mock(() => {});
+    let claimCount = 0;
+    const mockClaimNextObservation = mock(() => {
+      claimCount++;
+      if (claimCount === 1) {
+        return {
+          id: 99, session_db_id: 1, content_session_id: 'cs-1',
+          message_type: 'observation', tool_name: 'Read', tool_input: '{}',
+          tool_response: '{}', cwd: '/test', prompt_number: 1,
+          status: 'processing', retry_count: 0, created_at_epoch: Date.now(),
+          last_assistant_message: null, started_processing_at_epoch: Date.now(),
+          completed_at_epoch: null,
+        };
+      }
+      return null; // No more messages
+    });
+
+    (lane as any).sessionManager = {
+      getPendingMessageStore: () => ({
+        claimNextObservation: mockClaimNextObservation,
+        markFailed: mockMarkFailed,
+        confirmProcessed: mock(() => {}),
+      }),
+    };
+    (lane as any).dbManager = {
+      getSessionStore: () => ({ storeObservations: mock(() => ({ observationIds: [] })) }),
+      getChromaSync: () => null,
+    };
+
+    // Mock callRestApi to return content without <observation> tags → triggers F1 throw
+    (lane as any).callRestApi = async () => 'Response with no observation tags';
+
+    const ac = new AbortController();
+    const session = {
+      sessionDbId: 1, contentSessionId: 'cs-1', memorySessionId: 'mem-1',
+      project: 'test', dbPath: '/test/mem.db', abortController: ac,
+    } as any;
+
+    // Run consumeLoop — it processes one message, throws, calls markFailed, then
+    // claimNextObservation returns null → abortableSleep → we abort to exit
+    setTimeout(() => ac.abort(), 200);
+    await (lane as any).consumeLoop(session, ac.signal);
+
+    // Verify the full path: processObservation throw → catch → markFailed
+    expect(mockMarkFailed).toHaveBeenCalledTimes(1);
+    expect(mockMarkFailed).toHaveBeenCalledWith(99);
+    // recordFailure should have incremented consecutiveFailures
+    expect((lane as any).consecutiveFailures).toBe(1);
+  });
 });
 
 describe('F2: stopForSession idempotency', () => {
