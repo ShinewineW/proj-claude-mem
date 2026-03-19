@@ -80,7 +80,7 @@ export class BypassLane {
     if (provider === 'openrouter') {
       const apiKey = settings.CLAUDE_MEM_OPENROUTER_API_KEY || getCredential('OPENROUTER_API_KEY') || '';
       if (!apiKey) return null;
-      const model = settings.CLAUDE_MEM_OPENROUTER_MODEL || 'google/gemma-3-4b-it:free';
+      const model = settings.CLAUDE_MEM_OPENROUTER_MODEL || 'stepfun/step-3.5-flash:free';
       return { provider: 'openrouter', apiKey, model, cooldownMs };
     }
 
@@ -117,7 +117,10 @@ export class BypassLane {
   /** Start bypass consumer for a session. No-op if not ACTIVE. */
   startForSession(session: ActiveSession): void {
     if (this.state !== 'ACTIVE') return;
-    if (this.activeConsumers.has(session.sessionDbId)) return;
+    // Check aborted state, not just presence — after stopForSession() aborts the old controller,
+    // the map entry persists until .finally() runs. Using has() alone would block the new consumer.
+    const existing = this.activeConsumers.get(session.sessionDbId);
+    if (existing && !existing.signal.aborted) return;
 
     const ownAc = new AbortController();
     this.activeConsumers.set(session.sessionDbId, ownAc);
@@ -143,7 +146,9 @@ export class BypassLane {
     const ac = this.activeConsumers.get(sessionDbId);
     if (ac) {
       ac.abort();
-      this.activeConsumers.delete(sessionDbId);
+      // Do NOT delete here — .finally() in startForSession handles cleanup.
+      // Eagerly deleting causes a race: if startForSession runs before .finally(),
+      // the new entry gets deleted by the old consumer's .finally() callback.
     }
   }
 
@@ -238,10 +243,14 @@ export class BypassLane {
         });
         return response.ok;
       } else {
+        // Must include HTTP-Referer — some upstream providers (e.g. StepFun behind Alibaba WAF)
+        // reject requests without it, causing the probe to always fail and bypass to stay DISABLED.
         const response = await fetch(OPENROUTER_API_URL, {
           method: 'POST',
           headers: {
             'Authorization': `Bearer ${this.config.apiKey}`,
+            'HTTP-Referer': 'https://github.com/thedotmack/claude-mem',
+            'X-Title': 'claude-mem',
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
@@ -258,71 +267,58 @@ export class BypassLane {
     }
   }
 
+  /** Abort-aware sleep: resolves on timeout OR signal abort (whichever first). */
+  private abortableSleep(ms: number, signal: AbortSignal): Promise<void> {
+    return new Promise<void>(resolve => {
+      const timer = setTimeout(resolve, ms);
+      signal.addEventListener('abort', () => { clearTimeout(timer); resolve(); }, { once: true });
+    });
+  }
+
   /** Main consumer loop — claims observation messages, processes via REST API. */
   private async consumeLoop(session: ActiveSession, signal: AbortSignal): Promise<void> {
     if (!this.sessionManager || !this.dbManager) return;
 
     const pendingStore = this.sessionManager.getPendingMessageStore(session.dbPath);
-    const POLL_INTERVAL_MS = 2000;
+    const POLL_MS = 2000;
 
     while (!signal.aborted && this.state === 'ACTIVE') {
-      // P1a: Use claimNextObservation instead of claimNextMessage.
-      // - Only claims observation messages (never summarize → eliminates Path 2 spin)
-      // - No self-healing (prevents Path 8 double-processing)
+      // Observation-only claim (never summarize, no self-healing — main channel handles that)
       const message = pendingStore.claimNextObservation(session.sessionDbId);
 
       if (!message) {
-        await new Promise<void>(resolve => {
-          const timer = setTimeout(resolve, POLL_INTERVAL_MS);
-          const onAbort = () => { clearTimeout(timer); resolve(); };
-          signal.addEventListener('abort', onAbort, { once: true });
-        });
+        await this.abortableSleep(POLL_MS, signal);
         continue;
       }
 
-      // Wait for main channel to establish memorySessionId before processing.
-      // Avoids race where bypass assigns a synthetic ID that gets orphaned.
+      // Wait for main channel to establish memorySessionId (avoid orphaned synthetic IDs)
       if (!session.memorySessionId) {
         pendingStore.retryMessage(message.id);
-        logger.debug('BYPASS', 'Skipping — waiting for main channel to establish memorySessionId', {
-          messageId: message.id,
-          sessionDbId: session.sessionDbId,
-        });
-        // P1b: Sleep before continue to prevent spin (Path 3)
-        await new Promise<void>(resolve => {
-          const timer = setTimeout(resolve, POLL_INTERVAL_MS);
-          const onAbort = () => { clearTimeout(timer); resolve(); };
-          signal.addEventListener('abort', onAbort, { once: true });
-        });
+        logger.debug('BYPASS', 'Waiting for memorySessionId', { messageId: message.id });
+        await this.abortableSleep(POLL_MS, signal);
         continue;
       }
 
-      // Capture memorySessionId before async call to avoid TOCTOU race
-      // (main channel could clear/replace it during the API call)
+      // Capture before async call — main channel could clear/replace it mid-flight
       const memorySessionId = session.memorySessionId!;
 
       try {
         await this.processObservation(message, session, memorySessionId, signal);
         this.recordSuccess();
-        logger.info('BYPASS', 'Observation processed via bypass lane', {
+        logger.info('BYPASS', 'Observation processed', {
           messageId: message.id,
           sessionDbId: session.sessionDbId,
           provider: this.config?.provider,
         });
       } catch (error) {
         if (signal.aborted) return;
-        logger.warn('BYPASS', 'Bypass processing failed, marking for retry', {
+        logger.warn('BYPASS', 'Processing failed, marking for retry', {
           messageId: message.id,
           error: error instanceof Error ? error.message : String(error),
         });
         pendingStore.markFailed(message.id);
         this.recordFailure();
-        // P1c: Sleep after sync throw to prevent fast-cycling (Path 5b)
-        await new Promise<void>(resolve => {
-          const timer = setTimeout(resolve, 1000);
-          const onAbort = () => { clearTimeout(timer); resolve(); };
-          signal.addEventListener('abort', onAbort, { once: true });
-        });
+        await this.abortableSleep(1000, signal);
         if (this.state === 'TRIPPED') return;
       }
     }
@@ -339,28 +335,25 @@ export class BypassLane {
       throw new Error('BypassLane not configured');
     }
 
-    // Parse tool_input and tool_response from JSON strings
-    let toolInput: unknown;
-    let toolResponse: unknown;
-    try { toolInput = message.tool_input ? JSON.parse(message.tool_input) : undefined; }
-    catch { toolInput = message.tool_input; }
-    try { toolResponse = message.tool_response ? JSON.parse(message.tool_response) : undefined; }
-    catch { toolResponse = message.tool_response; }
-
-    // Build observation prompt
+    // tool_input/tool_response are already JSON strings from PendingMessageStore.enqueue(),
+    // and buildObservationPrompt internally JSON.parses them — pass through directly.
     const obsPrompt = buildObservationPrompt({
       id: 0,
       tool_name: message.tool_name!,
-      tool_input: JSON.stringify(toolInput),
-      tool_output: JSON.stringify(toolResponse),
+      tool_input: message.tool_input || '{}',
+      tool_output: message.tool_response || '{}',
       created_at_epoch: message.created_at_epoch,
       cwd: message.cwd || undefined,
     });
 
     // System prompt (condensed — bypass is single-turn, no session context needed)
+    // MUST include valid type list — without it, models output arbitrary types (e.g. "edit", "Code Change")
+    // that fail parser validation and fall back to "bugfix", destroying classification value.
     const systemPrompt =
       'You are a code observation extractor. Analyze the tool usage and output structured observations in XML format. ' +
-      'Output ONLY <observation> tags with type, title, subtitle, facts, narrative, concepts, files_read, files_modified.';
+      'Output ONLY <observation> tags. Valid type values: discovery, bugfix, feature, change, refactor, decision. ' +
+      'Fields: type, title, subtitle, facts (with <fact> children), narrative, concepts (with <concept> children), ' +
+      'files_read (with <file> children), files_modified (with <file> children).';
 
     // Call REST API
     const fetchSignal = AbortSignal.any([signal, AbortSignal.timeout(FETCH_TIMEOUT_MS)]);
@@ -379,19 +372,10 @@ export class BypassLane {
       const result = sessionStore.storeObservations(
         memorySessionId,
         session.project,
-        observations.map(obs => ({
-          type: obs.type,
-          title: obs.title,
-          subtitle: obs.subtitle,
-          facts: obs.facts,
-          narrative: obs.narrative,
-          concepts: obs.concepts,
-          files_read: obs.files_read,
-          files_modified: obs.files_modified,
-        })),
-        null, // No summary for observation messages
+        observations,  // ParsedObservation already has the exact 8 fields storeObservations expects
+        null,           // No summary for observation messages
         message.prompt_number || undefined,
-        0,    // discoveryTokens
+        0,              // discoveryTokens
         message.created_at_epoch,
       );
 
@@ -462,7 +446,8 @@ export class BypassLane {
             { role: 'user', content: prompt },
           ],
           temperature: 0.3,
-          max_tokens: 4096,
+          max_tokens: 8192,
+          reasoning: { effort: 'low' },  // Observation extraction is structured; minimize reasoning overhead
         }),
         signal,
       });

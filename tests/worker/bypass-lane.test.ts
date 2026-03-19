@@ -139,7 +139,7 @@ describe('BypassLane', () => {
   // See tests/sqlite/pending-message-claim-observation.test.ts for coverage.
 
   describe('lifecycle', () => {
-    it('stopForSession aborts and removes consumer', () => {
+    it('stopForSession aborts consumer but leaves map cleanup to .finally()', () => {
       const lane = new BypassLane();
       (lane as any).state = 'ACTIVE';
       const ac = new AbortController();
@@ -147,7 +147,31 @@ describe('BypassLane', () => {
 
       lane.stopForSession(1);
       expect(ac.signal.aborted).toBe(true);
-      expect((lane as any).activeConsumers.has(1)).toBe(false);
+      // Map entry persists until .finally() runs — prevents race with startForSession
+      expect((lane as any).activeConsumers.has(1)).toBe(true);
+    });
+
+    it('startForSession replaces aborted consumer without waiting for .finally()', () => {
+      const lane = new BypassLane();
+      (lane as any).state = 'ACTIVE';
+      // Simulate old consumer that was stopped (aborted but still in map)
+      const oldAc = new AbortController();
+      oldAc.abort();
+      (lane as any).activeConsumers.set(1, oldAc);
+
+      // startForSession should see the aborted controller and replace it
+      const mockSession = { sessionDbId: 1, abortController: new AbortController(), dbPath: '/test' } as any;
+      // Mock dependencies to prevent actual consumeLoop execution
+      (lane as any).sessionManager = { getPendingMessageStore: () => ({}) };
+      (lane as any).dbManager = {};
+      lane.startForSession(mockSession);
+
+      // New controller should be in the map, different from the old aborted one
+      const newAc = (lane as any).activeConsumers.get(1);
+      expect(newAc).not.toBe(oldAc);
+      expect(newAc.signal.aborted).toBe(false);
+      // Cleanup
+      newAc.abort();
     });
 
     it('shutdown clears all consumers and cooldown timer', () => {
