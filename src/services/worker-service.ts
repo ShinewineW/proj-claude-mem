@@ -1137,6 +1137,43 @@ export class WorkerService {
 // ============================================================================
 
 /**
+ * P4: Force-kill process(es) listening on a given port.
+ * Tier 2: SIGTERM + 3s wait. Tier 3: SIGKILL if port still occupied.
+ * Platform: macOS/Linux only (lsof). Windows is not a deployment target.
+ */
+async function forceKillByPort(port: number): Promise<boolean> {
+  const { execSync } = await import('child_process');
+
+  // Tier 2: SIGTERM
+  try {
+    const pids = execSync(`lsof -ti :${port}`, { encoding: 'utf-8' }).trim();
+    if (pids) {
+      for (const pid of pids.split('\n').filter(Boolean)) {
+        try { process.kill(parseInt(pid), 'SIGTERM'); } catch { /* already dead */ }
+      }
+      const freed = await waitForPortFree(port, 3000);
+      if (freed) return true;
+    }
+  } catch {
+    // lsof found no process — port may already be free
+    return true;
+  }
+
+  // Tier 3: SIGKILL
+  try {
+    const pids = execSync(`lsof -ti :${port}`, { encoding: 'utf-8' }).trim();
+    if (pids) {
+      for (const pid of pids.split('\n').filter(Boolean)) {
+        try { process.kill(parseInt(pid), 'SIGKILL'); } catch { /* already dead */ }
+      }
+    }
+  } catch {
+    // No process found
+  }
+  return waitForPortFree(port, 3000);
+}
+
+/**
  * Ensures the worker is started and healthy.
  * This function can be called by both 'start' and 'hook' commands.
  *
@@ -1288,12 +1325,19 @@ async function main() {
 
     case 'restart': {
       logger.info('SYSTEM', 'Restarting worker');
+
+      // Tier 1: Graceful HTTP shutdown (3s timeout via httpShutdown)
       await httpShutdown(port);
-      const freed = await waitForPortFree(port, getPlatformTimeout(15000));
+      let freed = await waitForPortFree(port, getPlatformTimeout(3000));
+
+      // Tier 2-3: Force kill by port if HTTP shutdown failed (e.g., hung worker)
       if (!freed) {
-        logger.error('SYSTEM', 'Port did not free up after shutdown, aborting restart', { port });
-        // Exit gracefully: Windows Terminal won't keep tab open on exit 0
-        // The wrapper/plugin will handle restart logic if needed
+        logger.warn('SYSTEM', 'HTTP shutdown failed, attempting force kill by port', { port });
+        freed = await forceKillByPort(port);
+      }
+
+      if (!freed) {
+        logger.error('SYSTEM', 'Port did not free up after all shutdown tiers, aborting restart', { port });
         process.exit(0);
       }
       removePidFile();
@@ -1301,20 +1345,13 @@ async function main() {
       const pid = spawnDaemon(__filename, port);
       if (pid === undefined) {
         logger.error('SYSTEM', 'Failed to spawn worker daemon during restart');
-        // Exit gracefully: Windows Terminal won't keep tab open on exit 0
-        // The wrapper/plugin will handle restart logic if needed
         process.exit(0);
       }
-
-      // PID file is written by the worker itself after listen() succeeds
-      // This is race-free and works correctly on Windows where cmd.exe PID is useless
 
       const healthy = await waitForHealth(port, getPlatformTimeout(HOOK_TIMEOUTS.POST_SPAWN_WAIT));
       if (!healthy) {
         removePidFile();
         logger.error('SYSTEM', 'Worker failed to restart');
-        // Exit gracefully: Windows Terminal won't keep tab open on exit 0
-        // The wrapper/plugin will handle restart logic if needed
         process.exit(0);
       }
 
