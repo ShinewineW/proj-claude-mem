@@ -366,33 +366,37 @@ export class BypassLane {
     // Parse observations from XML response
     const observations = parseObservations(responseText, session.contentSessionId);
 
-    // Store observations in DB (atomic)
-    if (observations.length > 0) {
-      const sessionStore = this.dbManager.getSessionStore(session.dbPath);
-      const result = sessionStore.storeObservations(
-        memorySessionId,
-        session.project,
-        observations,  // ParsedObservation already has the exact 8 fields storeObservations expects
-        null,           // No summary for observation messages
-        message.prompt_number || undefined,
-        0,              // discoveryTokens
-        message.created_at_epoch,
-      );
+    // F1 fix: Throw on empty observations — consumeLoop catch calls markFailed + recordFailure.
+    // After 3 failures, circuit breaker trips and main channel takes over.
+    if (observations.length === 0) {
+      throw new Error('No observations parsed from bypass response');
+    }
 
-      // Chroma sync (fire-and-forget)
-      const chromaSync = this.dbManager.getChromaSync(session.dbPath);
-      if (chromaSync) {
-        for (let i = 0; i < observations.length; i++) {
-          const obsId = result.observationIds[i];
-          chromaSync.syncObservation(
-            obsId,
-            memorySessionId,
-            session.project,
-            observations[i],
-            message.prompt_number || 0,
-            result.createdAtEpoch,
-          ).catch(() => {}); // Fire-and-forget
-        }
+    // Store observations in DB (atomic)
+    const sessionStore = this.dbManager.getSessionStore(session.dbPath);
+    const result = sessionStore.storeObservations(
+      memorySessionId,
+      session.project,
+      observations,  // ParsedObservation already has the exact 8 fields storeObservations expects
+      null,           // No summary for observation messages
+      message.prompt_number || undefined,
+      0,              // discoveryTokens
+      message.created_at_epoch,
+    );
+
+    // Chroma sync (fire-and-forget)
+    const chromaSync = this.dbManager.getChromaSync(session.dbPath);
+    if (chromaSync) {
+      for (let i = 0; i < observations.length; i++) {
+        const obsId = result.observationIds[i];
+        chromaSync.syncObservation(
+          obsId,
+          memorySessionId,
+          session.project,
+          observations[i],
+          message.prompt_number || 0,
+          result.createdAtEpoch,
+        ).catch(() => {}); // Fire-and-forget
       }
     }
 

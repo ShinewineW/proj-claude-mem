@@ -368,3 +368,60 @@ describe('BypassLane', () => {
     });
   });
 });
+
+describe('F1: empty observation defense', () => {
+  it('throws when parseObservations returns empty array', async () => {
+    const lane = new BypassLane();
+    (lane as any).state = 'ACTIVE';
+    (lane as any).config = { provider: 'openrouter', apiKey: 'test', model: 'test', cooldownMs: 5000 };
+
+    // Mock dependencies
+    const mockMarkFailed = mock(() => {});
+    const mockConfirmProcessed = mock(() => {});
+    const mockGetPendingMessageStore = () => ({
+      claimNextObservation: mock(() => null),
+      markFailed: mockMarkFailed,
+      confirmProcessed: mockConfirmProcessed,
+    });
+    (lane as any).sessionManager = { getPendingMessageStore: mockGetPendingMessageStore };
+    (lane as any).dbManager = {
+      getSessionStore: () => ({ storeObservations: mock(() => ({ observationIds: [] })) }),
+      getChromaSync: () => null,
+    };
+
+    // Mock callRestApi to return non-empty content with no <observation> tags
+    (lane as any).callRestApi = async () => 'Some response without observation tags';
+
+    const message = {
+      id: 1, session_db_id: 1, content_session_id: 'cs-1',
+      message_type: 'observation', tool_name: 'Read', tool_input: '{}',
+      tool_response: '{}', cwd: '/test', prompt_number: 1,
+      status: 'processing', retry_count: 0, created_at_epoch: Date.now(),
+      last_assistant_message: null, started_processing_at_epoch: Date.now(),
+      completed_at_epoch: null,
+    };
+    const session = {
+      sessionDbId: 1, contentSessionId: 'cs-1', memorySessionId: 'mem-1',
+      project: 'test', dbPath: '/test/mem.db', abortController: new AbortController(),
+    } as any;
+
+    // processObservation should throw
+    await expect(
+      (lane as any).processObservation(message, session, 'mem-1', AbortSignal.timeout(5000))
+    ).rejects.toThrow('No observations parsed from bypass response');
+  });
+
+  it('trips circuit breaker after 3 consecutive empty-observation failures', () => {
+    const lane = new BypassLane();
+    (lane as any).state = 'ACTIVE';
+    (lane as any).consecutiveFailures = 0;
+
+    // Simulate 3 consecutive failures (what consumeLoop catch block does)
+    (lane as any).recordFailure();
+    expect(lane.getState()).toBe('ACTIVE');
+    (lane as any).recordFailure();
+    expect(lane.getState()).toBe('ACTIVE');
+    (lane as any).recordFailure();
+    expect(lane.getState()).toBe('TRIPPED');
+  });
+});
