@@ -51,6 +51,7 @@ export class BypassLane {
   private activeConsumers = new Map<number, AbortController>();
   private config: BypassConfig | null = null;
   private lastGeminiRequestTime = 0;
+  private cachedSettings: { data: ReturnType<typeof SettingsDefaultsManager.loadFromFile>; ts: number } | null = null;
 
   // Injected after construction (avoids circular dep with WorkerService)
   private sessionManager: SessionManager | null = null;
@@ -60,6 +61,17 @@ export class BypassLane {
   setDependencies(sessionManager: SessionManager, dbManager: DatabaseManager): void {
     this.sessionManager = sessionManager;
     this.dbManager = dbManager;
+  }
+
+  /** Cached settings read — avoids sync filesystem I/O on every loop iteration. */
+  private getSettings(): ReturnType<typeof SettingsDefaultsManager.loadFromFile> {
+    const now = Date.now();
+    if (this.cachedSettings && now - this.cachedSettings.ts < 5000) {
+      return this.cachedSettings.data;
+    }
+    const data = SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH);
+    this.cachedSettings = { data, ts: now };
+    return data;
   }
 
   /** Read settings and determine bypass config. Returns null if bypass not applicable. */
@@ -314,13 +326,14 @@ export class BypassLane {
 
         // F5 fix: Rate limiting for Gemini free tier (15 RPM = 4s interval)
         if (this.config?.provider === 'gemini') {
-          const settings = SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH);
+          const settings = this.getSettings();
           if (settings.CLAUDE_MEM_GEMINI_RATE_LIMITING_ENABLED === 'true') {
             const GEMINI_INTERVAL_MS = 4000;
             const now = Date.now();
             const elapsed = now - this.lastGeminiRequestTime;
             this.lastGeminiRequestTime = now;
-            const delay = Math.max(0, GEMINI_INTERVAL_MS - elapsed);
+            // Math.min caps delay to prevent unbounded sleep on clock skew
+            const delay = Math.min(GEMINI_INTERVAL_MS, Math.max(0, GEMINI_INTERVAL_MS - elapsed));
             if (delay > 0) {
               await this.abortableSleep(delay, signal);
             }
