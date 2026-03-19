@@ -9,7 +9,7 @@
  */
 
 const { execSync } = require('child_process');
-const { existsSync, readFileSync, mkdirSync, copyFileSync, writeFileSync, symlinkSync, rmSync, lstatSync } = require('fs');
+const { existsSync, readFileSync, mkdirSync, copyFileSync, writeFileSync } = require('fs');
 const path = require('path');
 const os = require('os');
 
@@ -115,31 +115,44 @@ try {
     console.warn('Warning: Could not update settings.json:', e.message);
   }
 
-  // Create marketplace discovery symlinks so CC can find hooks.json and plugin.json
-  const MARKETPLACE_PLUGIN_PATH = path.join(os.homedir(), '.claude', 'plugins', 'marketplaces', 'thedotmack', 'plugin');
+  // Maintain minimal marketplace discovery structure.
+  // CC reads ONLY 2 files from marketplace during plugin discovery:
+  //   1. .claude-plugin/marketplace.json  → source: "./plugin"
+  //   2. plugin/.claude-plugin/plugin.json → manifest version
+  // All other resources (hooks, skills, MCP, scripts) are loaded from cache.
+  const MARKETPLACE_ROOT = path.join(os.homedir(), '.claude', 'plugins', 'marketplaces', 'thedotmack');
+  const MARKETPLACE_PLUGIN_PATH = path.join(MARKETPLACE_ROOT, 'plugin');
   try {
-    mkdirSync(MARKETPLACE_PLUGIN_PATH, { recursive: true });
-    const SYMLINK_TARGETS = ['hooks', '.claude-plugin', '.mcp.json', 'scripts', 'skills', 'modes', 'ui', 'package.json'];
-    for (const name of SYMLINK_TARGETS) {
-      const src = path.join(CACHE_VERSION_PATH, name);
-      const dst = path.join(MARKETPLACE_PLUGIN_PATH, name);
-      // Remove existing symlink before creating new one; refuse to delete real directories
-      try {
-        const stat = lstatSync(dst);
-        if (stat.isSymbolicLink() || !stat.isDirectory()) {
-          rmSync(dst, { force: true });
-        } else {
-          rmSync(dst, { recursive: true, force: true });
-        }
-      } catch (e) { if (e.code !== 'ENOENT') throw e; }
-      // Only create symlink if the source exists in cache
-      if (existsSync(src)) {
-        symlinkSync(src, dst);
-      }
+    // 1. marketplace.json — static registry, create if missing
+    const mktManifestDir = path.join(MARKETPLACE_ROOT, '.claude-plugin');
+    const mktManifestPath = path.join(mktManifestDir, 'marketplace.json');
+    mkdirSync(mktManifestDir, { recursive: true });
+    if (!existsSync(mktManifestPath)) {
+      writeFileSync(mktManifestPath, JSON.stringify({
+        name: 'thedotmack',
+        owner: { name: 'ShinewineW' },
+        metadata: {
+          description: 'claude-mem fork with per-project isolation',
+          homepage: 'https://github.com/ShinewineW/proj-claude-mem',
+        },
+        plugins: [{
+          name: 'claude-mem',
+          source: './plugin',
+          description: 'Persistent memory system for Claude Code',
+        }],
+      }, null, 2));
     }
-    console.log('Created marketplace discovery symlinks at', MARKETPLACE_PLUGIN_PATH);
+    // 2. plugin.json — copy from cache on each sync (keeps version in sync)
+    const pluginManifestDir = path.join(MARKETPLACE_PLUGIN_PATH, '.claude-plugin');
+    mkdirSync(pluginManifestDir, { recursive: true });
+    const srcManifest = path.join(CACHE_VERSION_PATH, '.claude-plugin', 'plugin.json');
+    const dstManifest = path.join(pluginManifestDir, 'plugin.json');
+    if (existsSync(srcManifest)) {
+      copyFileSync(srcManifest, dstManifest);
+    }
+    console.log('Marketplace discovery structure ready at', MARKETPLACE_ROOT);
   } catch (e) {
-    console.warn('Warning: Could not create marketplace symlinks:', e.message);
+    console.warn('Warning: Could not create marketplace discovery structure:', e.message);
   }
 
   // Register thedotmack in known_marketplaces.json so CC discovery works
