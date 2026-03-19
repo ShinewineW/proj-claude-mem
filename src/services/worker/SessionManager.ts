@@ -574,6 +574,59 @@ export class SessionManager {
     return toReap.length;
   }
 
+  private static readonly GHOST_SESSION_THRESHOLD_MS = 30 * 60 * 1000; // 30 minutes
+
+  /**
+   * Periodic DB scan for ghost sessions and stuck processing messages.
+   * Ghost = session is 'active' in DB but absent from in-memory sessions Map.
+   * Called from the 2-minute stale reaper interval (worker-service.ts).
+   */
+  cleanupGhostSessionsInDb(dbPaths: Set<string>): void {
+    const now = Date.now();
+    const threshold = now - SessionManager.GHOST_SESSION_THRESHOLD_MS;
+
+    for (const dbPath of dbPaths) {
+      try {
+        const sessionStore = this.dbManager.getSessionStore(dbPath);
+        const pendingStore = this.getPendingStore(dbPath);
+
+        // D1: Find and clean ghost sessions
+        const ghostCandidates = sessionStore.db.prepare(
+          'SELECT id FROM sdk_sessions WHERE status = ? AND started_at_epoch < ?'
+        ).all('active', threshold) as { id: number }[];
+
+        for (const { id } of ghostCandidates) {
+          const key = this.sessionKey(id, dbPath);
+          if (this.sessions.has(key)) continue; // In memory — not a ghost
+
+          const sessionResult = sessionStore.db.prepare(
+            'UPDATE sdk_sessions SET status = ?, completed_at_epoch = ? WHERE id = ? AND status = ?'
+          ).run('failed', now, id, 'active');
+
+          if (sessionResult.changes > 0) {
+            const msgResult = sessionStore.db.prepare(
+              "UPDATE pending_messages SET status = 'failed', failed_at_epoch = ? WHERE session_db_id = ? AND status IN ('pending', 'processing')"
+            ).run(now, id);
+
+            logger.warn('SESSION', `Ghost session ${id} cleaned up`, {
+              sessionDbId: id,
+              dbPath,
+              messagesMarkedFailed: msgResult.changes
+            });
+          }
+        }
+
+        // D2: Reset stuck processing messages across ALL sessions
+        const resetCount = pendingStore.resetStaleProcessingMessages(5 * 60 * 1000);
+        if (resetCount > 0) {
+          logger.info('SESSION', `Reset ${resetCount} stuck processing message(s)`, { dbPath });
+        }
+      } catch (error) {
+        logger.warn('SESSION', 'Ghost cleanup failed for DB (skipping)', { dbPath }, error as Error);
+      }
+    }
+  }
+
   /**
    * Shutdown all active sessions
    */

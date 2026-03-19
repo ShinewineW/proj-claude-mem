@@ -562,6 +562,8 @@ export class WorkerService {
           if (reaped > 0) {
             logger.info('SYSTEM', `Reaped ${reaped} stale sessions`);
           }
+          // Periodic DB ghost scan: clean ghost sessions + stuck processing messages
+          this.sessionManager.cleanupGhostSessionsInDb(this.getEnabledDbPaths());
         } catch (e) {
           logger.error('SYSTEM', 'Stale session reaper error', { error: e instanceof Error ? e.message : String(e) });
         } finally {
@@ -914,6 +916,23 @@ export class WorkerService {
     }
     this.sessionManager.removeSessionImmediate(sessionDbId, session.dbPath);
     this.sessionEventBroadcaster.broadcastSessionCompleted(sessionDbId, session.project);
+  }
+
+  /**
+   * Collect all DB paths: default DB + all enabled project DBs.
+   * Shared by stale reaper and processPendingQueues.
+   */
+  private getEnabledDbPaths(): Set<string> {
+    const dbPaths = new Set<string>([DB_PATH]);
+    try {
+      const enabled = listEnabledProjects();
+      for (const projectRoot of Object.keys(enabled)) {
+        dbPaths.add(path.join(projectRoot, '.claude', 'mem.db'));
+      }
+    } catch {
+      // Allowlist unreadable — scan default DB only
+    }
+    return dbPaths;
   }
 
   /**

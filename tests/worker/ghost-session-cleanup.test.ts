@@ -174,3 +174,80 @@ describe('D3: reapStaleSessions pendingCount short-circuit fix', () => {
     expect(reaped).toBe(0);
   });
 });
+
+describe('D1+D2: cleanupGhostSessionsInDb', () => {
+  let db: Database;
+  let dbManager: DatabaseManager;
+  let sessionManager: SessionManager;
+
+  beforeEach(async () => {
+    db = createTestDb();
+    const store = createFakeStore(db);
+    const mockPool = {
+      getStore: () => store,
+      getSearch: () => ({ close: () => {} }),
+      getLastActiveStore: () => store,
+      getLastActiveSearch: () => null,
+      closeAll: () => {},
+    } as any;
+    dbManager = new DatabaseManager(mockPool);
+    await dbManager.initialize(dbPath);
+    sessionManager = new SessionManager(dbManager);
+  });
+
+  it('marks ghost sessions (DB-only, >30min) as failed', () => {
+    const oldEpoch = Date.now() - 60 * 60 * 1000; // 1 hour ago
+    insertSession(db, 'ghost-1', 'TestProject', oldEpoch);
+    // Do NOT initialize in memory — this is a ghost
+
+    sessionManager.cleanupGhostSessionsInDb(new Set([dbPath]));
+
+    const row = db.prepare('SELECT status FROM sdk_sessions WHERE content_session_id = ?').get('ghost-1') as any;
+    expect(row.status).toBe('failed');
+  });
+
+  it('does NOT mark in-memory sessions as failed', () => {
+    const oldEpoch = Date.now() - 60 * 60 * 1000;
+    const sessionDbId = insertSession(db, 'in-memory-1', 'TestProject', oldEpoch);
+    sessionManager.initializeSession(sessionDbId, 'prompt', 1, dbPath);
+
+    sessionManager.cleanupGhostSessionsInDb(new Set([dbPath]));
+
+    const row = db.prepare('SELECT status FROM sdk_sessions WHERE content_session_id = ?').get('in-memory-1') as any;
+    expect(row.status).toBe('active');
+  });
+
+  it('respects 30-minute threshold (young sessions not touched)', () => {
+    const recentEpoch = Date.now() - 10 * 60 * 1000; // 10 min ago
+    insertSession(db, 'young-1', 'TestProject', recentEpoch);
+
+    sessionManager.cleanupGhostSessionsInDb(new Set([dbPath]));
+
+    const row = db.prepare('SELECT status FROM sdk_sessions WHERE content_session_id = ?').get('young-1') as any;
+    expect(row.status).toBe('active');
+  });
+
+  it('cleans both pending AND processing messages for ghost sessions (SE-5)', () => {
+    const oldEpoch = Date.now() - 60 * 60 * 1000;
+    const sessionDbId = insertSession(db, 'ghost-msgs', 'TestProject', oldEpoch);
+    insertPendingMessage(db, sessionDbId, 'ghost-msgs', 'observation', 'pending');
+    insertPendingMessage(db, sessionDbId, 'ghost-msgs', 'summarize', 'processing', Date.now() - 600000);
+
+    sessionManager.cleanupGhostSessionsInDb(new Set([dbPath]));
+
+    const msgs = db.prepare('SELECT status FROM pending_messages WHERE session_db_id = ?').all(sessionDbId) as any[];
+    expect(msgs.every((m: any) => m.status === 'failed')).toBe(true);
+  });
+
+  it('resets stuck processing messages across all sessions (D2)', () => {
+    const sessionDbId = insertSession(db, 'completed-1', 'TestProject');
+    db.prepare('UPDATE sdk_sessions SET status = ? WHERE id = ?').run('completed', sessionDbId);
+    const oldProcessingEpoch = Date.now() - 10 * 60 * 1000; // 10 min ago
+    insertPendingMessage(db, sessionDbId, 'completed-1', 'summarize', 'processing', oldProcessingEpoch);
+
+    sessionManager.cleanupGhostSessionsInDb(new Set([dbPath]));
+
+    const msg = db.prepare('SELECT status FROM pending_messages WHERE session_db_id = ?').get(sessionDbId) as any;
+    expect(msg.status).toBe('pending');
+  });
+});
