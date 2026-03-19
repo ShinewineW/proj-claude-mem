@@ -139,6 +139,45 @@ export class PendingMessageStore {
   }
 
   /**
+   * Atomically claim the next pending OBSERVATION message (bypass lane only).
+   * Unlike claimNextMessage:
+   * - SQL filters by message_type = 'observation' — never claims summarize
+   * - No self-healing — does not reset stale processing messages
+   *   (main channel's claimNextMessage handles recovery for all message types)
+   */
+  claimNextObservation(sessionDbId: number): PersistentPendingMessage | null {
+    const claimTx = this.db.transaction((sessionId: number) => {
+      const now = Date.now();
+
+      // No self-healing here — bypass must not reset messages the main channel is processing
+
+      const peekStmt = this.db.prepare(`
+        SELECT * FROM pending_messages
+        WHERE session_db_id = ? AND status = 'pending' AND message_type = 'observation'
+        ORDER BY id ASC
+        LIMIT 1
+      `);
+      const msg = peekStmt.get(sessionId) as PersistentPendingMessage | null;
+
+      if (msg) {
+        const updateStmt = this.db.prepare(`
+          UPDATE pending_messages
+          SET status = 'processing', started_processing_at_epoch = ?
+          WHERE id = ?
+        `);
+        updateStmt.run(now, msg.id);
+
+        logger.info('QUEUE', `CLAIMED_OBS | sessionDbId=${sessionId} | messageId=${msg.id}`, {
+          sessionId: sessionId,
+        });
+      }
+      return msg;
+    });
+
+    return claimTx(sessionDbId) as PersistentPendingMessage | null;
+  }
+
+  /**
    * Confirm a message was successfully processed - DELETE it from the queue.
    * CRITICAL: Only call this AFTER the observation/summary has been stored to DB.
    * This prevents message loss on generator crash.
