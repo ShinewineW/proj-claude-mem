@@ -60,7 +60,7 @@ mock.module('../../src/services/worker/ProcessRegistry.js', () => ({
 }));
 
 import { BypassLane, type BypassState } from '../../src/services/worker/BypassLane.js';
-import type { PersistentPendingMessage } from '../../src/services/sqlite/PendingMessageStore.js';
+
 
 describe('BypassLane', () => {
   describe('state machine', () => {
@@ -135,23 +135,8 @@ describe('BypassLane', () => {
     });
   });
 
-  describe('message filtering', () => {
-    it('skips summarize messages', () => {
-      const lane = new BypassLane();
-      const shouldProcess = (lane as any).shouldProcessMessage({
-        message_type: 'summarize',
-      } as PersistentPendingMessage);
-      expect(shouldProcess).toBe(false);
-    });
-
-    it('processes observation messages', () => {
-      const lane = new BypassLane();
-      const shouldProcess = (lane as any).shouldProcessMessage({
-        message_type: 'observation',
-      } as PersistentPendingMessage);
-      expect(shouldProcess).toBe(true);
-    });
-  });
+  // Message filtering is now done at SQL level in claimNextObservation.
+  // See tests/sqlite/pending-message-claim-observation.test.ts for coverage.
 
   describe('lifecycle', () => {
     it('stopForSession aborts and removes consumer', () => {

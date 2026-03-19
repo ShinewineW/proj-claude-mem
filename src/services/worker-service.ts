@@ -603,9 +603,8 @@ export class WorkerService {
   }
 
   /**
-   * Start a session processor
-   * On SDK resume failure (terminated session), falls back to Gemini/OpenRouter if available,
-   * otherwise marks messages abandoned and removes session so queue does not grow unbounded.
+   * Start a session processor.
+   * On SDK resume failure (terminated session), marks messages abandoned and removes session.
    */
   private startSessionProcessor(
     session: ReturnType<typeof this.sessionManager.getSession>,
@@ -1154,7 +1153,9 @@ async function forceKillByPort(port: number): Promise<boolean> {
     const pids = execSync(`lsof -ti :${port}`, { encoding: 'utf-8' }).trim();
     if (pids) {
       for (const pid of pids.split('\n').filter(Boolean)) {
-        try { process.kill(parseInt(pid), 'SIGTERM'); } catch { /* already dead */ }
+        const pidNum = parseInt(pid, 10);
+        if (!Number.isFinite(pidNum) || pidNum <= 0) continue;
+        try { process.kill(pidNum, 'SIGTERM'); } catch { /* already dead or EPERM */ }
       }
       const freed = await waitForPortFree(port, 3000);
       if (freed) return true;
@@ -1169,7 +1170,9 @@ async function forceKillByPort(port: number): Promise<boolean> {
     const pids = execSync(`lsof -ti :${port}`, { encoding: 'utf-8' }).trim();
     if (pids) {
       for (const pid of pids.split('\n').filter(Boolean)) {
-        try { process.kill(parseInt(pid), 'SIGKILL'); } catch { /* already dead */ }
+        const pidNum = parseInt(pid, 10);
+        if (!Number.isFinite(pidNum) || pidNum <= 0) continue;
+        try { process.kill(pidNum, 'SIGKILL'); } catch { /* already dead or EPERM */ }
       }
     }
   } catch {

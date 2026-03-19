@@ -73,7 +73,7 @@ export class BypassLane {
     if (provider === 'gemini') {
       const apiKey = settings.CLAUDE_MEM_GEMINI_API_KEY || getCredential('GEMINI_API_KEY') || '';
       if (!apiKey) return null;
-      const model = settings.CLAUDE_MEM_GEMINI_MODEL || 'gemini-2.5-flash';
+      const model = settings.CLAUDE_MEM_GEMINI_MODEL || 'gemini-2.5-flash-lite';
       return { provider: 'gemini', apiKey, model, cooldownMs };
     }
 
@@ -158,11 +158,6 @@ export class BypassLane {
       this.cooldownTimer = null;
     }
     this.state = 'DISABLED';
-  }
-
-  /** Filter: only process observation messages. */
-  private shouldProcessMessage(message: PersistentPendingMessage): boolean {
-    return message.message_type === 'observation';
   }
 
   private recordSuccess(): void {
