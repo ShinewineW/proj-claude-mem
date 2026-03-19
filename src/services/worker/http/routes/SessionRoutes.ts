@@ -55,14 +55,6 @@ export class SessionRoutes extends BaseRouteHandler {
   }
 
   /**
-   * Get the agent for main channel processing.
-   * Always returns Claude SDK — bypass lane handles REST providers separately.
-   */
-  private getActiveAgent(): SDKAgent {
-    return this.sdkAgent;
-  }
-
-  /**
    * Get the currently selected provider name for main channel.
    */
   private getSelectedProvider(): 'claude' {

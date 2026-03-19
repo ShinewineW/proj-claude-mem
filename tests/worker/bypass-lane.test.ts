@@ -457,17 +457,6 @@ describe('F5: Gemini rate limiting', () => {
     expect((lane as any).lastGeminiRequestTime).toBe(0);
   });
 
-  it('updates lastGeminiRequestTime after processing for gemini provider', () => {
-    const lane = new BypassLane();
-    (lane as any).config = { provider: 'gemini', apiKey: 'test', model: 'test', cooldownMs: 5000 };
-    expect((lane as any).lastGeminiRequestTime).toBe(0);
-
-    // Simulate what consumeLoop does after successful processing
-    const now = Date.now();
-    (lane as any).lastGeminiRequestTime = now;
-    expect((lane as any).lastGeminiRequestTime).toBeGreaterThan(0);
-  });
-
   it('does not have rate limiting for openrouter provider', () => {
     const lane = new BypassLane();
     (lane as any).config = { provider: 'openrouter', apiKey: 'test', model: 'test', cooldownMs: 5000 };

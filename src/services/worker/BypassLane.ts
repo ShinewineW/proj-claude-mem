@@ -76,7 +76,7 @@ export class BypassLane {
 
   /** Read settings and determine bypass config. Returns null if bypass not applicable. */
   private resolveConfig(): BypassConfig | null {
-    const settings = SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH);
+    const settings = this.getSettings();
 
     const provider = settings.CLAUDE_MEM_PROVIDER;
     if (provider === 'claude' || !provider) return null;
