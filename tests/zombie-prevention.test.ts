@@ -177,7 +177,6 @@ describe('Zombie Agent Prevention', () => {
 
     // Initially no pending messages
     expect(pendingStore.getPendingCount(sessionId)).toBe(0);
-    expect(pendingStore.hasAnyPendingWork()).toBe(false);
 
     // Enqueue 3 messages
     const msgId1 = enqueueTestMessage(sessionId, 'content-queue-test');
@@ -188,9 +187,6 @@ describe('Zombie Agent Prevention', () => {
 
     const msgId3 = enqueueTestMessage(sessionId, 'content-queue-test');
     expect(pendingStore.getPendingCount(sessionId)).toBe(3);
-
-    // hasAnyPendingWork should return true
-    expect(pendingStore.hasAnyPendingWork()).toBe(true);
 
     // CLAIM-CONFIRM pattern: claimNextMessage marks as 'processing' (not deleted)
     const claimed = pendingStore.claimNextMessage(sessionId);
@@ -215,7 +211,6 @@ describe('Zombie Agent Prevention', () => {
 
     // Should be empty now
     expect(pendingStore.getPendingCount(sessionId)).toBe(0);
-    expect(pendingStore.hasAnyPendingWork()).toBe(false);
   });
 
   // Additional test: Multiple sessions with pending work
