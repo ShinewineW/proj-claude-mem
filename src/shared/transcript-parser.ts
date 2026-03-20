@@ -1,4 +1,4 @@
-import { readFileSync, existsSync } from 'fs';
+import { readFileSync, existsSync, statSync } from 'fs';
 import { logger } from '../utils/logger.js';
 
 /**
@@ -13,12 +13,24 @@ export function extractLastMessage(
   stripSystemReminders: boolean = false
 ): string {
   if (!transcriptPath || !existsSync(transcriptPath)) {
-    throw new Error(`Transcript path missing or file does not exist: ${transcriptPath}`);
+    logger.warn('TRANSCRIPT', `Transcript path missing or file does not exist: ${transcriptPath}`);
+    return '';
+  }
+
+  // Guard against directory paths (existsSync returns true for directories)
+  try {
+    if (!statSync(transcriptPath).isFile()) {
+      logger.warn('TRANSCRIPT', `Transcript path is not a file: ${transcriptPath}`);
+      return '';
+    }
+  } catch {
+    return '';
   }
 
   const content = readFileSync(transcriptPath, 'utf-8').trim();
   if (!content) {
-    throw new Error(`Transcript file exists but is empty: ${transcriptPath}`);
+    logger.warn('TRANSCRIPT', `Transcript file exists but is empty: ${transcriptPath}`);
+    return '';
   }
 
   const lines = content.split('\n');

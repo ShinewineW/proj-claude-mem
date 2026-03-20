@@ -1,6 +1,6 @@
-import { join, dirname, basename, sep, resolve } from 'path';
+import { join, dirname, basename, resolve } from 'path';
 import { homedir } from 'os';
-import { existsSync, mkdirSync, statSync } from 'fs';
+import { existsSync, mkdirSync, statSync, readFileSync } from 'fs';
 import { execSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import { SettingsDefaultsManager } from './SettingsDefaultsManager.js';
@@ -25,7 +25,25 @@ const _dirname = getDirname();
  */
 
 // Base directories
-export const DATA_DIR = process.env.CLAUDE_MEM_DATA_DIR || SettingsDefaultsManager.get('CLAUDE_MEM_DATA_DIR');
+function resolveDataDir(): string {
+  // Tier 1: env var (highest priority)
+  const envVal = process.env.CLAUDE_MEM_DATA_DIR;
+  if (envVal) return envVal;
+
+  // Tier 2: settings.json
+  const settingsPath = join(homedir(), '.claude-mem', 'settings.json');
+  try {
+    if (existsSync(settingsPath)) {
+      const settings = JSON.parse(readFileSync(settingsPath, 'utf-8'));
+      const val = settings.CLAUDE_MEM_DATA_DIR ?? settings.settings?.CLAUDE_MEM_DATA_DIR;
+      if (val) return val;
+    }
+  } catch { /* fall through to default */ }
+
+  // Tier 3: hardcoded default
+  return SettingsDefaultsManager.get('CLAUDE_MEM_DATA_DIR');
+}
+export const DATA_DIR = resolveDataDir();
 // Note: CLAUDE_CONFIG_DIR is a Claude Code setting, not claude-mem, so leave as env var
 export const CLAUDE_CONFIG_DIR = process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude');
 

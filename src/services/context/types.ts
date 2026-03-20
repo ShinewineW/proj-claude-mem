@@ -17,6 +17,8 @@ export interface ContextInput {
   projects?: string[];
   /** Path to a project-specific database file (for project isolation) */
   dbPath?: string;
+  /** When true, return ALL observations with no limit (for timeline reports) */
+  full?: boolean;
   [key: string]: any;
 }
 
