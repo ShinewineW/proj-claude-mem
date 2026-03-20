@@ -256,26 +256,30 @@ describe('Cursor IDE Compatibility (#838, #1049)', () => {
 // --- Platform Adapter Tests ---
 
 describe('Hook Lifecycle - Claude Code Adapter', () => {
-  it('should default suppressOutput to true when not explicitly set', async () => {
+  it('should return empty object when no hookSpecificOutput or systemMessage', async () => {
     const { claudeCodeAdapter } = await import('../src/cli/adapters/claude-code.js');
 
-    // Result with no suppressOutput field
+    // After upstream 10e980cd: Stop hook no longer emits continue/suppressOutput
     const output = claudeCodeAdapter.formatOutput({ continue: true });
-    expect(output).toEqual({ continue: true, suppressOutput: true });
+    expect(output).toEqual({});
+    expect(output).not.toHaveProperty('continue');
+    expect(output).not.toHaveProperty('suppressOutput');
   });
 
-  it('should default both continue and suppressOutput to true for empty result', async () => {
+  it('should return empty object for empty result', async () => {
     const { claudeCodeAdapter } = await import('../src/cli/adapters/claude-code.js');
 
     const output = claudeCodeAdapter.formatOutput({});
-    expect(output).toEqual({ continue: true, suppressOutput: true });
+    expect(output).toEqual({});
   });
 
-  it('should respect explicit suppressOutput: false', async () => {
+  it('should return systemMessage when present without hookSpecificOutput', async () => {
     const { claudeCodeAdapter } = await import('../src/cli/adapters/claude-code.js');
 
-    const output = claudeCodeAdapter.formatOutput({ continue: true, suppressOutput: false });
-    expect(output).toEqual({ continue: true, suppressOutput: false });
+    const output = claudeCodeAdapter.formatOutput({ systemMessage: 'test' });
+    expect(output).toEqual({ systemMessage: 'test' });
+    expect(output).not.toHaveProperty('continue');
+    expect(output).not.toHaveProperty('suppressOutput');
   });
 
   it('should use hookSpecificOutput format for context injection', async () => {
