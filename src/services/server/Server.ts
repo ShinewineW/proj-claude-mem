@@ -42,6 +42,23 @@ export interface AiStatus {
     success: boolean;
     error?: string;
   } | null;
+  system?: {
+    uptime: number;
+    activeSessions: number;
+  };
+  mainChannel?: {
+    totalPendingMessages: number;
+    totalProcessingMessages: number;
+    sessions: Array<{
+      sessionDbId: number;
+      project: string;
+      idleSeconds: number;
+      pendingCount: number;
+      processingCount: number;
+      status: 'healthy' | 'idle' | 'stuck';
+    }>;
+  };
+  bypass?: import('../worker/BypassLane.js').BypassStatus;
 }
 
 /**

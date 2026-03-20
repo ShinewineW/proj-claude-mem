@@ -792,6 +792,69 @@ export class SessionManager {
   }
 
   /**
+   * Collect per-session diagnostics for the health endpoint.
+   * Iterates active sessions, queries queue stats, detects stuck sessions.
+   */
+  getDiagnostics(): {
+    totalPendingMessages: number;
+    totalProcessingMessages: number;
+    sessions: Array<{
+      sessionDbId: number;
+      project: string;
+      idleSeconds: number;
+      pendingCount: number;
+      processingCount: number;
+      status: 'healthy' | 'idle' | 'stuck';
+    }>;
+  } {
+    const IDLE_THRESHOLD_MS = 3 * 60 * 1000; // Match SessionQueueProcessor IDLE_TIMEOUT_MS
+    const now = Date.now();
+    let totalPending = 0;
+    let totalProcessing = 0;
+    const sessionDiags: Array<{
+      sessionDbId: number;
+      project: string;
+      idleSeconds: number;
+      pendingCount: number;
+      processingCount: number;
+      status: 'healthy' | 'idle' | 'stuck';
+    }> = [];
+
+    for (const session of this.sessions.values()) {
+      const store = this.getPendingStore(session.dbPath);
+      const stats = store.getQueueStats(session.sessionDbId);
+      totalPending += stats.pendingCount;
+      totalProcessing += stats.processingCount;
+
+      const idleMs = now - (session.lastGeneratorActivity || session.startTime || now);
+      const idleSeconds = Math.floor(idleMs / 1000);
+      const hasPending = stats.pendingCount + stats.processingCount > 0;
+
+      let status: 'healthy' | 'idle' | 'stuck' = 'healthy';
+      if (idleMs >= IDLE_THRESHOLD_MS && hasPending) {
+        status = 'stuck';
+      } else if (idleMs >= IDLE_THRESHOLD_MS) {
+        status = 'idle';
+      }
+
+      sessionDiags.push({
+        sessionDbId: session.sessionDbId,
+        project: session.project || 'unknown',
+        idleSeconds,
+        pendingCount: stats.pendingCount,
+        processingCount: stats.processingCount,
+        status,
+      });
+    }
+
+    return {
+      totalPendingMessages: totalPending,
+      totalProcessingMessages: totalProcessing,
+      sessions: sessionDiags,
+    };
+  }
+
+  /**
    * Notify main-lane consumers that a message is available for claim.
    * Called by BypassLane when it requeues a failed message — wakes
    * the main lane's waitForMessage() immediately instead of waiting

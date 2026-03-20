@@ -446,6 +446,27 @@ export class PendingMessageStore {
   }
 
   /**
+   * Get split queue stats for a session (pending vs processing counts).
+   * Unlike getPendingCount() which lumps both, this method separates them
+   * for the diagnostics endpoint.
+   */
+  getQueueStats(sessionDbId: number): { pendingCount: number; processingCount: number } {
+    const rows = this.db.prepare(`
+      SELECT status, COUNT(*) as count FROM pending_messages
+      WHERE session_db_id = ? AND status IN ('pending', 'processing')
+      GROUP BY status
+    `).all(sessionDbId) as { status: string; count: number }[];
+
+    let pendingCount = 0;
+    let processingCount = 0;
+    for (const row of rows) {
+      if (row.status === 'pending') pendingCount = row.count;
+      else if (row.status === 'processing') processingCount = row.count;
+    }
+    return { pendingCount, processingCount };
+  }
+
+  /**
    * Check if a session has an in-flight summarize message (pending or processing).
    * Used by deleteSession() drain window to wait for summaries to complete.
    * Includes 'processing' because aborting during active summarize loses the summary.
