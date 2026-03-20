@@ -135,7 +135,7 @@ describe('Empty Observation Detection', () => {
     expect(session.conversationHistory.length).toBeGreaterThan(0);
   });
 
-  it('sets forceInit on silent drop (zero observations from observation message)', async () => {
+  it('does NOT set forceInit on zero observations (model skipped, not overflow)', async () => {
     const session = makeSession();
     const dbManager = makeMockDbManager();
     // When no observations parsed, storeObservations returns empty array
@@ -146,16 +146,18 @@ describe('Empty Observation Detection', () => {
     }));
     const sessionManager = makeMockSessionManager();
 
-    // No <observation> tags at all — silent drop
-    const noObsText = 'I apologize, I cannot process this request.';
+    // No <observation> tags — model chose not to emit XML for uninteresting message.
+    // Production data: all real context overflow cases produce <observation> tags with empty fields,
+    // never zero tags. Zero tags = healthy model skipping, not overflow.
+    const noObsText = 'Skipping - this is a routine health check.';
 
     await processAgentResponse(
       noObsText, session, dbManager, sessionManager,
       undefined, 0, null, 'SDK', undefined, 'observation'
     );
 
-    expect(session.forceInit).toBe(true);
-    expect(session.conversationHistory).toEqual([]);
+    expect(session.forceInit).toBeFalsy();
+    expect(session.conversationHistory.length).toBeGreaterThan(0);
   });
 
   it('does NOT set forceInit when zero observations from summarize message (expected)', async () => {

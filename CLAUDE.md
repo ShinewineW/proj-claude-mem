@@ -30,6 +30,7 @@ Claude-mem is a Claude Code plugin providing persistent memory across sessions. 
 
 ## Privacy Tags
 - `<private>content</private>` - User-level privacy control (manual, prevents storage)
+- `<system_instruction>` / `<system-instruction>` tags — stripped to prevent Conductor-injected instructions from persisting
 
 **Implementation**: Tag stripping happens at hook layer (edge processing) before data reaches worker/database. See `src/utils/tag-stripping.ts` for shared utilities.
 

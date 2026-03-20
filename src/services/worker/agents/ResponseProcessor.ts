@@ -142,58 +142,37 @@ export async function processAgentResponse(
   });
 
   // ── Empty Observation Detection (context overflow recovery) ──
-  // Detect context overflow signatures and trigger forceInit to reset SDK session.
+  // Detect context overflow: stored observation with title=null AND narrative=null.
   // Only checks on observation messages — summarize producing 0 observations is normal.
+  // Note: observations.length === 0 (no <observation> tags) is NOT treated as overflow.
+  // Production data shows healthy models skip uninteresting messages by not emitting XML,
+  // while true context overflow always produces <observation> tags with empty fields.
   if (messageType === 'observation') {
-    let shouldReset = false;
-    let resetReason = '';
-
-    // Check 1: Empty observation (title=null AND narrative=null)
-    // Context overflow signature — all 55 production empties match this exactly.
-    // title=null alone is NOT sufficient: 4 observations have null title but valid narrative
-    // (parser glitches in healthy sessions).
     const emptyObs = observations.find(obs => obs.title === null && obs.narrative === null);
+
     if (emptyObs) {
-      shouldReset = true;
-      resetReason = `Empty observation detected (title=null AND narrative=null, type=${emptyObs.type})`;
-    }
-
-    // Check 2: Silent drop — zero observations from observation message.
-    // Claude's response had no <observation> tags at all. Message consumed but no data stored.
-    if (!shouldReset && observations.length === 0) {
-      shouldReset = true;
-      resetReason = 'Zero observations parsed from observation message, possible context overflow';
-    }
-
-    // Circuit breaker: cap forceInit at 3 consecutive resets to prevent infinite loop.
-    // After 3 resets without valid observations, the model is systematically failing —
-    // further resets won't help and only waste API tokens.
-    const MAX_CONTEXT_RESETS = 3;
-    if (shouldReset && (session.contextResetCount ?? 0) >= MAX_CONTEXT_RESETS) {
-      logger.warn('SDK', `[CONTEXT_RESET] Suppressed — already triggered ${session.contextResetCount} consecutive resets without recovery. ${resetReason}`, {
-        sessionDbId: session.sessionDbId,
-        contextResetCount: session.contextResetCount,
-      });
-      shouldReset = false;
-    }
-
-    if (shouldReset) {
-      session.contextResetCount = (session.contextResetCount ?? 0) + 1;
-      const historyLength = session.conversationHistory.length;
-      session.previousMemorySessionId = session.memorySessionId ?? undefined;
-      session.forceInit = true;
-      session.conversationHistory = [];
-      logger.warn('SDK', `[CONTEXT_RESET] ${resetReason}, clearing conversationHistory (${historyLength} messages discarded), forcing fresh SDK session (reset #${session.contextResetCount})`, {
-        sessionDbId: session.sessionDbId,
-        memorySessionId: session.memorySessionId,
-        previousMemorySessionId: session.previousMemorySessionId,
-        observationCount: observations.length,
-        contextResetCount: session.contextResetCount,
-      });
+      // Circuit breaker: cap forceInit at 3 consecutive resets to prevent infinite loop.
+      const MAX_CONTEXT_RESETS = 3;
+      if ((session.contextResetCount ?? 0) >= MAX_CONTEXT_RESETS) {
+        logger.warn('SDK', `[CONTEXT_RESET] Suppressed — already triggered ${session.contextResetCount} consecutive resets without recovery`, {
+          sessionDbId: session.sessionDbId,
+          contextResetCount: session.contextResetCount,
+        });
+      } else {
+        session.contextResetCount = (session.contextResetCount ?? 0) + 1;
+        const historyLength = session.conversationHistory.length;
+        session.previousMemorySessionId = session.memorySessionId ?? undefined;
+        session.forceInit = true;
+        session.conversationHistory = [];
+        logger.warn('SDK', `[CONTEXT_RESET] Empty observation detected (title=null AND narrative=null, type=${emptyObs.type}), clearing conversationHistory (${historyLength} messages discarded), forcing fresh SDK session (reset #${session.contextResetCount})`, {
+          sessionDbId: session.sessionDbId,
+          previousMemorySessionId: session.previousMemorySessionId,
+          observationCount: observations.length,
+          contextResetCount: session.contextResetCount,
+        });
+      }
     } else {
-      // Reset counter only when no reset is triggered AND valid observations are present.
-      // Must be after the shouldReset decision — a mixed batch (valid + empty) should not
-      // zero the counter while also triggering a reset.
+      // Reset counter when valid observations are stored (no empty obs in this batch).
       const hasValidObs = observations.some(obs => obs.title !== null || obs.narrative !== null);
       if (hasValidObs) {
         session.contextResetCount = 0;
