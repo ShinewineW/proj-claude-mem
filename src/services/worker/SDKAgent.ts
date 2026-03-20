@@ -14,7 +14,7 @@ import path from 'path';
 import { DatabaseManager } from './DatabaseManager.js';
 import { SessionManager } from './SessionManager.js';
 import { logger } from '../../utils/logger.js';
-import { buildInitPrompt, buildObservationPrompt, buildSummaryPrompt, buildContinuationPrompt } from '../../sdk/prompts.js';
+import { buildInitPrompt, buildObservationPrompt, buildSummaryPrompt, buildContinuationPrompt, buildSessionHistorySummary } from '../../sdk/prompts.js';
 import { SettingsDefaultsManager } from '../../shared/SettingsDefaultsManager.js';
 import { USER_SETTINGS_PATH, OBSERVER_SESSIONS_DIR, ensureDir } from '../../shared/paths.js';
 import { buildIsolatedEnv, getAuthMethodDescription } from '../../shared/EnvManager.js';
@@ -46,6 +46,7 @@ export class SDKAgent {
     // Track cwd from messages for CLAUDE.md generation (worktree support)
     // Uses mutable object so generator updates are visible in response processing
     const cwdTracker = { lastCwd: undefined as string | undefined };
+    const messageTypeTracker = { lastType: undefined as 'observation' | 'summarize' | undefined };
 
     // Find Claude executable
     const claudePath = this.findClaudeExecutable();
@@ -69,7 +70,7 @@ export class SDKAgent {
     ];
 
     // Create message generator (event-driven)
-    const messageGenerator = this.createMessageGenerator(session, cwdTracker);
+    const messageGenerator = this.createMessageGenerator(session, cwdTracker, messageTypeTracker);
 
     // CRITICAL: Only resume if:
     // 1. memorySessionId exists (was captured from a previous SDK response)
@@ -313,7 +314,8 @@ export class SDKAgent {
             discoveryTokens,
             originalTimestamp,
             'SDK',
-            cwdTracker.lastCwd
+            cwdTracker.lastCwd,
+            messageTypeTracker.lastType
           );
         }
 
@@ -378,7 +380,8 @@ export class SDKAgent {
    */
   private async *createMessageGenerator(
     session: ActiveSession,
-    cwdTracker: { lastCwd: string | undefined }
+    cwdTracker: { lastCwd: string | undefined },
+    messageTypeTracker: { lastType: 'observation' | 'summarize' | undefined }
   ): AsyncIterableIterator<SDKUserMessage> {
     // Load active mode
     const mode = ModeManager.getInstance().getActiveMode();
@@ -393,9 +396,26 @@ export class SDKAgent {
       promptType: isInitPrompt ? 'INIT' : 'CONTINUATION'
     });
 
-    const initPrompt = isInitPrompt
+    let initPrompt = isInitPrompt
       ? buildInitPrompt(session.project, session.contentSessionId, session.userPrompt, mode)
       : buildContinuationPrompt(session.userPrompt, session.lastPromptNumber, session.contentSessionId, mode);
+
+    // Inject session history summary after forceInit (context overflow recovery)
+    if (session.previousMemorySessionId) {
+      const prevId = session.previousMemorySessionId;
+      // Clear immediately — one-shot, prevents re-query on subsequent restarts
+      session.previousMemorySessionId = undefined;
+      const sessionStore = this.dbManager.getSessionStore(session.dbPath);
+      const priorObservations = sessionStore.getObservationsForSession(prevId);
+      const summaryBlock = buildSessionHistorySummary(priorObservations);
+      if (summaryBlock) {
+        initPrompt = summaryBlock + '\n\n' + initPrompt;
+        logger.info('SDK', `[CONTEXT_RESET] Injected session history summary (${priorObservations.length} prior observations)`, {
+          sessionDbId: session.sessionDbId,
+          previousMemorySessionId: prevId,
+        });
+      }
+    }
 
     // Add to shared conversation history for provider interop
     session.conversationHistory.push({ role: 'user', content: initPrompt });
@@ -425,6 +445,7 @@ export class SDKAgent {
       }
 
       if (message.type === 'observation') {
+        messageTypeTracker.lastType = 'observation';
         // Update last prompt number
         if (message.prompt_number !== undefined) {
           session.lastPromptNumber = message.prompt_number;
@@ -453,6 +474,7 @@ export class SDKAgent {
           isSynthetic: true
         };
       } else if (message.type === 'summarize') {
+        messageTypeTracker.lastType = 'summarize';
         const summaryPrompt = buildSummaryPrompt({
           id: session.sessionDbId,
           memory_session_id: session.memorySessionId,

@@ -36,6 +36,8 @@ export interface ActiveSession {
   consecutiveRestarts: number;  // Track consecutive restart attempts to prevent infinite loops
   dbPath?: string;  // Project-specific SQLite DB path
   forceInit?: boolean;  // Force fresh SDK session (skip resume)
+  previousMemorySessionId?: string;  // Saved before forceInit clear, used for summary injection
+  contextResetCount: number;  // Consecutive forceInit triggers — capped to prevent infinite loop
   idleTimedOut?: boolean;  // Set when session exits due to idle timeout (prevents restart loop)
   lastExitWasIdleTimeout?: boolean;  // Persists after idle timeout exit — cleared when new hook messages arrive, checked by reaper to skip futile proactive summarize
   lastGeneratorActivity: number;  // Timestamp of last generator progress (for stale detection, Issue #1099)

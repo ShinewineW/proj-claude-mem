@@ -199,7 +199,8 @@ export class SessionManager {
       consecutiveRestarts: 0,  // Track consecutive restart attempts to prevent infinite loops
       dbPath: dbPath || undefined,  // Project-specific SQLite DB path
       processingMessageIds: [],  // CLAIM-CONFIRM: Track message IDs for confirmProcessed()
-      lastGeneratorActivity: Date.now()  // Initialize for stale detection (Issue #1099)
+      lastGeneratorActivity: Date.now(),  // Initialize for stale detection (Issue #1099)
+      contextResetCount: 0  // Consecutive forceInit triggers — capped to prevent infinite loop
     };
 
     logger.debug('SESSION', 'Creating new session object (memorySessionId cleared to prevent stale resume)', {

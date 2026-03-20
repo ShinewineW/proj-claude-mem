@@ -50,8 +50,8 @@ export interface SessionFilesResult {
  * Simple observation row for getObservationsForSession
  */
 export interface ObservationSessionRow {
-  title: string;
-  subtitle: string;
+  title: string | null;     // nullable in DB schema (ObservationInput.title is string | null)
+  subtitle: string | null;  // nullable in DB schema
   type: string;
   prompt_number: number | null;
 }

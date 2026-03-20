@@ -319,8 +319,8 @@ export class SessionStore {
    * Get observations for a specific session
    */
   getObservationsForSession(memorySessionId: string): Array<{
-    title: string;
-    subtitle: string;
+    title: string | null;
+    subtitle: string | null;
     type: string;
     prompt_number: number | null;
   }> {

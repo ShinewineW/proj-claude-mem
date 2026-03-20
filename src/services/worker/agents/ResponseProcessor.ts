@@ -45,6 +45,7 @@ import { cleanupProcessedMessages } from './SessionCleanupHelper.js';
  * @param discoveryTokens - Token cost delta for this response
  * @param originalTimestamp - Original epoch when message was queued (for accurate timestamps)
  * @param agentName - Name of the agent for logging (e.g., 'SDK', 'Gemini', 'OpenRouter')
+ * @param messageType - Type of the message that produced this response ('observation' or 'summarize')
  */
 export async function processAgentResponse(
   text: string,
@@ -55,7 +56,8 @@ export async function processAgentResponse(
   discoveryTokens: number,
   originalTimestamp: number | null,
   agentName: string,
-  projectRoot?: string
+  projectRoot?: string,
+  messageType?: 'observation' | 'summarize'
 ): Promise<void> {
   // Track generator activity for stale detection (Issue #1099)
   session.lastGeneratorActivity = Date.now();
@@ -138,6 +140,66 @@ export async function processAgentResponse(
     sessionId: session.sessionDbId,
     memorySessionId: session.memorySessionId
   });
+
+  // ── Empty Observation Detection (context overflow recovery) ──
+  // Detect context overflow signatures and trigger forceInit to reset SDK session.
+  // Only checks on observation messages — summarize producing 0 observations is normal.
+  if (messageType === 'observation') {
+    let shouldReset = false;
+    let resetReason = '';
+
+    // Check 1: Empty observation (title=null AND narrative=null)
+    // Context overflow signature — all 55 production empties match this exactly.
+    // title=null alone is NOT sufficient: 4 observations have null title but valid narrative
+    // (parser glitches in healthy sessions).
+    const emptyObs = observations.find(obs => obs.title === null && obs.narrative === null);
+    if (emptyObs) {
+      shouldReset = true;
+      resetReason = `Empty observation detected (title=null AND narrative=null, type=${emptyObs.type})`;
+    }
+
+    // Check 2: Silent drop — zero observations from observation message.
+    // Claude's response had no <observation> tags at all. Message consumed but no data stored.
+    if (!shouldReset && observations.length === 0) {
+      shouldReset = true;
+      resetReason = 'Zero observations parsed from observation message, possible context overflow';
+    }
+
+    // Circuit breaker: cap forceInit at 3 consecutive resets to prevent infinite loop.
+    // After 3 resets without valid observations, the model is systematically failing —
+    // further resets won't help and only waste API tokens.
+    const MAX_CONTEXT_RESETS = 3;
+    if (shouldReset && (session.contextResetCount ?? 0) >= MAX_CONTEXT_RESETS) {
+      logger.warn('SDK', `[CONTEXT_RESET] Suppressed — already triggered ${session.contextResetCount} consecutive resets without recovery. ${resetReason}`, {
+        sessionDbId: session.sessionDbId,
+        contextResetCount: session.contextResetCount,
+      });
+      shouldReset = false;
+    }
+
+    if (shouldReset) {
+      session.contextResetCount = (session.contextResetCount ?? 0) + 1;
+      const historyLength = session.conversationHistory.length;
+      session.previousMemorySessionId = session.memorySessionId ?? undefined;
+      session.forceInit = true;
+      session.conversationHistory = [];
+      logger.warn('SDK', `[CONTEXT_RESET] ${resetReason}, clearing conversationHistory (${historyLength} messages discarded), forcing fresh SDK session (reset #${session.contextResetCount})`, {
+        sessionDbId: session.sessionDbId,
+        memorySessionId: session.memorySessionId,
+        previousMemorySessionId: session.previousMemorySessionId,
+        observationCount: observations.length,
+        contextResetCount: session.contextResetCount,
+      });
+    } else {
+      // Reset counter only when no reset is triggered AND valid observations are present.
+      // Must be after the shouldReset decision — a mixed batch (valid + empty) should not
+      // zero the counter while also triggering a reset.
+      const hasValidObs = observations.some(obs => obs.title !== null || obs.narrative !== null);
+      if (hasValidObs) {
+        session.contextResetCount = 0;
+      }
+    }
+  }
 
   // CLAIM-CONFIRM: Now that storage succeeded, confirm all processing messages (delete from queue)
   // This is the critical step that prevents message loss on generator crash

@@ -10,7 +10,8 @@
  *
  * Key isolation from main channel:
  * - Does NOT touch session.processingMessageIds (avoids race with main channel)
- * - Does NOT touch session.conversationHistory (one-shot, no context needed)
+ * - READS session.conversationHistory via truncateHistory() sliding window
+ * - WRITES to session.conversationHistory after successful processing
  * - Uses parseObservations() + storeObservations() + confirmProcessed() directly
  *   instead of processAgentResponse() which modifies shared session state
  */
@@ -21,7 +22,7 @@ import { USER_SETTINGS_PATH } from '../../shared/paths.js';
 import { logger } from '../../utils/logger.js';
 import { parseObservations } from '../../sdk/parser.js';
 import { buildObservationPrompt } from '../../sdk/prompts.js';
-import type { ActiveSession } from '../worker-types.js';
+import type { ActiveSession, ConversationMessage } from '../worker-types.js';
 import type { PersistentPendingMessage } from '../sqlite/PendingMessageStore.js';
 import type { SessionManager } from './SessionManager.js';
 import type { DatabaseManager } from './DatabaseManager.js';
@@ -35,6 +36,10 @@ const OPENROUTER_API_URL = 'https://openrouter.ai/api/v1/chat/completions';
 const FETCH_TIMEOUT_MS = 45_000;
 // Gemini free tier: 15 RPM = minimum 4s between requests
 const GEMINI_RATE_LIMIT_INTERVAL_MS = 4_000;
+// Sliding window defaults for bypass conversation history
+const DEFAULT_MAX_CONTEXT_MESSAGES = 20;
+const DEFAULT_MAX_ESTIMATED_TOKENS = 100_000;
+const CHARS_PER_TOKEN_ESTIMATE = 4;
 
 export type BypassState = 'DISABLED' | 'ACTIVE' | 'TRIPPED';
 
@@ -290,6 +295,44 @@ export class BypassLane {
     });
   }
 
+  /** Truncate conversation history to fit within message count and token limits. */
+  private truncateHistory(history: ConversationMessage[]): ConversationMessage[] {
+    if (history.length === 0) return [];
+
+    const settings = this.getSettings();
+    const maxMessages = parseInt(settings.CLAUDE_MEM_BYPASS_MAX_CONTEXT_MESSAGES) || DEFAULT_MAX_CONTEXT_MESSAGES;
+    const maxTokens = parseInt(settings.CLAUDE_MEM_BYPASS_MAX_TOKENS) || DEFAULT_MAX_ESTIMATED_TOKENS;
+
+    // Quick exit: within both limits (return copy to avoid shared reference mutation)
+    const totalTokens = history.reduce((sum, m) => sum + Math.ceil(m.content.length / CHARS_PER_TOKEN_ESTIMATE), 0);
+    if (history.length <= maxMessages && totalTokens <= maxTokens) {
+      return history.slice();
+    }
+
+    // Sliding window: iterate from most recent backward
+    const truncated: ConversationMessage[] = [];
+    let tokenCount = 0;
+
+    for (let i = history.length - 1; i >= 0; i--) {
+      const msgTokens = Math.ceil(history[i].content.length / CHARS_PER_TOKEN_ESTIMATE);
+      if (truncated.length >= maxMessages) break;
+      if (tokenCount + msgTokens > maxTokens) break;
+      truncated.unshift(history[i]);
+      tokenCount += msgTokens;
+    }
+
+    // Fallback: always include at least the most recent message, even if it exceeds the budget.
+    // This prevents silently degrading to zero-context one-shot when a single message is large.
+    if (truncated.length === 0 && history.length > 0) {
+      truncated.push(history[history.length - 1]);
+      logger.warn('BYPASS', `Most recent history message exceeds token budget, including as last resort`);
+    } else if (truncated.length < history.length) {
+      logger.debug('BYPASS', `History truncated: ${history.length} → ${truncated.length} messages, ~${tokenCount} tokens`);
+    }
+
+    return truncated;
+  }
+
   /** Main consumer loop — claims observation messages, processes via REST API. */
   private async consumeLoop(session: ActiveSession, signal: AbortSignal): Promise<void> {
     if (!this.sessionManager || !this.dbManager) return;
@@ -376,18 +419,22 @@ export class BypassLane {
       cwd: message.cwd || undefined,
     });
 
-    // System prompt (condensed — bypass is single-turn, no session context needed)
-    // MUST include valid type list — without it, models output arbitrary types (e.g. "edit", "Code Change")
-    // that fail parser validation and fall back to "bugfix", destroying classification value.
+    // System prompt — MUST include valid type list to prevent parser fallback
     const systemPrompt =
       'You are a code observation extractor. Analyze the tool usage and output structured observations in XML format. ' +
       'Output ONLY <observation> tags. Valid type values: discovery, bugfix, feature, change, refactor, decision. ' +
       'Fields: type, title, subtitle, facts (with <fact> children), narrative, concepts (with <concept> children), ' +
       'files_read (with <file> children), files_modified (with <file> children).';
 
-    // Call REST API
+    // Read conversation history with sliding window truncation
+    // NOTE: previousMemorySessionId summary injection is handled by SDKAgent only.
+    // Bypass relies on truncateHistory for context; having it also consume
+    // previousMemorySessionId would race with SDKAgent (HIGH finding from audit).
+    const truncatedHistory = this.truncateHistory(session.conversationHistory || []);
+
+    // Call REST API with conversation history context
     const fetchSignal = AbortSignal.any([signal, AbortSignal.timeout(FETCH_TIMEOUT_MS)]);
-    const responseText = await this.callRestApi(obsPrompt, systemPrompt, fetchSignal);
+    const responseText = await this.callRestApi(obsPrompt, systemPrompt, fetchSignal, truncatedHistory);
 
     if (!responseText) {
       throw new Error('Empty response from bypass provider');
@@ -433,6 +480,12 @@ export class BypassLane {
     // Confirm message processed (delete from queue)
     const pendingStore = this.sessionManager.getPendingMessageStore(session.dbPath);
     pendingStore.confirmProcessed(message.id);
+
+    // Write back to shared conversation history (bypass contributes to union history)
+    if (session.conversationHistory) {
+      session.conversationHistory.push({ role: 'user', content: obsPrompt });
+      session.conversationHistory.push({ role: 'assistant', content: responseText });
+    }
   }
 
   /** Call Gemini or OpenRouter REST API. Returns response text. */
@@ -440,16 +493,25 @@ export class BypassLane {
     prompt: string,
     systemPrompt: string,
     signal: AbortSignal,
+    history: ConversationMessage[] = [],
   ): Promise<string> {
     if (!this.config) throw new Error('BypassLane not configured');
 
     if (this.config.provider === 'gemini') {
       const url = `${GEMINI_API_URL}/${this.config.model}:generateContent?key=${this.config.apiKey}`;
+      // Build contents with history context (Gemini uses 'model' for assistant role)
+      const contents = [
+        ...history.map(m => ({
+          role: m.role === 'assistant' ? 'model' as const : 'user' as const,
+          parts: [{ text: m.content }],
+        })),
+        { role: 'user' as const, parts: [{ text: prompt }] },
+      ];
       const response = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          contents: [{ role: 'user', parts: [{ text: prompt }] }],
+          contents,
           systemInstruction: { parts: [{ text: systemPrompt }] },
           generationConfig: { temperature: 0.3, maxOutputTokens: 4096 },
         }),
@@ -473,10 +535,12 @@ export class BypassLane {
           'X-Title': 'claude-mem',
           'Content-Type': 'application/json',
         },
+        // Build messages array with history context
         body: JSON.stringify({
           model: this.config.model,
           messages: [
             { role: 'system', content: systemPrompt },
+            ...history.map(m => ({ role: m.role, content: m.content })),
             { role: 'user', content: prompt },
           ],
           temperature: 0.3,

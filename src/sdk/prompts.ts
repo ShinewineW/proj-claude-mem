@@ -239,4 +239,28 @@ ${mode.prompts.format_examples}
 ${mode.prompts.footer}
 
 ${mode.prompts.header_memory_continued}`;
-} 
+}
+
+/**
+ * Build a compact summary of prior observations for injection after forceInit.
+ * Called when the SDK session is reset due to context overflow — provides
+ * continuity by listing what was observed before the reset.
+ *
+ * @param observations - Observation rows from getObservationsForSession()
+ * @returns XML block string, or empty string if no observations
+ */
+export function buildSessionHistorySummary(
+  observations: Array<{ type: string; title: string | null; subtitle: string | null; prompt_number: number | null }>
+): string {
+  if (observations.length === 0) return '';
+
+  const lines = observations.map((obs, i) => {
+    const displayTitle = obs.title || '(untitled)';
+    return `  ${i + 1}. [${obs.type}] ${displayTitle}`;
+  });
+
+  return `<session_history_summary>
+  Prior observations (conversation reset for context management):
+${lines.join('\n')}
+</session_history_summary>`;
+}
