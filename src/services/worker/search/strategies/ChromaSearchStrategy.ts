@@ -18,8 +18,10 @@ import {
   ChromaMetadata,
   ObservationSearchResult,
   SessionSummarySearchResult,
-  UserPromptSearchResult
+  UserPromptSearchResult,
+  DateRange
 } from '../types.js';
+import { parseDateRange } from '../filters/DateFilter.js';
 import { ChromaSync } from '../../../sync/ChromaSync.js';
 import { SessionStore } from '../../../sqlite/SessionStore.js';
 import { logger } from '../../../../utils/logger.js';
@@ -48,7 +50,8 @@ export class ChromaSearchStrategy extends BaseSearchStrategy implements SearchSt
       files,
       limit = SEARCH_CONSTANTS.DEFAULT_LIMIT,
       project,
-      orderBy = 'date_desc'
+      orderBy = 'date_desc',
+      dateRange
     } = options;
 
     if (!query) {
@@ -89,8 +92,8 @@ export class ChromaSearchStrategy extends BaseSearchStrategy implements SearchSt
         };
       }
 
-      // Step 2: Filter by recency (90 days)
-      const recentItems = this.filterByRecency(chromaResults);
+      // Step 2: Filter by recency (90 days) or user-specified dateRange
+      const recentItems = this.filterByRecency(chromaResults, dateRange);
       logger.debug('SEARCH', 'ChromaSearchStrategy: Filtered by recency', {
         count: recentItems.length
       });
@@ -185,7 +188,10 @@ export class ChromaSearchStrategy extends BaseSearchStrategy implements SearchSt
   }
 
   /**
-   * Filter results by recency (90-day window)
+   * Filter results by date range or default recency window (90 days)
+   *
+   * When dateRange is provided by the user, it takes priority over the default
+   * 90-day window. When no dateRange is specified, the default 90-day cutoff applies.
    *
    * IMPORTANT: ChromaSync.queryChroma() returns deduplicated `ids` (unique sqlite_ids)
    * but the `metadatas` array may contain multiple entries per sqlite_id (e.g., one
@@ -194,11 +200,16 @@ export class ChromaSearchStrategy extends BaseSearchStrategy implements SearchSt
    * This method iterates over the deduplicated `ids` and finds the first matching
    * metadata for each ID to avoid array misalignment issues.
    */
-  private filterByRecency(chromaResults: {
-    ids: number[];
-    metadatas: ChromaMetadata[];
-  }): Array<{ id: number; meta: ChromaMetadata }> {
-    const cutoff = Date.now() - SEARCH_CONSTANTS.RECENCY_WINDOW_MS;
+  private filterByRecency(
+    chromaResults: { ids: number[]; metadatas: ChromaMetadata[] },
+    dateRange?: DateRange
+  ): Array<{ id: number; meta: ChromaMetadata }> {
+    const { startEpoch, endEpoch } = parseDateRange(dateRange);
+
+    // If user provided no date range, fall back to default 90-day window
+    const effectiveStartEpoch = (!startEpoch && !endEpoch)
+      ? Date.now() - SEARCH_CONSTANTS.RECENCY_WINDOW_MS
+      : startEpoch;
 
     // Build a map from sqlite_id to first metadata for efficient lookup
     const metadataByIdMap = new Map<number, ChromaMetadata>();
@@ -214,7 +225,11 @@ export class ChromaSearchStrategy extends BaseSearchStrategy implements SearchSt
         id,
         meta: metadataByIdMap.get(id) as ChromaMetadata
       }))
-      .filter(item => item.meta && item.meta.created_at_epoch > cutoff);
+      .filter(item =>
+        item.meta &&
+        (!effectiveStartEpoch || item.meta.created_at_epoch >= effectiveStartEpoch) &&
+        (!endEpoch || item.meta.created_at_epoch <= endEpoch)
+      );
   }
 
   /**
