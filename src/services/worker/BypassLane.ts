@@ -441,6 +441,7 @@ export class BypassLane {
       // Wait for main channel to establish memorySessionId (avoid orphaned synthetic IDs)
       if (!session.memorySessionId) {
         pendingStore.retryMessage(message.id);
+        this.sessionManager!.notifyMessageAvailable(session.sessionDbId, session.dbPath);
         logger.debug('BYPASS', 'Waiting for memorySessionId', { messageId: message.id });
         await this.abortableSleep(POLL_MS, signal);
         continue;
@@ -479,6 +480,7 @@ export class BypassLane {
           error: error instanceof Error ? error.message : String(error),
         });
         pendingStore.markFailed(message.id);
+        this.sessionManager!.notifyMessageAvailable(session.sessionDbId, session.dbPath);
         this.recordFailure();
         await this.abortableSleep(1000, signal);
         if (this.state === 'TRIPPED') return;

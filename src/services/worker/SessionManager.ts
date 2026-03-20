@@ -790,4 +790,16 @@ export class SessionManager {
   getPendingMessageStore(dbPath?: string): PendingMessageStore {
     return this.getPendingStore(dbPath);
   }
+
+  /**
+   * Notify main-lane consumers that a message is available for claim.
+   * Called by BypassLane when it requeues a failed message — wakes
+   * the main lane's waitForMessage() immediately instead of waiting
+   * for the 3-minute idle timeout.
+   */
+  notifyMessageAvailable(sessionDbId: number, dbPath?: string): void {
+    const key = this.sessionKey(sessionDbId, dbPath);
+    const emitter = this.sessionQueues.get(key);
+    emitter?.emit('message');
+  }
 }
