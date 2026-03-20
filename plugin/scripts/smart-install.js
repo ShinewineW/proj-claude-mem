@@ -161,13 +161,13 @@ function installBun() {
     if (IS_WINDOWS) {
       console.error('   Installing via PowerShell...');
       execSync('powershell -c "irm bun.sh/install.ps1 | iex"', {
-        stdio: ['pipe', 'pipe', 'inherit'],
+        stdio: 'inherit',
         shell: true
       });
     } else {
       console.error('   Installing via curl...');
       execSync('curl -fsSL https://bun.sh/install | bash', {
-        stdio: ['pipe', 'pipe', 'inherit'],
+        stdio: 'inherit',
         shell: true
       });
     }
@@ -206,13 +206,13 @@ function installUv() {
     if (IS_WINDOWS) {
       console.error('   Installing via PowerShell...');
       execSync('powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"', {
-        stdio: ['pipe', 'pipe', 'inherit'],
+        stdio: 'inherit',
         shell: true
       });
     } else {
       console.error('   Installing via curl...');
       execSync('curl -LsSf https://astral.sh/uv/install.sh | sh', {
-        stdio: ['pipe', 'pipe', 'inherit'],
+        stdio: 'inherit',
         shell: true
       });
     }
@@ -269,7 +269,7 @@ function installDeps() {
   // Quote path for Windows paths with spaces
   const bunCmd = IS_WINDOWS && bunPath.includes(' ') ? `"${bunPath}"` : bunPath;
 
-  execSync(`${bunCmd} install`, { cwd: ROOT, stdio: ['pipe', 'pipe', 'inherit'], shell: IS_WINDOWS });
+  execSync(`${bunCmd} install`, { cwd: ROOT, stdio: 'inherit', shell: IS_WINDOWS });
 
   // Write version marker
   const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf-8'));
@@ -314,16 +314,12 @@ try {
 
     if (!verifyCriticalModules()) {
       console.error('❌ Dependencies could not be installed. Plugin may not work correctly.');
-      console.log(JSON.stringify({ continue: true, suppressOutput: true }));
       process.exit(1);
     }
 
     console.error('✅ Dependencies installed');
   }
-  // Output valid JSON for Claude Code hook contract
-  console.log(JSON.stringify({ continue: true, suppressOutput: true }));
 } catch (e) {
   console.error('❌ Installation failed:', e.message);
-  console.log(JSON.stringify({ continue: true, suppressOutput: true }));
   process.exit(1);
 }

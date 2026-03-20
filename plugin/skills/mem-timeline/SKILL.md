@@ -20,7 +20,7 @@ Use when users ask for:
 
 ## Prerequisites
 
-The claude-mem worker must be running on localhost:37777. The project must have claude-mem observations recorded.
+The claude-mem worker must be running (port read from `~/.claude-mem/worker.port`, default 37777). The project must have claude-mem observations recorded.
 
 ## Workflow
 
@@ -50,7 +50,8 @@ If a worktree is detected, use `$parent_project` (the basename of the parent rep
 Use Bash to fetch the complete timeline from the claude-mem worker API:
 
 ```bash
-curl -s "http://localhost:37777/api/context/inject?project=PROJECT_NAME&full=true"
+WORKER_PORT=$(cat ~/.claude-mem/worker.port 2>/dev/null || echo "37777")
+curl -s "http://localhost:${WORKER_PORT}/api/context/inject?project=PROJECT_NAME&full=true"
 ```
 
 This returns the entire compressed timeline -- every observation, session boundary, and summary across the project's full history. The response is pre-formatted markdown optimized for LLM consumption.
@@ -60,7 +61,7 @@ This returns the entire compressed timeline -- every observation, session bounda
 - Medium project (1,000-10,000 observations): ~50-300K tokens
 - Large project (10,000-35,000 observations): ~300-750K tokens
 
-If the response is empty or returns an error, the worker may not be running or the project name may be wrong. Try `curl -s "http://localhost:37777/api/search?query=*&limit=1"` to verify the worker is healthy.
+If the response is empty or returns an error, the worker may not be running or the project name may be wrong. Try `curl -s "http://localhost:${WORKER_PORT}/api/search?query=*&limit=1"` to verify the worker is healthy.
 
 ### Step 3: Estimate Token Count
 
@@ -74,37 +75,41 @@ Proceed? (y/n)
 
 Wait for user confirmation before continuing if the timeline exceeds 100K tokens.
 
-### Step 4: Analyze with a Subagent
+### Step 3.5: Resolve the Database Path
 
-Deploy an Agent (using the Agent tool) with the full timeline and the following analysis prompt. Pass the ENTIRE timeline as context to the agent. The agent should also be instructed to query the project's claude-mem SQLite database (resolved via git root detection) for the Token Economics section.
-
-**Agent prompt:**
+Before launching the subagent, resolve the per-project SQLite database path. Run:
 
 ```bash
-# Resolve per-project DB path (matches fork's resolveProjectDbPath)
-resolve_db_path() {
-  if [ -n "$CLAUDE_MEM_PROJECT_DB_PATH" ]; then
-    echo "$CLAUDE_MEM_PROJECT_DB_PATH"; return
-  fi
-  local git_dir=$(git rev-parse --git-dir 2>/dev/null)
-  local git_common_dir=$(git rev-parse --git-common-dir 2>/dev/null)
+if [ -n "$CLAUDE_MEM_PROJECT_DB_PATH" ]; then
+  echo "$CLAUDE_MEM_PROJECT_DB_PATH"
+else
+  git_common_dir=$(git rev-parse --git-common-dir 2>/dev/null)
+  git_dir=$(git rev-parse --git-dir 2>/dev/null)
   if [ -n "$git_common_dir" ]; then
     if [ "$git_dir" != "$git_common_dir" ]; then
       echo "$(dirname "$git_common_dir")/.claude/mem.db"
     else
       echo "$(git rev-parse --show-toplevel)/.claude/mem.db"
     fi
-    return
+  else
+    echo "$PWD/.claude/mem.db"
   fi
-  echo "$PWD/.claude/mem.db"
-}
-db_path=$(resolve_db_path)
+fi
 ```
+
+Store the resolved path as `$DB_PATH`. Verify the file exists before proceeding. If it doesn't exist, warn the user and stop.
+
+### Step 4: Analyze with a Subagent
+
+Deploy an Agent (using the Agent tool) with the full timeline and the following analysis prompt. Pass the ENTIRE timeline as context to the agent. Substitute `$DB_PATH` (resolved in Step 3.5) and `$PROJECT_NAME` into the prompt before sending.
+
+**Agent prompt:**
 
 ```
 You are a technical historian analyzing a software project's complete development timeline from claude-mem's persistent memory system. The timeline below contains every observation, session boundary, and summary recorded across the project's entire history.
 
-You also have access to the project's claude-mem SQLite database (resolved via git root detection). Use it to run queries for the Token Economics & Memory ROI section. The database has an "observations" table with columns: id, memory_session_id, project, text, type, title, subtitle, facts, narrative, concepts, files_read, files_modified, prompt_number, discovery_tokens, created_at, created_at_epoch, source_tool, source_input_summary.
+The project's claude-mem SQLite database is at: $DB_PATH
+Use `sqlite3 "$DB_PATH"` to run queries for the Token Economics & Memory ROI section. The database has an "observations" table with columns: id, memory_session_id, project, text, type, title, subtitle, facts, narrative, concepts, files_read, files_modified, prompt_number, discovery_tokens, created_at, created_at_epoch, source_tool, source_input_summary.
 
 Write a comprehensive narrative report titled "Journey Into [PROJECT_NAME]" that covers:
 
@@ -208,9 +213,9 @@ Tell the user:
 
 ## Error Handling
 
-- **Empty timeline:** "No observations found for project 'X'. Check the project name with: `curl -s 'http://localhost:37777/api/search?query=*&limit=1'`"
-- **Worker not running:** "The claude-mem worker is not responding on port 37777. Start it with your usual method or check `ps aux | grep worker-service`."
-- **Timeline too large:** For projects with 50,000+ observations, the timeline may exceed context limits. Suggest using date range filtering: `curl -s "http://localhost:37777/api/context/inject?project=X&full=true"` -- the current endpoint returns all observations; for extremely large projects, the user may want to analyze in time-windowed segments.
+- **Empty timeline:** "No observations found for project 'X'. Check the project name with: `curl -s 'http://localhost:${WORKER_PORT}/api/search?query=*&limit=1'`"
+- **Worker not running:** "The claude-mem worker is not responding on port $WORKER_PORT. Start it with your usual method or check `ps aux | grep worker-service`."
+- **Timeline too large:** For projects with 50,000+ observations, the timeline may exceed context limits. The current endpoint returns all observations; for extremely large projects, the user may want to analyze in time-windowed segments.
 
 ## Example
 
