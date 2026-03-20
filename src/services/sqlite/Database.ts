@@ -161,6 +161,8 @@ export class ClaudeMemDatabase {
     } catch (error) {
       const errorMessage = (error as Error).message || '';
       if (errorMessage.includes('malformed database schema') && dbPath !== ':memory:') {
+        // Close the broken connection before repair to release file locks
+        try { this.db.close(); } catch { /* already broken */ }
         logger.warn('DB', 'Detected malformed schema, attempting repair', { dbPath });
         const repaired = repairMalformedSchema(dbPath, errorMessage);
         if (repaired) {
@@ -171,6 +173,8 @@ export class ClaudeMemDatabase {
           throw error;
         }
       } else {
+        // Close the connection that was opened before the error
+        try { this.db.close(); } catch { /* best effort */ }
         throw error;
       }
     }
