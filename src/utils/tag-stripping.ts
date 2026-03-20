@@ -27,7 +27,9 @@ const MAX_TAG_COUNT = 100;
 function countTags(content: string): number {
   const privateCount = (content.match(/<private>/g) || []).length;
   const contextCount = (content.match(/<claude-mem-context>/g) || []).length;
-  return privateCount + contextCount;
+  const sysInstructionCount = (content.match(/<system_instruction>/g) || []).length;
+  const sysInstructionHyphenCount = (content.match(/<system-instruction>/g) || []).length;
+  return privateCount + contextCount + sysInstructionCount + sysInstructionHyphenCount;
 }
 
 /**
@@ -49,6 +51,8 @@ function stripTagsInternal(content: string): string {
   return content
     .replace(/<claude-mem-context>[\s\S]*?<\/claude-mem-context>/g, '')
     .replace(/<private>[\s\S]*?<\/private>/g, '')
+    .replace(/<system_instruction>[\s\S]*?<\/system_instruction>/g, '')
+    .replace(/<system-instruction>[\s\S]*?<\/system-instruction>/g, '')
     .trim();
 }
 

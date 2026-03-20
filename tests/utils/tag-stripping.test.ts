@@ -257,6 +257,32 @@ finish`;
     });
   });
 
+  describe('system_instruction tag stripping', () => {
+    it('should strip <system_instruction> tags (underscore variant)', () => {
+      const input = 'before <system_instruction>conductor injected content</system_instruction> after';
+      const result = stripMemoryTagsFromPrompt(input);
+      expect(result).toBe('before  after');
+    });
+
+    it('should strip <system-instruction> tags (hyphen variant)', () => {
+      const input = 'before <system-instruction>more injected content</system-instruction> after';
+      const result = stripMemoryTagsFromPrompt(input);
+      expect(result).toBe('before  after');
+    });
+
+    it('should strip system_instruction tags with multiline content', () => {
+      const input = 'start\n<system_instruction>\nline1\nline2\n</system_instruction>\nend';
+      const result = stripMemoryTagsFromPrompt(input);
+      expect(result).toBe('start\n\nend');
+    });
+
+    it('should handle content with no system_instruction tags unchanged', () => {
+      const input = 'normal content without any tags';
+      const result = stripMemoryTagsFromPrompt(input);
+      expect(result).toBe('normal content without any tags');
+    });
+  });
+
   describe('privacy enforcement integration', () => {
     it('should allow empty result to trigger privacy skip', () => {
       // Simulates what SessionRoutes does with private-only prompts

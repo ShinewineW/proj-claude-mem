@@ -4,6 +4,8 @@
 
 import { Database } from 'bun:sqlite';
 import { logger } from '../../../utils/logger.js';
+import { computeObservationContentHash, findDuplicateObservation } from '../observations/store.js';
+import { computeSummaryContentHash, findDuplicateSummary } from '../summaries/store.js';
 
 export interface ImportResult {
   imported: boolean;
@@ -82,10 +84,8 @@ export function importSessionSummary(
     created_at_epoch: number;
   }
 ): ImportResult {
-  // Check if summary already exists for this session
-  const existing = db
-    .prepare('SELECT id FROM session_summaries WHERE memory_session_id = ?')
-    .get(summary.memory_session_id) as { id: number } | undefined;
+  const contentHash = computeSummaryContentHash(summary.memory_session_id, summary.request, summary.investigated);
+  const existing = findDuplicateSummary(db, contentHash, summary.created_at_epoch);
 
   if (existing) {
     return { imported: false, id: existing.id };
@@ -95,8 +95,9 @@ export function importSessionSummary(
     INSERT INTO session_summaries (
       memory_session_id, project, request, investigated, learned,
       completed, next_steps, files_read, files_edited, notes,
-      prompt_number, discovery_tokens, created_at, created_at_epoch
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      prompt_number, discovery_tokens, created_at, created_at_epoch,
+      content_hash
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   const result = stmt.run(
@@ -113,15 +114,15 @@ export function importSessionSummary(
     summary.prompt_number,
     summary.discovery_tokens || 0,
     summary.created_at,
-    summary.created_at_epoch
+    summary.created_at_epoch,
+    contentHash
   );
 
   return { imported: true, id: result.lastInsertRowid as number };
 }
 
 /**
- * Import observation with duplicate checking
- * Duplicates are identified by memory_session_id + title + created_at_epoch
+ * Import observation with content-hash-based duplicate checking
  */
 export function importObservation(
   db: Database,
@@ -143,17 +144,8 @@ export function importObservation(
     created_at_epoch: number;
   }
 ): ImportResult {
-  // Check if observation already exists
-  const existing = db
-    .prepare(
-      `
-      SELECT id FROM observations
-      WHERE memory_session_id = ? AND title = ? AND created_at_epoch = ?
-    `
-    )
-    .get(obs.memory_session_id, obs.title, obs.created_at_epoch) as
-    | { id: number }
-    | undefined;
+  const contentHash = computeObservationContentHash(obs.memory_session_id, obs.title, obs.narrative);
+  const existing = findDuplicateObservation(db, contentHash, obs.created_at_epoch);
 
   if (existing) {
     return { imported: false, id: existing.id };
@@ -163,8 +155,9 @@ export function importObservation(
     INSERT INTO observations (
       memory_session_id, project, text, type, title, subtitle,
       facts, narrative, concepts, files_read, files_modified,
-      prompt_number, discovery_tokens, created_at, created_at_epoch
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      prompt_number, discovery_tokens, created_at, created_at_epoch,
+      content_hash
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   const result = stmt.run(
@@ -182,7 +175,8 @@ export function importObservation(
     obs.prompt_number,
     obs.discovery_tokens || 0,
     obs.created_at,
-    obs.created_at_epoch
+    obs.created_at_epoch,
+    contentHash
   );
 
   return { imported: true, id: result.lastInsertRowid as number };

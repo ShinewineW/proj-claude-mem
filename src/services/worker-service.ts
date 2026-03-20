@@ -651,6 +651,7 @@ export class WorkerService {
           'ENOENT',
           'spawn',
           'Invalid API key',
+          'FOREIGN KEY constraint failed',
         ];
         if (unrecoverablePatterns.some(pattern => errorMessage.includes(pattern))) {
           hadUnrecoverableError = true;
@@ -720,7 +721,7 @@ export class WorkerService {
       .finally(async () => {
         // CRITICAL: Verify subprocess exit to prevent zombie accumulation (Issue #1168)
         const trackedProcess = getProcessBySession(session.sessionDbId);
-        if (trackedProcess && !trackedProcess.process.killed && trackedProcess.process.exitCode === null) {
+        if (trackedProcess && trackedProcess.process.exitCode === null) {
           await ensureProcessExit(trackedProcess, 5000);
         }
 

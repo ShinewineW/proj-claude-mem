@@ -422,6 +422,71 @@ describe('ChromaSearchStrategy', () => {
       const calledWith = mockSessionStore.getObservationsByIds.mock.calls[0][0];
       expect(calledWith).toEqual([100]);
     });
+
+    it('should return old results when dateRange includes them', async () => {
+      const oldEpoch = Date.now() - 1000 * 60 * 60 * 24 * 100; // 100 days ago
+
+      mockChromaSync.queryChroma = mock(() => Promise.resolve({
+        ids: [1],
+        distances: [0.1],
+        metadatas: [
+          { sqlite_id: 1, doc_type: 'observation', created_at_epoch: oldEpoch }
+        ]
+      }));
+
+      const options: StrategySearchOptions = {
+        query: 'old data query',
+        dateRange: { start: new Date(oldEpoch - 1000).toISOString() }
+      };
+
+      const result = await strategy.search(options);
+
+      expect(mockSessionStore.getObservationsByIds).toHaveBeenCalled();
+    });
+
+    it('should use 90-day default when no dateRange provided', async () => {
+      const oldEpoch = Date.now() - 1000 * 60 * 60 * 24 * 100; // 100 days ago
+
+      mockChromaSync.queryChroma = mock(() => Promise.resolve({
+        ids: [1],
+        distances: [0.1],
+        metadatas: [
+          { sqlite_id: 1, doc_type: 'observation', created_at_epoch: oldEpoch }
+        ]
+      }));
+
+      const options: StrategySearchOptions = {
+        query: 'old data query'
+      };
+
+      const result = await strategy.search(options);
+
+      expect(mockSessionStore.getObservationsByIds).not.toHaveBeenCalled();
+    });
+
+    it('should filter by dateRange end boundary', async () => {
+      const recentEpoch = Date.now() - 1000 * 60 * 60 * 24; // 1 day ago
+
+      mockChromaSync.queryChroma = mock(() => Promise.resolve({
+        ids: [1],
+        distances: [0.1],
+        metadatas: [
+          { sqlite_id: 1, doc_type: 'observation', created_at_epoch: recentEpoch }
+        ]
+      }));
+
+      const options: StrategySearchOptions = {
+        query: 'date range query',
+        dateRange: {
+          start: new Date(Date.now() - 1000 * 60 * 60 * 24 * 7).toISOString(),
+          end: new Date(Date.now() - 1000 * 60 * 60 * 24 * 3).toISOString()
+        }
+      };
+
+      const result = await strategy.search(options);
+
+      expect(mockSessionStore.getObservationsByIds).not.toHaveBeenCalled();
+    });
   });
 
   describe('strategy name', () => {
