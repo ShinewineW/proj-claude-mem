@@ -139,6 +139,12 @@ export async function generateContext(
   // Use provided projects array (for worktree support) or fall back to single project
   const projects = input?.projects || [project];
 
+  // Full mode: fetch all observations (for timeline reports)
+  if (input?.full) {
+    config.totalObservationCount = 999999;
+    config.sessionCount = 999999;
+  }
+
   // Initialize database (use project-specific DB if dbPath provided)
   const db = initializeDatabase(input?.dbPath);
   if (!db) {

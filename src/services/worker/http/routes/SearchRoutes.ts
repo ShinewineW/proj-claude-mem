@@ -262,6 +262,7 @@ export class SearchRoutes extends BaseRouteHandler {
     // Support both legacy `project` and new `projects` parameter
     const projectsParam = (req.query.projects as string) || (req.query.project as string);
     const useColors = req.query.colors === 'true';
+    const full = req.query.full === 'true';
     const dbPath = (req.query.dbPath as string) || undefined;
 
     if (!projectsParam) {
@@ -290,7 +291,8 @@ export class SearchRoutes extends BaseRouteHandler {
         session_id: 'context-inject-' + Date.now(),
         cwd: cwd,
         projects: projects,
-        dbPath: dbPath
+        dbPath: dbPath,
+        full
       },
       useColors
     );
