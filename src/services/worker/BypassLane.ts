@@ -8,6 +8,10 @@
  * State machine: DISABLED → ACTIVE → TRIPPED → (probe) → ACTIVE
  * Circuit breaker: 3 consecutive failures → cooldown → probe recovery
  *
+ * Ownership model: competing consumers (NOT load balancer).
+ * Main lane wins most fresh messages; bypass absorbs backlog.
+ * See architecture-details.md § Message Ownership Model.
+ *
  * Key isolation from main channel:
  * - Does NOT touch session.processingMessageIds (avoids race with main channel)
  * - READS session.conversationHistory via truncateHistory() sliding window
