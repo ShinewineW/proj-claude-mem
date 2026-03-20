@@ -1,4 +1,4 @@
-import { join, dirname, basename, sep, resolve } from 'path';
+import { join, dirname, basename, resolve } from 'path';
 import { homedir } from 'os';
 import { existsSync, mkdirSync, statSync, readFileSync } from 'fs';
 import { execSync } from 'child_process';
