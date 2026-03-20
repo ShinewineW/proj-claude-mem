@@ -143,11 +143,11 @@ export async function processAgentResponse(
 
   // ── Empty Observation Detection (context overflow recovery) ──
   // Detect context overflow: stored observation with title=null AND narrative=null.
-  // Only checks on observation messages — summarize producing 0 observations is normal.
-  // Note: observations.length === 0 (no <observation> tags) is NOT treated as overflow.
-  // Production data shows healthy models skip uninteresting messages by not emitting XML,
-  // while true context overflow always produces <observation> tags with empty fields.
-  if (messageType === 'observation') {
+  // Runs regardless of messageType — messageTypeTracker can be stale when observation
+  // and summarize messages are batched (tracker overwrites to 'summarize' before
+  // observation responses arrive, causing Check 1 to be skipped entirely).
+  // Production evidence: bdo_lua_program session-7, obs #190-193 all bypassed detection.
+  {
     const emptyObs = observations.find(obs => obs.title === null && obs.narrative === null);
 
     if (emptyObs) {

@@ -182,6 +182,25 @@ describe('Empty Observation Detection', () => {
     expect(session.forceInit).toBeFalsy();
   });
 
+  it('sets forceInit even when messageType is summarize (tracker stale after batching)', async () => {
+    const session = makeSession();
+    const dbManager = makeMockDbManager();
+    const sessionManager = makeMockSessionManager();
+
+    // SDK responds with empty observation even though messageType is 'summarize'
+    // (messageTypeTracker overwritten by a later summarize message before this response arrived)
+    const emptyObsXml = '<observation><type>bugfix</type></observation>';
+
+    await processAgentResponse(
+      emptyObsXml, session, dbManager, sessionManager,
+      undefined, 0, null, 'SDK', undefined, 'summarize'
+    );
+
+    expect(session.forceInit).toBe(true);
+    expect(session.conversationHistory).toEqual([]);
+    expect(session.previousMemorySessionId).toBe('test-memory-id');
+  });
+
   it('does NOT set forceInit when observations have valid title+narrative', async () => {
     const session = makeSession();
     const dbManager = makeMockDbManager();
