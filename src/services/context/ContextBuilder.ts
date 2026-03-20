@@ -151,8 +151,8 @@ export async function generateContext(
     return '';
   }
 
-  // Run retention cleanup before querying context
-  if (config.retention?.enabled) {
+  // Run retention cleanup before querying context (skip in full mode — timeline reports need complete history)
+  if (config.retention?.enabled && !input?.full) {
     for (const proj of projects) {
       try {
         const result = RetentionManager.cleanup(db.getDatabase(), proj, config.retention);

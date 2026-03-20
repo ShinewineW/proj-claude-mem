@@ -340,11 +340,12 @@ describe('Hook Lifecycle - stderr Suppression (#1181)', () => {
 // --- Hook Response Constants ---
 
 describe('Hook Lifecycle - Standard Response', () => {
-  it('should define standard hook response with suppressOutput: true', async () => {
+  it('should define standard hook response as empty JSON (upstream 10e980cd)', async () => {
     const { STANDARD_HOOK_RESPONSE } = await import('../src/hooks/hook-response.js');
     const parsed = JSON.parse(STANDARD_HOOK_RESPONSE);
-    expect(parsed.continue).toBe(true);
-    expect(parsed.suppressOutput).toBe(true);
+    expect(parsed).toEqual({});
+    expect(parsed).not.toHaveProperty('continue');
+    expect(parsed).not.toHaveProperty('suppressOutput');
   });
 });
 
