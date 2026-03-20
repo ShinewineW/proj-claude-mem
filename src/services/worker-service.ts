@@ -192,7 +192,6 @@ export class WorkerService {
   private fallbackCleanupInterval: ReturnType<typeof setInterval> | null = null;
 
   private isReaping: boolean = false;  // Guard against concurrent reaper runs (R3)
-  private startTime = Date.now();
 
   // AI interaction tracking for health endpoint
   private lastAiInteraction: {
