@@ -122,8 +122,7 @@ export function importSessionSummary(
 }
 
 /**
- * Import observation with duplicate checking
- * Duplicates are identified by memory_session_id + title + created_at_epoch
+ * Import observation with content-hash-based duplicate checking
  */
 export function importObservation(
   db: Database,
