@@ -50,6 +50,11 @@ interface BypassConfig {
   cooldownMs: number;
 }
 
+interface ProbeResult {
+  ok: boolean;
+  failureReason?: string;
+}
+
 export class BypassLane {
   private state: BypassState = 'DISABLED';
   private consecutiveFailures = 0;
@@ -59,6 +64,7 @@ export class BypassLane {
   private config: BypassConfig | null = null;
   private lastGeminiRequestTime = 0;
   private cachedSettings: { data: ReturnType<typeof SettingsDefaultsManager.loadFromFile>; ts: number } | null = null;
+  private lastFailureReason: string | null = null;
 
   // Injected after construction (avoids circular dep with WorkerService)
   private sessionManager: SessionManager | null = null;
@@ -119,15 +125,18 @@ export class BypassLane {
       model: this.config.model,
     });
 
-    const probeOk = await this.probeProvider();
-    if (probeOk) {
+    const probe = await this.probeProvider();
+    if (probe.ok) {
       this.state = 'ACTIVE';
       logger.success('BYPASS', `Bypass lane ACTIVE using ${this.config.provider}`, {
         model: this.config.model,
         cooldownMs: this.config.cooldownMs,
       });
     } else {
-      logger.warn('BYPASS', 'Bypass lane probe failed, staying DISABLED');
+      this.lastFailureReason = probe.failureReason ?? null;
+      logger.warn('BYPASS', 'Bypass lane probe failed, staying DISABLED', {
+        reason: probe.failureReason,
+      });
     }
   }
 
@@ -217,14 +226,18 @@ export class BypassLane {
 
   private async attemptRecovery(): Promise<void> {
     logger.info('BYPASS', 'Attempting recovery probe');
-    const probeOk = await this.probeProvider();
-    if (probeOk) {
+    const probe = await this.probeProvider();
+    if (probe.ok) {
       this.state = 'ACTIVE';
       this.consecutiveFailures = 0;
+      this.lastFailureReason = null;
       logger.success('BYPASS', 'Bypass lane recovered, state → ACTIVE');
       this.restartConsumersForActiveSessions(); // All consumers exited when TRIPPED
     } else {
-      logger.warn('BYPASS', 'Recovery probe failed, restarting cooldown');
+      this.lastFailureReason = probe.failureReason ?? null;
+      logger.warn('BYPASS', 'Recovery probe failed, restarting cooldown', {
+        reason: probe.failureReason,
+      });
       this.scheduleCooldownProbe();
     }
   }
@@ -245,14 +258,16 @@ export class BypassLane {
   }
 
   /** Probe provider health with a lightweight API call. */
-  private async probeProvider(): Promise<boolean> {
-    if (!this.config) return false;
+  private async probeProvider(): Promise<ProbeResult> {
+    if (!this.config) return { ok: false, failureReason: 'no config' };
 
     try {
       const signal = AbortSignal.timeout(15_000);
+      let response: Response;
+
       if (this.config.provider === 'gemini') {
         const url = `${GEMINI_API_URL}/${this.config.model}:generateContent?key=${this.config.apiKey}`;
-        const response = await fetch(url, {
+        response = await fetch(url, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -261,11 +276,10 @@ export class BypassLane {
           }),
           signal,
         });
-        return response.ok;
       } else {
         // Must include HTTP-Referer — some upstream providers (e.g. StepFun behind Alibaba WAF)
         // reject requests without it, causing the probe to always fail and bypass to stay DISABLED.
-        const response = await fetch(OPENROUTER_API_URL, {
+        response = await fetch(OPENROUTER_API_URL, {
           method: 'POST',
           headers: {
             'Authorization': `Bearer ${this.config.apiKey}`,
@@ -280,10 +294,24 @@ export class BypassLane {
           }),
           signal,
         });
-        return response.ok;
       }
-    } catch {
-      return false;
+
+      if (response.ok) return { ok: true };
+      return {
+        ok: false,
+        failureReason: `HTTP ${response.status} ${response.statusText}`,
+      };
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : 'unknown error';
+      const sanitized = reason
+        .replace(/key=[^&\s]+/g, 'key=***')
+        .slice(0, 200);
+      return {
+        ok: false,
+        failureReason: sanitized.includes('abort') || sanitized.includes('Abort')
+          ? 'timeout (15s)'
+          : sanitized,
+      };
     }
   }
 

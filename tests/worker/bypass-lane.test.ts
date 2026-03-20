@@ -73,7 +73,7 @@ describe('BypassLane', () => {
     it('transitions to ACTIVE after successful probe', async () => {
       const lane = new BypassLane();
       // Mock probe to succeed
-      (lane as any).probeProvider = async () => true;
+      (lane as any).probeProvider = async () => ({ ok: true });
       await lane.initialize();
       expect(lane.getState()).toBe('ACTIVE');
       expect(lane.isActive()).toBe(true);
@@ -81,7 +81,7 @@ describe('BypassLane', () => {
 
     it('stays DISABLED if probe fails during initialization', async () => {
       const lane = new BypassLane();
-      (lane as any).probeProvider = async () => false;
+      (lane as any).probeProvider = async () => ({ ok: false, failureReason: 'test failure' });
       await lane.initialize();
       expect(lane.getState()).toBe('DISABLED');
       expect(lane.isActive()).toBe(false);
@@ -116,7 +116,7 @@ describe('BypassLane', () => {
     it('transitions from TRIPPED to ACTIVE on successful probe', async () => {
       const lane = new BypassLane();
       (lane as any).state = 'TRIPPED';
-      (lane as any).probeProvider = async () => true;
+      (lane as any).probeProvider = async () => ({ ok: true });
 
       await (lane as any).attemptRecovery();
       expect(lane.getState()).toBe('ACTIVE');
@@ -126,7 +126,7 @@ describe('BypassLane', () => {
     it('stays TRIPPED on failed probe', async () => {
       const lane = new BypassLane();
       (lane as any).state = 'TRIPPED';
-      (lane as any).probeProvider = async () => false;
+      (lane as any).probeProvider = async () => ({ ok: false, failureReason: 'test failure' });
       // Prevent real cooldown timer from scheduling
       (lane as any).scheduleCooldownProbe = () => {};
 
@@ -249,7 +249,7 @@ describe('BypassLane', () => {
     it('restarts consumers for active sessions after circuit breaker recovery', async () => {
       const lane = new BypassLane();
       (lane as any).state = 'TRIPPED';
-      (lane as any).probeProvider = async () => true;
+      (lane as any).probeProvider = async () => ({ ok: true });
       // Mock consumeLoop to prevent actual execution
       (lane as any).consumeLoop = async () => {};
 
@@ -273,7 +273,7 @@ describe('BypassLane', () => {
     it('does not duplicate consumers for sessions that already have one', async () => {
       const lane = new BypassLane();
       (lane as any).state = 'TRIPPED';
-      (lane as any).probeProvider = async () => true;
+      (lane as any).probeProvider = async () => ({ ok: true });
       (lane as any).consumeLoop = async () => {};
 
       const existingAc = new AbortController();
@@ -503,6 +503,90 @@ describe('F2: stopForSession idempotency', () => {
 
     // Should not throw
     lane.stopForSession(1);
+  });
+});
+
+describe('§4: ProbeResult structured return', () => {
+  it('returns ok:true on successful probe', async () => {
+    const lane = new BypassLane();
+    (lane as any).config = { provider: 'openrouter', apiKey: 'test', model: 'test', cooldownMs: 1000 };
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mock(async () => new Response('OK', { status: 200 })) as any;
+    try {
+      const result = await (lane as any).probeProvider();
+      expect(result).toEqual({ ok: true });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('returns failureReason with HTTP status on non-ok response', async () => {
+    const lane = new BypassLane();
+    (lane as any).config = { provider: 'openrouter', apiKey: 'test', model: 'test', cooldownMs: 1000 };
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mock(async () => new Response('', { status: 429, statusText: 'Too Many Requests' })) as any;
+    try {
+      const result = await (lane as any).probeProvider();
+      expect(result.ok).toBe(false);
+      expect(result.failureReason).toBe('HTTP 429 Too Many Requests');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('returns sanitized failureReason on network error', async () => {
+    const lane = new BypassLane();
+    (lane as any).config = { provider: 'openrouter', apiKey: 'test', model: 'test', cooldownMs: 1000 };
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mock(async () => { throw new Error('fetch failed: ECONNREFUSED'); }) as any;
+    try {
+      const result = await (lane as any).probeProvider();
+      expect(result.ok).toBe(false);
+      expect(result.failureReason).toContain('ECONNREFUSED');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('redacts Gemini API key from error messages', async () => {
+    const lane = new BypassLane();
+    (lane as any).config = { provider: 'gemini', apiKey: 'secret-key-123', model: 'gemini-2.5-flash-lite', cooldownMs: 1000 };
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mock(async () => {
+      throw new Error('request to https://api.example.com?key=secret-key-123 failed');
+    }) as any;
+    try {
+      const result = await (lane as any).probeProvider();
+      expect(result.ok).toBe(false);
+      expect(result.failureReason).not.toContain('secret-key-123');
+      expect(result.failureReason).toContain('key=***');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('returns timeout reason on AbortError', async () => {
+    const lane = new BypassLane();
+    (lane as any).config = { provider: 'openrouter', apiKey: 'test', model: 'test', cooldownMs: 1000 };
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mock(async () => {
+      const err = new DOMException('The operation was aborted', 'AbortError');
+      throw err;
+    }) as any;
+    try {
+      const result = await (lane as any).probeProvider();
+      expect(result.ok).toBe(false);
+      expect(result.failureReason).toBe('timeout (15s)');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('returns no-config reason when config is null', async () => {
+    const lane = new BypassLane();
+    (lane as any).config = null;
+    const result = await (lane as any).probeProvider();
+    expect(result).toEqual({ ok: false, failureReason: 'no config' });
   });
 });
 
