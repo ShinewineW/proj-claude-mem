@@ -28,7 +28,13 @@ export const ENV_FILE_PATH = join(DATA_DIR, '.env');
 const BLOCKED_ENV_VARS = [
   'ANTHROPIC_API_KEY',  // Issue #733: Prevent auto-discovery from project .env files
   'CLAUDECODE',         // Prevent "cannot be launched inside another Claude Code session" error
+  'CLAUDE_CODE_SESSION',  // Prevent nested session detection in child processes
+  'MCP_SESSION_ID',       // Prevent MCP session ID inheritance
 ];
+
+// Prefix blocklist — strips interop ports, session keys, etc.
+// NOTE: CLAUDE_CODE_* prefix NOT blocked — ENTRYPOINT (set below) and OAUTH_TOKEN are needed
+const BLOCKED_ENV_PREFIXES = ['CLAUDECODE_'];
 
 // Credential keys that claude-mem manages
 export const MANAGED_CREDENTIAL_KEYS = [
@@ -194,9 +200,10 @@ export function buildIsolatedEnv(includeCredentials: boolean = true): Record<str
   // 1. Start with full process environment
   const isolatedEnv: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) {
-    if (value !== undefined && !BLOCKED_ENV_VARS.includes(key)) {
-      isolatedEnv[key] = value;
-    }
+    if (value === undefined) continue;
+    if (BLOCKED_ENV_VARS.includes(key)) continue;
+    if (BLOCKED_ENV_PREFIXES.some(p => key.startsWith(p))) continue;
+    isolatedEnv[key] = value;
   }
 
   // 2. Override SDK entrypoint marker
