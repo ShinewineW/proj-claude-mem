@@ -486,6 +486,7 @@ export class BypassLane {
         });
         pendingStore.markFailed(message.id);
         this.sessionManager!.notifyMessageAvailable(session.sessionDbId, session.dbPath);
+        this.lastFailureReason = (error instanceof Error ? error.message : String(error)).slice(0, 200);
         this.recordFailure();
         await this.abortableSleep(1000, signal);
         if (this.state === 'TRIPPED') return;

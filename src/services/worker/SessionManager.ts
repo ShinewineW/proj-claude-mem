@@ -846,12 +846,14 @@ export class SessionManager {
           processingCount: stats.processingCount,
           status,
         });
-      } catch {
-        // DB error for one session should not fail entire diagnostics
+      } catch (err) {
+        logger.warn('SESSION', 'getDiagnostics: DB error for session, reporting as unknown', {
+          sessionDbId: session.sessionDbId, error: err instanceof Error ? err.message : String(err),
+        });
         sessionDiags.push({
           sessionDbId: session.sessionDbId,
           project: session.project || 'unknown',
-          idleSeconds: 0, pendingCount: 0, processingCount: 0, status: 'healthy',
+          idleSeconds: -1, pendingCount: -1, processingCount: -1, status: 'healthy',
         });
       }
     }
