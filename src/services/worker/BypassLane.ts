@@ -365,16 +365,17 @@ export class BypassLane {
         failureReason: `HTTP ${response.status} ${response.statusText}`,
       };
     } catch (error) {
+      // DOMException with name 'AbortError' or 'TimeoutError' indicates probe timeout
+      const isTimeout = error instanceof DOMException &&
+        (error.name === 'AbortError' || error.name === 'TimeoutError');
+      if (isTimeout) {
+        return { ok: false, failureReason: 'timeout (15s)' };
+      }
       const reason = error instanceof Error ? error.message : 'unknown error';
       const sanitized = reason
         .replace(/key=[^&\s]+/g, 'key=***')
         .slice(0, 200);
-      return {
-        ok: false,
-        failureReason: sanitized.includes('abort') || sanitized.includes('Abort')
-          ? 'timeout (15s)'
-          : sanitized,
-      };
+      return { ok: false, failureReason: sanitized };
     }
   }
 

@@ -454,6 +454,7 @@ describe('F1: empty observation defense', () => {
         markFailed: mockMarkFailed,
         confirmProcessed: mock(() => {}),
       }),
+      notifyMessageAvailable: mock(() => {}),
     };
     (lane as any).dbManager = {
       getSessionStore: () => ({ storeObservations: mock(() => ({ observationIds: [] })) }),
@@ -688,6 +689,23 @@ describe('§4: ProbeResult structured return', () => {
     const originalFetch = globalThis.fetch;
     globalThis.fetch = mock(async () => {
       const err = new DOMException('The operation was aborted', 'AbortError');
+      throw err;
+    }) as any;
+    try {
+      const result = await (lane as any).probeProvider();
+      expect(result.ok).toBe(false);
+      expect(result.failureReason).toBe('timeout (15s)');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('returns timeout reason on TimeoutError (real AbortSignal.timeout)', async () => {
+    const lane = new BypassLane();
+    (lane as any).config = { provider: 'openrouter', apiKey: 'test', model: 'test', cooldownMs: 1000 };
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mock(async () => {
+      const err = new DOMException('The operation timed out.', 'TimeoutError');
       throw err;
     }) as any;
     try {

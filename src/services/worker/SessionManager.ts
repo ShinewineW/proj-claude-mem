@@ -821,30 +821,39 @@ export class SessionManager {
     }> = [];
 
     for (const session of this.sessions.values()) {
-      const store = this.getPendingStore(session.dbPath);
-      const stats = store.getQueueStats(session.sessionDbId);
-      totalPending += stats.pendingCount;
-      totalProcessing += stats.processingCount;
+      try {
+        const store = this.getPendingStore(session.dbPath);
+        const stats = store.getQueueStats(session.sessionDbId);
+        totalPending += stats.pendingCount;
+        totalProcessing += stats.processingCount;
 
-      const idleMs = now - (session.lastGeneratorActivity || session.startTime || now);
-      const idleSeconds = Math.floor(idleMs / 1000);
-      const hasPending = stats.pendingCount + stats.processingCount > 0;
+        const idleMs = now - (session.lastGeneratorActivity || session.startTime || now);
+        const idleSeconds = Math.floor(idleMs / 1000);
+        const hasPending = stats.pendingCount + stats.processingCount > 0;
 
-      let status: 'healthy' | 'idle' | 'stuck' = 'healthy';
-      if (idleMs >= IDLE_THRESHOLD_MS && hasPending) {
-        status = 'stuck';
-      } else if (idleMs >= IDLE_THRESHOLD_MS) {
-        status = 'idle';
+        let status: 'healthy' | 'idle' | 'stuck' = 'healthy';
+        if (idleMs >= IDLE_THRESHOLD_MS && hasPending) {
+          status = 'stuck';
+        } else if (idleMs >= IDLE_THRESHOLD_MS) {
+          status = 'idle';
+        }
+
+        sessionDiags.push({
+          sessionDbId: session.sessionDbId,
+          project: session.project || 'unknown',
+          idleSeconds,
+          pendingCount: stats.pendingCount,
+          processingCount: stats.processingCount,
+          status,
+        });
+      } catch {
+        // DB error for one session should not fail entire diagnostics
+        sessionDiags.push({
+          sessionDbId: session.sessionDbId,
+          project: session.project || 'unknown',
+          idleSeconds: 0, pendingCount: 0, processingCount: 0, status: 'healthy',
+        });
       }
-
-      sessionDiags.push({
-        sessionDbId: session.sessionDbId,
-        project: session.project || 'unknown',
-        idleSeconds,
-        pendingCount: stats.pendingCount,
-        processingCount: stats.processingCount,
-        status,
-      });
     }
 
     return {
