@@ -43,6 +43,23 @@ const CHARS_PER_TOKEN_ESTIMATE = 4;
 
 export type BypassState = 'DISABLED' | 'ACTIVE' | 'TRIPPED';
 
+export interface BypassStatus {
+  state: BypassState;
+  provider: string | null;
+  model: string | null;
+  activeConsumers: number;
+  consecutiveFailures: number;
+  totalClaimed: number;
+  totalSucceeded: number;
+  totalFailed: number;
+  totalTrips: number;
+  lastSuccessAt: string | null;
+  lastFailureAt: string | null;
+  lastTripAt: string | null;
+  lastProbeAt: string | null;
+  lastFailureReason: string | null;
+}
+
 interface BypassConfig {
   provider: 'gemini' | 'openrouter';
   apiKey: string;
@@ -65,6 +82,17 @@ export class BypassLane {
   private lastGeminiRequestTime = 0;
   private cachedSettings: { data: ReturnType<typeof SettingsDefaultsManager.loadFromFile>; ts: number } | null = null;
   private lastFailureReason: string | null = null;
+  // In-memory counters — reset on worker restart. Operational diagnostics only.
+  private counters = {
+    claimed: 0,
+    succeeded: 0,
+    failed: 0,
+    trips: 0,
+    lastSuccessAt: null as string | null,
+    lastFailureAt: null as string | null,
+    lastTripAt: null as string | null,
+    lastProbeAt: null as string | null,
+  };
 
   // Injected after construction (avoids circular dep with WorkerService)
   private sessionManager: SessionManager | null = null;
@@ -127,21 +155,49 @@ export class BypassLane {
 
     const probe = await this.probeProvider();
     if (probe.ok) {
-      this.state = 'ACTIVE';
-      logger.success('BYPASS', `Bypass lane ACTIVE using ${this.config.provider}`, {
-        model: this.config.model,
-        cooldownMs: this.config.cooldownMs,
-      });
+      this.transitionToActive('init');
     } else {
       this.lastFailureReason = probe.failureReason ?? null;
-      logger.warn('BYPASS', 'Bypass lane probe failed, staying DISABLED', {
+      logger.warn('BYPASS', 'Initial probe failed, scheduling retry', {
+        provider: this.config.provider,
         reason: probe.failureReason,
       });
+      this.scheduleCooldownProbe();
     }
   }
 
   getState(): BypassState { return this.state; }
   isActive(): boolean { return this.state === 'ACTIVE'; }
+
+  getStatus(): BypassStatus {
+    return {
+      state: this.state,
+      provider: this.config?.provider ?? null,
+      model: this.config?.model ?? null,
+      activeConsumers: this.activeConsumers.size,
+      consecutiveFailures: this.consecutiveFailures,
+      totalClaimed: this.counters.claimed,
+      totalSucceeded: this.counters.succeeded,
+      totalFailed: this.counters.failed,
+      totalTrips: this.counters.trips,
+      lastSuccessAt: this.counters.lastSuccessAt,
+      lastFailureAt: this.counters.lastFailureAt,
+      lastTripAt: this.counters.lastTripAt,
+      lastProbeAt: this.counters.lastProbeAt,
+      lastFailureReason: this.lastFailureReason,
+    };
+  }
+
+  private transitionToActive(source: 'init' | 'recovery'): void {
+    this.state = 'ACTIVE';
+    this.consecutiveFailures = 0;
+    this.lastFailureReason = null;
+    logger.success('BYPASS', `Bypass lane ACTIVE (${source})`, {
+      provider: this.config?.provider,
+      model: this.config?.model,
+    });
+    this.restartConsumersForActiveSessions();
+  }
 
   /** Start bypass consumer for a session. No-op if not ACTIVE. */
   startForSession(session: ActiveSession): void {
@@ -196,10 +252,14 @@ export class BypassLane {
 
   private recordSuccess(): void {
     this.consecutiveFailures = 0;
+    this.counters.succeeded++;
+    this.counters.lastSuccessAt = new Date().toISOString();
   }
 
   private recordFailure(): void {
     this.consecutiveFailures++;
+    this.counters.failed++;
+    this.counters.lastFailureAt = new Date().toISOString();
     if (this.consecutiveFailures >= this.maxFailures) {
       this.tripCircuitBreaker();
     }
@@ -207,6 +267,8 @@ export class BypassLane {
 
   private tripCircuitBreaker(): void {
     this.state = 'TRIPPED';
+    this.counters.trips++;
+    this.counters.lastTripAt = new Date().toISOString();
     logger.warn('BYPASS', `Circuit breaker TRIPPED after ${this.consecutiveFailures} consecutive failures`, {
       cooldownMs: this.config?.cooldownMs,
     });
@@ -228,11 +290,7 @@ export class BypassLane {
     logger.info('BYPASS', 'Attempting recovery probe');
     const probe = await this.probeProvider();
     if (probe.ok) {
-      this.state = 'ACTIVE';
-      this.consecutiveFailures = 0;
-      this.lastFailureReason = null;
-      logger.success('BYPASS', 'Bypass lane recovered, state → ACTIVE');
-      this.restartConsumersForActiveSessions(); // All consumers exited when TRIPPED
+      this.transitionToActive('recovery');
     } else {
       this.lastFailureReason = probe.failureReason ?? null;
       logger.warn('BYPASS', 'Recovery probe failed, restarting cooldown', {
@@ -260,6 +318,7 @@ export class BypassLane {
   /** Probe provider health with a lightweight API call. */
   private async probeProvider(): Promise<ProbeResult> {
     if (!this.config) return { ok: false, failureReason: 'no config' };
+    this.counters.lastProbeAt = new Date().toISOString();
 
     try {
       const signal = AbortSignal.timeout(15_000);
@@ -376,6 +435,8 @@ export class BypassLane {
         await this.abortableSleep(POLL_MS, signal);
         continue;
       }
+
+      this.counters.claimed++;
 
       // Wait for main channel to establish memorySessionId (avoid orphaned synthetic IDs)
       if (!session.memorySessionId) {

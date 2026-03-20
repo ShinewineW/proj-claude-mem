@@ -85,6 +85,7 @@ describe('BypassLane', () => {
       await lane.initialize();
       expect(lane.getState()).toBe('DISABLED');
       expect(lane.isActive()).toBe(false);
+      lane.shutdown(); // Cleanup cooldown timer scheduled by init failure retry
     });
   });
 
@@ -503,6 +504,122 @@ describe('F2: stopForSession idempotency', () => {
 
     // Should not throw
     lane.stopForSession(1);
+  });
+});
+
+describe('§1: unified state transition', () => {
+  it('G1: initial activation backfills already-running sessions', async () => {
+    const lane = new BypassLane();
+    (lane as any).probeProvider = async () => ({ ok: true });
+
+    // Mock session manager with 3 active sessions
+    const sessions = new Map([
+      [1, { sessionDbId: 1, dbPath: '/tmp/test.db', abortController: new AbortController() }],
+      [2, { sessionDbId: 2, dbPath: '/tmp/test.db', abortController: new AbortController() }],
+      [3, { sessionDbId: 3, dbPath: '/tmp/test.db', abortController: new AbortController() }],
+    ]);
+    (lane as any).sessionManager = {
+      getActiveSessions: () => sessions.values(),
+      getPendingMessageStore: () => ({ claimNextObservation: () => null }),
+    };
+
+    // Start sessions while DISABLED — should all no-op
+    for (const session of sessions.values()) {
+      lane.startForSession(session as any);
+    }
+    expect((lane as any).activeConsumers.size).toBe(0);
+
+    // Mock consumeLoop to prevent actual execution
+    (lane as any).consumeLoop = async () => {};
+
+    // Initialize — should backfill all 3
+    (lane as any).resolveConfig = () => ({ provider: 'openrouter', apiKey: 'k', model: 'm', cooldownMs: 1000 });
+    await lane.initialize();
+
+    expect(lane.getState()).toBe('ACTIVE');
+    expect((lane as any).activeConsumers.size).toBe(3);
+  });
+
+  it('G2: initial probe failure schedules cooldown recovery', async () => {
+    const lane = new BypassLane();
+    let probeCallCount = 0;
+    (lane as any).probeProvider = async () => {
+      probeCallCount++;
+      return probeCallCount === 1
+        ? { ok: false, failureReason: 'HTTP 503' }
+        : { ok: true };
+    };
+    (lane as any).sessionManager = {
+      getActiveSessions: () => [].values(),
+      getPendingMessageStore: () => ({ claimNextObservation: () => null }),
+    };
+    (lane as any).consumeLoop = async () => {};
+    (lane as any).resolveConfig = () => ({ provider: 'openrouter', apiKey: 'k', model: 'm', cooldownMs: 100 });
+
+    await lane.initialize();
+    // State should be DISABLED (not TRIPPED — never was active)
+    expect(lane.getState()).toBe('DISABLED');
+    // But cooldown timer should be scheduled
+    expect((lane as any).cooldownTimer).not.toBeNull();
+
+    // Wait for cooldown to fire
+    await new Promise(resolve => setTimeout(resolve, 200));
+    expect(lane.getState()).toBe('ACTIVE');
+    expect(probeCallCount).toBe(2);
+
+    // Cleanup
+    lane.shutdown();
+  });
+});
+
+describe('§3 partial: counters and getStatus', () => {
+  it('G6: getStatus returns correct counter values', async () => {
+    const lane = new BypassLane();
+    (lane as any).config = { provider: 'openrouter', apiKey: 'test', model: 'test-model', cooldownMs: 1000 };
+    (lane as any).state = 'ACTIVE';
+
+    // Simulate 2 successes and 1 failure
+    (lane as any).recordSuccess();
+    (lane as any).recordSuccess();
+    (lane as any).recordFailure();
+
+    const status = lane.getStatus();
+    expect(status.state).toBe('ACTIVE');
+    expect(status.provider).toBe('openrouter');
+    expect(status.model).toBe('test-model');
+    expect(status.totalSucceeded).toBe(2);
+    expect(status.totalFailed).toBe(1);
+    expect(status.consecutiveFailures).toBe(1);
+    expect(status.lastSuccessAt).not.toBeNull();
+    expect(status.lastFailureAt).not.toBeNull();
+  });
+
+  it('getStatus returns null fields when bypass is disabled', () => {
+    const lane = new BypassLane();
+    const status = lane.getStatus();
+    expect(status.state).toBe('DISABLED');
+    expect(status.provider).toBeNull();
+    expect(status.model).toBeNull();
+    expect(status.totalClaimed).toBe(0);
+    expect(status.totalTrips).toBe(0);
+  });
+
+  it('totalTrips increments on circuit breaker trip', () => {
+    const lane = new BypassLane();
+    (lane as any).config = { provider: 'openrouter', apiKey: 'test', model: 'test', cooldownMs: 1000 };
+    (lane as any).state = 'ACTIVE';
+
+    // Trip circuit breaker
+    (lane as any).recordFailure();
+    (lane as any).recordFailure();
+    (lane as any).recordFailure(); // 3rd failure trips
+
+    const status = lane.getStatus();
+    expect(status.totalTrips).toBe(1);
+    expect(status.lastTripAt).not.toBeNull();
+
+    // Cleanup cooldown timer
+    lane.shutdown();
   });
 });
 
