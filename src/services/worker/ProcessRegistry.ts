@@ -13,7 +13,7 @@
  * - Use SDK's spawnClaudeCodeProcess option to capture PIDs
  * - Track all spawned processes with session association
  * - Verify exit on session deletion with timeout + SIGKILL escalation
- * - Safety net orphan reaper runs every 5 minutes
+ * - Safety net orphan reaper runs every 1 minute
  */
 
 import { spawn, exec, ChildProcess } from 'child_process';
@@ -165,7 +165,7 @@ export async function ensureProcessExit(tracked: TrackedProcess, timeoutMs: numb
   const { pid, process: proc } = tracked;
 
   // Already exited?
-  if (proc.killed || proc.exitCode !== null) {
+  if (proc.exitCode !== null) {
     unregisterProcess(pid);
     return;
   }
@@ -182,7 +182,7 @@ export async function ensureProcessExit(tracked: TrackedProcess, timeoutMs: numb
   await Promise.race([exitPromise, timeoutPromise]);
 
   // Check if exited gracefully
-  if (proc.killed || proc.exitCode !== null) {
+  if (proc.exitCode !== null) {
     unregisterProcess(pid);
     return;
   }
@@ -211,7 +211,7 @@ export async function ensureProcessExit(tracked: TrackedProcess, timeoutMs: numb
  * - Process name is "claude"
  * - Parent PID is the worker-service daemon (this process)
  * - Process has 0% CPU (idle)
- * - Process has been running for more than 2 minutes
+ * - Process has been running for more than 1 minute
  */
 async function killIdleDaemonChildren(): Promise<number> {
   if (process.platform === 'win32') {
@@ -262,8 +262,8 @@ async function killIdleDaemonChildren(): Promise<number> {
         minutes = parseInt(minMatch[1], 10);
       }
 
-      // Kill if idle for more than 2 minutes
-      if (minutes >= 2) {
+      // Kill if idle for more than 1 minute
+      if (minutes >= 1) {
         logger.info('PROCESS', `Killing idle daemon child PID ${pid} (idle ${minutes}m)`, { pid, minutes });
         try {
           process.kill(pid, 'SIGKILL');
@@ -421,7 +421,7 @@ export function createPidCapturingSpawn(sessionDbId: number, dbPath?: string) {
  * Start the orphan reaper interval
  * Returns cleanup function to stop the interval
  */
-export function startOrphanReaper(getActiveSessionIds: () => Set<number>, intervalMs: number = 5 * 60 * 1000): () => void {
+export function startOrphanReaper(getActiveSessionIds: () => Set<number>, intervalMs: number = 1 * 60 * 1000): () => void {
   const interval = setInterval(async () => {
     try {
       const activeIds = getActiveSessionIds();

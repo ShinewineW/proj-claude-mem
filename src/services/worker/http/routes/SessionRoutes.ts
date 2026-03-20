@@ -195,7 +195,7 @@ export class SessionRoutes extends BaseRouteHandler {
       .finally(async () => {
         // CRITICAL: Verify subprocess exit to prevent zombie accumulation (Issue #1168)
         const tracked = getProcessBySession(session.sessionDbId);
-        if (tracked && !tracked.process.killed && tracked.process.exitCode === null) {
+        if (tracked && tracked.process.exitCode === null) {
           await ensureProcessExit(tracked, 5000);
         }
 
