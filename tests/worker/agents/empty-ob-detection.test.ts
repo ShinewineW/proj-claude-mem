@@ -110,7 +110,7 @@ describe('Empty Observation Detection', () => {
 
     await processAgentResponse(
       emptyObsXml, session, dbManager, sessionManager,
-      undefined, 0, null, 'SDK', undefined, 'observation'
+      undefined, 0, null, 'SDK', undefined
     );
 
     expect(session.forceInit).toBe(true);
@@ -128,7 +128,7 @@ describe('Empty Observation Detection', () => {
 
     await processAgentResponse(
       glitchXml, session, dbManager, sessionManager,
-      undefined, 0, null, 'SDK', undefined, 'observation'
+      undefined, 0, null, 'SDK', undefined
     );
 
     expect(session.forceInit).toBeFalsy();
@@ -153,17 +153,17 @@ describe('Empty Observation Detection', () => {
 
     await processAgentResponse(
       noObsText, session, dbManager, sessionManager,
-      undefined, 0, null, 'SDK', undefined, 'observation'
+      undefined, 0, null, 'SDK', undefined
     );
 
     expect(session.forceInit).toBeFalsy();
     expect(session.conversationHistory.length).toBeGreaterThan(0);
   });
 
-  it('does NOT set forceInit when zero observations from summarize message (expected)', async () => {
+  it('does NOT set forceInit when response has only summary tags (no observations stored)', async () => {
     const session = makeSession();
     const dbManager = makeMockDbManager();
-    // Summary messages normally produce no observations
+    // Summary-only response produces no observations
     (dbManager.getSessionStore(undefined) as any).storeObservations = mock(() => ({
       observationIds: [],
       summaryId: 1,
@@ -171,29 +171,27 @@ describe('Empty Observation Detection', () => {
     }));
     const sessionManager = makeMockSessionManager();
 
-    // Summary message produces no observations — this is normal
     const summaryXml = '<summary><request>Fix bug</request><investigated>Checked logs</investigated><learned>Root cause found</learned><completed>Applied fix</completed><next_steps>Monitor</next_steps></summary>';
 
     await processAgentResponse(
       summaryXml, session, dbManager, sessionManager,
-      undefined, 0, null, 'SDK', undefined, 'summarize'
+      undefined, 0, null, 'SDK', undefined
     );
 
     expect(session.forceInit).toBeFalsy();
   });
 
-  it('sets forceInit even when messageType is summarize (tracker stale after batching)', async () => {
+  it('sets forceInit on empty observation regardless of prompt origin', async () => {
     const session = makeSession();
     const dbManager = makeMockDbManager();
     const sessionManager = makeMockSessionManager();
 
-    // SDK responds with empty observation even though messageType is 'summarize'
-    // (messageTypeTracker overwritten by a later summarize message before this response arrived)
+    // Empty observation stored — detection is unconditional (no messageType dependency)
     const emptyObsXml = '<observation><type>bugfix</type></observation>';
 
     await processAgentResponse(
       emptyObsXml, session, dbManager, sessionManager,
-      undefined, 0, null, 'SDK', undefined, 'summarize'
+      undefined, 0, null, 'SDK', undefined
     );
 
     expect(session.forceInit).toBe(true);
@@ -210,7 +208,7 @@ describe('Empty Observation Detection', () => {
 
     await processAgentResponse(
       validXml, session, dbManager, sessionManager,
-      undefined, 0, null, 'SDK', undefined, 'observation'
+      undefined, 0, null, 'SDK', undefined
     );
 
     expect(session.forceInit).toBeFalsy();
@@ -245,7 +243,7 @@ describe('Empty Observation Detection', () => {
 
     await processAgentResponse(
       emptyObsXml, session, dbManager, sessionManager,
-      undefined, 0, null, 'SDK', undefined, 'observation'
+      undefined, 0, null, 'SDK', undefined
     );
 
     // forceInit should NOT be set — circuit breaker engaged
@@ -263,7 +261,7 @@ describe('Empty Observation Detection', () => {
 
     await processAgentResponse(
       validXml, session, dbManager, sessionManager,
-      undefined, 0, null, 'SDK', undefined, 'observation'
+      undefined, 0, null, 'SDK', undefined
     );
 
     expect(session.forceInit).toBeFalsy();

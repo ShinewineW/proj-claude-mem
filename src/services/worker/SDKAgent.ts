@@ -46,7 +46,6 @@ export class SDKAgent {
     // Track cwd from messages for CLAUDE.md generation (worktree support)
     // Uses mutable object so generator updates are visible in response processing
     const cwdTracker = { lastCwd: undefined as string | undefined };
-    const messageTypeTracker = { lastType: undefined as 'observation' | 'summarize' | undefined };
 
     // Find Claude executable
     const claudePath = this.findClaudeExecutable();
@@ -70,7 +69,7 @@ export class SDKAgent {
     ];
 
     // Create message generator (event-driven)
-    const messageGenerator = this.createMessageGenerator(session, cwdTracker, messageTypeTracker);
+    const messageGenerator = this.createMessageGenerator(session, cwdTracker);
 
     // CRITICAL: Only resume if:
     // 1. memorySessionId exists (was captured from a previous SDK response)
@@ -315,7 +314,6 @@ export class SDKAgent {
             originalTimestamp,
             'SDK',
             cwdTracker.lastCwd,
-            messageTypeTracker.lastType
           );
         }
 
@@ -381,7 +379,6 @@ export class SDKAgent {
   private async *createMessageGenerator(
     session: ActiveSession,
     cwdTracker: { lastCwd: string | undefined },
-    messageTypeTracker: { lastType: 'observation' | 'summarize' | undefined }
   ): AsyncIterableIterator<SDKUserMessage> {
     // Load active mode
     const mode = ModeManager.getInstance().getActiveMode();
@@ -445,7 +442,7 @@ export class SDKAgent {
       }
 
       if (message.type === 'observation') {
-        messageTypeTracker.lastType = 'observation';
+        // (messageTypeTracker removed — zero-ob detection runs unconditionally)
         // Update last prompt number
         if (message.prompt_number !== undefined) {
           session.lastPromptNumber = message.prompt_number;
@@ -474,7 +471,6 @@ export class SDKAgent {
           isSynthetic: true
         };
       } else if (message.type === 'summarize') {
-        messageTypeTracker.lastType = 'summarize';
         const summaryPrompt = buildSummaryPrompt({
           id: session.sessionDbId,
           memory_session_id: session.memorySessionId,

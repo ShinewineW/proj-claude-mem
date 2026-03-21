@@ -809,6 +809,35 @@ export class WorkerService {
         const pendingCount = pendingStore.getPendingCount(session.sessionDbId);
 
         if (pendingCount > 0) {
+          // Guard: context reset exhaustion — session is degraded beyond recovery.
+          // ResponseProcessor capped at 3 forceInit resets; if still producing empty obs,
+          // further restarts will just repeat the same toxic context. Fail the session.
+          const MAX_CONTEXT_RESETS = 3;
+          if ((session.contextResetCount ?? 0) >= MAX_CONTEXT_RESETS) {
+            logger.error('SESSION', `Context reset exhausted, failing session — ${session.contextResetCount} consecutive resets without recovery`, {
+              sessionDbId: session.sessionDbId,
+              contextResetCount: session.contextResetCount,
+              pendingCount,
+            });
+            try {
+              const abandoned = pendingStore.markAllSessionMessagesAbandoned(session.sessionDbId);
+              this.dbManager.getSessionStore(session.dbPath).markSessionFailed(session.sessionDbId);
+              this.sessionManager.removeSessionImmediate(session.sessionDbId, session.dbPath);
+              this.sessionEventBroadcaster.broadcastSessionCompleted(session.sessionDbId, session.project);
+              session.abortController.abort();
+              this.bypassLane.stopForSession(session.sessionDbId);
+              logger.error('SESSION', `Session failed and removed — ${abandoned.failed} messages abandoned`, {
+                sessionDbId: session.sessionDbId,
+              });
+            } catch (cleanupErr) {
+              logger.warn('SESSION', 'Failed to cleanup exhausted session', {
+                sessionDbId: session.sessionDbId
+              }, cleanupErr as Error);
+            }
+            this.broadcastProcessingStatus();
+            return;
+          }
+
           // Guard: prevent infinite restart loops (R1)
           const MAX_CONSECUTIVE_RESTARTS = 3; // Must match SessionRoutes.MAX_CONSECUTIVE_RESTARTS
           session.consecutiveRestarts += 1;

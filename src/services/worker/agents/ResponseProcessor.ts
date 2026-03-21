@@ -45,7 +45,6 @@ import { cleanupProcessedMessages } from './SessionCleanupHelper.js';
  * @param discoveryTokens - Token cost delta for this response
  * @param originalTimestamp - Original epoch when message was queued (for accurate timestamps)
  * @param agentName - Name of the agent for logging (e.g., 'SDK', 'Gemini', 'OpenRouter')
- * @param messageType - Type of the message that produced this response ('observation' or 'summarize')
  */
 export async function processAgentResponse(
   text: string,
@@ -57,7 +56,6 @@ export async function processAgentResponse(
   originalTimestamp: number | null,
   agentName: string,
   projectRoot?: string,
-  messageType?: 'observation' | 'summarize'
 ): Promise<void> {
   // Track generator activity for stale detection (Issue #1099)
   session.lastGeneratorActivity = Date.now();
