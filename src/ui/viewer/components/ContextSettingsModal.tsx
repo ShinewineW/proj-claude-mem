@@ -2,6 +2,7 @@ import React, { useState, useCallback, useEffect } from 'react';
 import type { Settings } from '../types';
 import { TerminalPreview } from './TerminalPreview';
 import { useContextPreview } from '../hooks/useContextPreview';
+import { DEFAULT_SETTINGS } from '../constants/settings';
 
 interface ContextSettingsModalProps {
   isOpen: boolean;
@@ -240,7 +241,7 @@ export function ContextSettingsModal({
                   type="number"
                   min="1"
                   max="200"
-                  value={formState.CLAUDE_MEM_CONTEXT_OBSERVATIONS || '50'}
+                  value={formState.CLAUDE_MEM_CONTEXT_OBSERVATIONS ?? DEFAULT_SETTINGS.CLAUDE_MEM_CONTEXT_OBSERVATIONS}
                   onChange={(e) => updateSetting('CLAUDE_MEM_CONTEXT_OBSERVATIONS', e.target.value)}
                 />
               </FormField>
@@ -252,7 +253,7 @@ export function ContextSettingsModal({
                   type="number"
                   min="1"
                   max="50"
-                  value={formState.CLAUDE_MEM_CONTEXT_SESSION_COUNT || '10'}
+                  value={formState.CLAUDE_MEM_CONTEXT_SESSION_COUNT ?? DEFAULT_SETTINGS.CLAUDE_MEM_CONTEXT_SESSION_COUNT}
                   onChange={(e) => updateSetting('CLAUDE_MEM_CONTEXT_SESSION_COUNT', e.target.value)}
                 />
               </FormField>
@@ -273,7 +274,7 @@ export function ContextSettingsModal({
                     type="number"
                     min="0"
                     max="20"
-                    value={formState.CLAUDE_MEM_CONTEXT_FULL_COUNT || '5'}
+                    value={formState.CLAUDE_MEM_CONTEXT_FULL_COUNT ?? DEFAULT_SETTINGS.CLAUDE_MEM_CONTEXT_FULL_COUNT}
                     onChange={(e) => updateSetting('CLAUDE_MEM_CONTEXT_FULL_COUNT', e.target.value)}
                   />
                 </FormField>
@@ -282,7 +283,7 @@ export function ContextSettingsModal({
                   tooltip="Which field to expand for full observations"
                 >
                   <select
-                    value={formState.CLAUDE_MEM_CONTEXT_FULL_FIELD || 'narrative'}
+                    value={formState.CLAUDE_MEM_CONTEXT_FULL_FIELD ?? DEFAULT_SETTINGS.CLAUDE_MEM_CONTEXT_FULL_FIELD}
                     onChange={(e) => updateSetting('CLAUDE_MEM_CONTEXT_FULL_FIELD', e.target.value)}
                   >
                     <option value="narrative">Narrative</option>
@@ -337,7 +338,7 @@ export function ContextSettingsModal({
                 tooltip="Choose between Claude (via Agent SDK) or Gemini (via REST API)"
               >
                 <select
-                  value={formState.CLAUDE_MEM_PROVIDER || 'claude'}
+                  value={formState.CLAUDE_MEM_PROVIDER ?? DEFAULT_SETTINGS.CLAUDE_MEM_PROVIDER}
                   onChange={(e) => updateSetting('CLAUDE_MEM_PROVIDER', e.target.value)}
                 >
                   <option value="claude">Claude (uses your Claude account)</option>
@@ -352,7 +353,7 @@ export function ContextSettingsModal({
                   tooltip="Claude model used for generating observations"
                 >
                   <select
-                    value={formState.CLAUDE_MEM_MODEL || 'claude-haiku-4-5-20251001'}
+                    value={formState.CLAUDE_MEM_MODEL ?? DEFAULT_SETTINGS.CLAUDE_MEM_MODEL}
                     onChange={(e) => updateSetting('CLAUDE_MEM_MODEL', e.target.value)}
                   >
                     <option value="claude-haiku-4-5-20251001">haiku (fastest)</option>
@@ -370,7 +371,7 @@ export function ContextSettingsModal({
                   >
                     <input
                       type="password"
-                      value={formState.CLAUDE_MEM_GEMINI_API_KEY || ''}
+                      value={formState.CLAUDE_MEM_GEMINI_API_KEY ?? DEFAULT_SETTINGS.CLAUDE_MEM_GEMINI_API_KEY}
                       onChange={(e) => updateSetting('CLAUDE_MEM_GEMINI_API_KEY', e.target.value)}
                       placeholder="Enter Gemini API key..."
                     />
@@ -380,7 +381,7 @@ export function ContextSettingsModal({
                     tooltip="Gemini model used for generating observations"
                   >
                     <select
-                      value={formState.CLAUDE_MEM_GEMINI_MODEL || 'gemini-2.5-flash-lite'}
+                      value={formState.CLAUDE_MEM_GEMINI_MODEL ?? DEFAULT_SETTINGS.CLAUDE_MEM_GEMINI_MODEL}
                       onChange={(e) => updateSetting('CLAUDE_MEM_GEMINI_MODEL', e.target.value)}
                     >
                       <option value="gemini-2.5-flash-lite">gemini-2.5-flash-lite (10 RPM free)</option>
@@ -408,7 +409,7 @@ export function ContextSettingsModal({
                   >
                     <input
                       type="password"
-                      value={formState.CLAUDE_MEM_OPENROUTER_API_KEY || ''}
+                      value={formState.CLAUDE_MEM_OPENROUTER_API_KEY ?? DEFAULT_SETTINGS.CLAUDE_MEM_OPENROUTER_API_KEY}
                       onChange={(e) => updateSetting('CLAUDE_MEM_OPENROUTER_API_KEY', e.target.value)}
                       placeholder="Enter OpenRouter API key..."
                     />
@@ -419,7 +420,7 @@ export function ContextSettingsModal({
                   >
                     <input
                       type="text"
-                      value={formState.CLAUDE_MEM_OPENROUTER_MODEL || 'xiaomi/mimo-v2-flash:free'}
+                      value={formState.CLAUDE_MEM_OPENROUTER_MODEL ?? DEFAULT_SETTINGS.CLAUDE_MEM_OPENROUTER_MODEL}
                       onChange={(e) => updateSetting('CLAUDE_MEM_OPENROUTER_MODEL', e.target.value)}
                       placeholder="e.g., xiaomi/mimo-v2-flash:free"
                     />
@@ -430,7 +431,7 @@ export function ContextSettingsModal({
                   >
                     <input
                       type="text"
-                      value={formState.CLAUDE_MEM_OPENROUTER_SITE_URL || ''}
+                      value={formState.CLAUDE_MEM_OPENROUTER_SITE_URL ?? DEFAULT_SETTINGS.CLAUDE_MEM_OPENROUTER_SITE_URL}
                       onChange={(e) => updateSetting('CLAUDE_MEM_OPENROUTER_SITE_URL', e.target.value)}
                       placeholder="https://yoursite.com"
                     />
@@ -441,7 +442,7 @@ export function ContextSettingsModal({
                   >
                     <input
                       type="text"
-                      value={formState.CLAUDE_MEM_OPENROUTER_APP_NAME || 'claude-mem'}
+                      value={formState.CLAUDE_MEM_OPENROUTER_APP_NAME ?? DEFAULT_SETTINGS.CLAUDE_MEM_OPENROUTER_APP_NAME}
                       onChange={(e) => updateSetting('CLAUDE_MEM_OPENROUTER_APP_NAME', e.target.value)}
                       placeholder="claude-mem"
                     />
@@ -457,7 +458,7 @@ export function ContextSettingsModal({
                   type="number"
                   min="1024"
                   max="65535"
-                  value={formState.CLAUDE_MEM_WORKER_PORT || '37777'}
+                  value={formState.CLAUDE_MEM_WORKER_PORT ?? DEFAULT_SETTINGS.CLAUDE_MEM_WORKER_PORT}
                   onChange={(e) => updateSetting('CLAUDE_MEM_WORKER_PORT', e.target.value)}
                 />
               </FormField>
