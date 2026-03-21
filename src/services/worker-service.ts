@@ -1,12 +1,9 @@
 /**
- * Worker Service - Slim Orchestrator
+ * Worker Service - Core Orchestrator
  *
- * Refactored from 2000-line monolith to ~300-line orchestrator.
- * Delegates to specialized modules:
- * - src/services/server/ - HTTP server, middleware, error handling
- * - src/services/infrastructure/ - Process management, health monitoring, shutdown
- * - src/services/integrations/ - IDE integrations (Cursor)
- * - src/services/worker/ - Business logic, routes, agents
+ * Routes extracted to src/services/worker/http/routes/.
+ * Session/queue/generator lifecycle logic remains here.
+ * Delegates infrastructure to src/services/server/, infrastructure/, integrations/, worker/.
  */
 
 import path from 'path';
@@ -603,14 +600,6 @@ export class WorkerService {
   }
 
   /**
-   * Get the agent for main channel processing.
-   * Always returns Claude SDK — bypass lane handles REST providers separately.
-   */
-  private getActiveAgent(): SDKAgent {
-    return this.sdkAgent;
-  }
-
-  /**
    * Start a session processor.
    * On SDK resume failure (terminated session), marks messages abandoned and removes session.
    */
@@ -621,7 +610,7 @@ export class WorkerService {
     if (!session) return;
 
     const sid = session.sessionDbId;
-    const agent = this.getActiveAgent();
+    const agent = this.sdkAgent;
     const providerName = agent.constructor.name;
 
     // Before starting generator, check if AbortController is already aborted

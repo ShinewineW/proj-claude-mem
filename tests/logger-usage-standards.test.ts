@@ -47,7 +47,7 @@ const HIGH_PRIORITY_PATTERNS = [
   /^services\/worker\/(?!.*types\.ts$)/,  // Worker services (not type files)
   /^services\/sqlite\/(?!types\.ts$|index\.ts$|query-utils\.ts$)/,  // SQLite services (not type/index/util files)
   /^services\/sync\//,
-  /^services\/context-generator\.ts$/,
+  // context-generator.ts removed: deprecated re-export wrapper, no logic to log
   /^hooks\/(?!hook-response\.ts$)/,  // All src/hooks/* except hook-response.ts (NOT ui/hooks)
   /^sdk\/(?!.*types?\.ts$)/,  // SDK files (not type files)
   /^servers\/(?!.*types?\.ts$)/,  // Server files (not type files)

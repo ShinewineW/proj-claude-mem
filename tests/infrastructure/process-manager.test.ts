@@ -17,7 +17,7 @@ import {
   resolveWorkerRuntimePath,
   runOneTimeChromaMigration,
   type PidInfo
-} from '../../src/services/infrastructure/index.js';
+} from '../../src/services/infrastructure/ProcessManager.js';
 
 const DATA_DIR = path.join(homedir(), '.claude-mem');
 const PID_FILE = path.join(DATA_DIR, 'worker.pid');

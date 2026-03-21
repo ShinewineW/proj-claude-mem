@@ -5,4 +5,7 @@
  * Import from './Context.js' or './context/index.js'.
  */
 
-export * from './context/index.js';
+export { generateContext } from './context/ContextBuilder.js';
+export type { ContextInput, ContextConfig } from './context/types.js';
+export { ContextBuilder } from './context/ContextBuilder.js';
+export { TokenCalculator } from './context/TokenCalculator.js';

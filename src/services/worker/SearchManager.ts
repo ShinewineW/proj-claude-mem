@@ -25,12 +25,10 @@ import { logger } from '../../utils/logger.js';
 import { formatDate, formatTime, formatDateTime, extractFirstFile, groupByDate, estimateTokens } from '../../shared/timeline-formatting.js';
 import { ModeManager } from '../domain/ModeManager.js';
 
-import {
-  SearchOrchestrator,
-  TimelineBuilder,
-  SEARCH_CONSTANTS
-} from './search/index.js';
-import type { TimelineData } from './search/index.js';
+import { SearchOrchestrator } from './search/SearchOrchestrator.js';
+import { TimelineBuilder } from './search/TimelineBuilder.js';
+import type { TimelineData } from './search/TimelineBuilder.js';
+import { SEARCH_CONSTANTS } from './search/types.js';
 
 export class SearchManager {
   private orchestrator: SearchOrchestrator;

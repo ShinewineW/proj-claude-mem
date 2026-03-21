@@ -5,7 +5,7 @@ import {
   waitForPortFree,
   getInstalledPluginVersion,
   checkVersionMatch
-} from '../../src/services/infrastructure/index.js';
+} from '../../src/services/infrastructure/HealthMonitor.js';
 
 describe('HealthMonitor', () => {
   const originalFetch = global.fetch;

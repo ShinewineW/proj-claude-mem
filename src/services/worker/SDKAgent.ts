@@ -20,7 +20,8 @@ import { USER_SETTINGS_PATH, OBSERVER_SESSIONS_DIR, ensureDir } from '../../shar
 import { buildIsolatedEnv, getAuthMethodDescription } from '../../shared/EnvManager.js';
 import type { ActiveSession, SDKUserMessage } from '../worker-types.js';
 import { ModeManager } from '../domain/ModeManager.js';
-import { processAgentResponse, type WorkerRef } from './agents/index.js';
+import { processAgentResponse } from './agents/ResponseProcessor.js';
+import type { WorkerRef } from './agents/types.js';
 import { createPidCapturingSpawn, getProcessBySession, ensureProcessExit, waitForSlot } from './ProcessRegistry.js';
 
 // Import Agent SDK (assumes it's installed)

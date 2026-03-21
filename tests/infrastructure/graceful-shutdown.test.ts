@@ -5,15 +5,17 @@ import path from 'path';
 import http from 'http';
 import {
   performGracefulShutdown,
-  writePidFile,
-  readPidFile,
-  removePidFile,
   type GracefulShutdownConfig,
   type ShutdownableService,
   type CloseableClient,
   type CloseableDatabase,
+} from '../../src/services/infrastructure/GracefulShutdown.js';
+import {
+  writePidFile,
+  readPidFile,
+  removePidFile,
   type PidInfo
-} from '../../src/services/infrastructure/index.js';
+} from '../../src/services/infrastructure/ProcessManager.js';
 
 const DATA_DIR = path.join(homedir(), '.claude-mem');
 const PID_FILE = path.join(DATA_DIR, 'worker.pid');
