@@ -422,7 +422,7 @@ export function ContextSettingsModal({
                       type="text"
                       value={formState.CLAUDE_MEM_OPENROUTER_MODEL ?? DEFAULT_SETTINGS.CLAUDE_MEM_OPENROUTER_MODEL}
                       onChange={(e) => updateSetting('CLAUDE_MEM_OPENROUTER_MODEL', e.target.value)}
-                      placeholder="e.g., xiaomi/mimo-v2-flash:free"
+                      placeholder={`e.g., ${DEFAULT_SETTINGS.CLAUDE_MEM_OPENROUTER_MODEL}`}
                     />
                   </FormField>
                   <FormField
