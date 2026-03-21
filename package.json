@@ -47,7 +47,7 @@
   },
   "scripts": {
     "dev": "npm run build-and-sync",
-    "build": "node scripts/build-hooks.js && cp scripts/smart-install.js plugin/scripts/smart-install.js",
+    "build": "bun run scripts/verify-settings-alignment.ts && node scripts/build-hooks.js && cp scripts/smart-install.js plugin/scripts/smart-install.js",
     "build-and-sync": "npm run build && node scripts/sync-to-cache.cjs",
     "sync-to-cache": "node scripts/sync-to-cache.cjs",
     "sync-marketplace": "node scripts/sync-marketplace.cjs",

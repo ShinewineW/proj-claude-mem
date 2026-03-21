@@ -3,7 +3,7 @@
  * Shared across UI components and hooks
  */
 export const DEFAULT_SETTINGS = {
-  CLAUDE_MEM_MODEL: 'claude-haiku-4-5-20251001',
+  CLAUDE_MEM_MODEL: 'claude-sonnet-4-5',
   CLAUDE_MEM_CONTEXT_OBSERVATIONS: '50',
   CLAUDE_MEM_WORKER_PORT: '37777',
   CLAUDE_MEM_WORKER_HOST: '127.0.0.1',
@@ -13,19 +13,19 @@ export const DEFAULT_SETTINGS = {
   CLAUDE_MEM_GEMINI_API_KEY: '',
   CLAUDE_MEM_GEMINI_MODEL: 'gemini-2.5-flash-lite',
   CLAUDE_MEM_OPENROUTER_API_KEY: '',
-  CLAUDE_MEM_OPENROUTER_MODEL: 'xiaomi/mimo-v2-flash:free',
+  CLAUDE_MEM_OPENROUTER_MODEL: 'stepfun/step-3.5-flash:free',
   CLAUDE_MEM_OPENROUTER_SITE_URL: '',
   CLAUDE_MEM_OPENROUTER_APP_NAME: 'claude-mem',
   CLAUDE_MEM_GEMINI_RATE_LIMITING_ENABLED: 'true',
 
-  // Token Economics (all true for backwards compatibility)
-  CLAUDE_MEM_CONTEXT_SHOW_READ_TOKENS: 'true',
-  CLAUDE_MEM_CONTEXT_SHOW_WORK_TOKENS: 'true',
-  CLAUDE_MEM_CONTEXT_SHOW_SAVINGS_AMOUNT: 'true',
+  // Token Economics — match SettingsDefaultsManager defaults
+  CLAUDE_MEM_CONTEXT_SHOW_READ_TOKENS: 'false',
+  CLAUDE_MEM_CONTEXT_SHOW_WORK_TOKENS: 'false',
+  CLAUDE_MEM_CONTEXT_SHOW_SAVINGS_AMOUNT: 'false',
   CLAUDE_MEM_CONTEXT_SHOW_SAVINGS_PERCENT: 'true',
 
-  // Display Configuration
-  CLAUDE_MEM_CONTEXT_FULL_COUNT: '5',
+  // Display Configuration — match SettingsDefaultsManager defaults
+  CLAUDE_MEM_CONTEXT_FULL_COUNT: '0',
   CLAUDE_MEM_CONTEXT_FULL_FIELD: 'narrative',
   CLAUDE_MEM_CONTEXT_SESSION_COUNT: '10',
 
