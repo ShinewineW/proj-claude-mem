@@ -2,7 +2,7 @@
  * Context Generator - DEPRECATED
  *
  * This file is maintained for backward compatibility.
- * New code should import from './Context.js' or './context/index.js'.
+ * New code should import from './Context.js' or './context/ContextBuilder.js'.
  *
  * The context generation logic has been restructured into:
  * - src/services/context/ContextBuilder.ts - Main orchestrator
