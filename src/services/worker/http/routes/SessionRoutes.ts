@@ -217,6 +217,31 @@ export class SessionRoutes extends BaseRouteHandler {
         session.currentProvider = null;
         this.workerService.broadcastProcessingStatus();
 
+        // Context reset exhaustion — session is degraded beyond recovery.
+        // Must check BEFORE wasAborted branch: abort() is called by ResponseProcessor
+        // on exhaustion, so wasAborted=true, but the session must still be failed.
+        const MAX_CONTEXT_RESETS = 3;
+        if ((session.contextResetCount ?? 0) >= MAX_CONTEXT_RESETS) {
+          try {
+            const pendingStore = this.sessionManager.getPendingMessageStore(session.dbPath);
+            pendingStore.markAllSessionMessagesAbandoned(sessionDbId);
+            this.dbManager.getSessionStore(session.dbPath).markSessionFailed(sessionDbId);
+            this.sessionManager.removeSessionImmediate(sessionDbId, session.dbPath);
+            this.eventBroadcaster.broadcastSessionCompleted(sessionDbId, session.project);
+            session.abortController.abort();
+            this.bypassLane?.stopForSession(sessionDbId);
+            logger.error('SESSION', `Context reset exhausted in SessionRoutes, session failed`, {
+              sessionDbId,
+              contextResetCount: session.contextResetCount,
+            });
+          } catch (cleanupErr) {
+            logger.warn('SESSION', 'Failed to cleanup exhausted session in SessionRoutes', {
+              sessionDbId
+            }, cleanupErr as Error);
+          }
+          return;
+        }
+
         // Crash recovery: If not aborted and still has work, restart (with limit)
         if (!wasAborted) {
           try {
