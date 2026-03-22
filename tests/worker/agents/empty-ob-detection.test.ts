@@ -234,7 +234,7 @@ describe('Empty Observation Detection', () => {
     expect(session.forceInit).toBeFalsy();
   });
 
-  it('suppresses forceInit after 3 consecutive resets (circuit breaker)', async () => {
+  it('aborts session after 3 consecutive resets (circuit breaker exhaustion)', async () => {
     const session = makeSession({ contextResetCount: 3 });
     const dbManager = makeMockDbManager();
     const sessionManager = makeMockSessionManager();
@@ -250,6 +250,10 @@ describe('Empty Observation Detection', () => {
     expect(session.forceInit).toBeFalsy();
     // Counter stays at 3 (not incremented)
     expect(session.contextResetCount).toBe(3);
+    // CRITICAL: abort() must be called to kill the generator.
+    // Without this, generator stays alive in a toxic loop producing empty OBs indefinitely.
+    // (skills_workspace session-41: 25+ empty OBs because abort was missing)
+    expect(session.abortController.signal.aborted).toBe(true);
   });
 
   it('resets contextResetCount when a valid observation is stored', async () => {
