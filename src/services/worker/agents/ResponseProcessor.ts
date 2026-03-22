@@ -152,12 +152,15 @@ export async function processAgentResponse(
       // Circuit breaker: cap forceInit at 3 consecutive resets to prevent infinite loop.
       const MAX_CONTEXT_RESETS = 3;
       if ((session.contextResetCount ?? 0) >= MAX_CONTEXT_RESETS) {
-        logger.error('SDK', `[CONTEXT_RESET] Exhausted — ${session.contextResetCount} consecutive resets without recovery, marking session degraded. Ghost cleanup will reap.`, {
+        logger.error('SDK', `[CONTEXT_RESET] Exhausted — ${session.contextResetCount} consecutive resets without recovery, aborting session`, {
           sessionDbId: session.sessionDbId,
           contextResetCount: session.contextResetCount,
         });
-        // Stop further forceInit attempts — let ghost cleanup (2min) or idle reaper (15min) reclaim
+        // Abort the generator — this causes it to exit, triggering .finally()
+        // where worker-service checks contextResetCount >= 3 and runs markSessionFailed.
+        // Without abort, the generator stays alive processing messages in a toxic loop.
         session.forceInit = false;
+        session.abortController.abort();
       } else {
         session.contextResetCount = (session.contextResetCount ?? 0) + 1;
         const historyLength = session.conversationHistory.length;
