@@ -228,7 +228,7 @@ describe('Empty Observation Detection', () => {
 
     await processAgentResponse(
       'Hello, I am your memory observer.', session, dbManager, sessionManager,
-      undefined, 0, null, 'SDK', undefined, undefined
+      undefined, 0, null, 'SDK', undefined
     );
 
     expect(session.forceInit).toBeFalsy();
