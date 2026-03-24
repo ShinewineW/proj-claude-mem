@@ -8,7 +8,7 @@ Foundational modules for per-project isolation, configuration, and hook/worker c
 |------|---------|
 | `paths.ts` | `resolveProjectDbPath(cwd)`: env → worktree parent → git root → cwd → `<root>/.claude/mem.db` |
 | `project-db.ts` | `DbConnectionPool`: `Map<path, {store,search}>`, FIFO eviction at 10, auto `.gitignore` |
-| `project-allowlist.ts` | Opt-in allowlist at `~/.claude-mem/enabled-projects.json`. Lazy env var reading. |
+| `project-allowlist.ts` | Opt-in allowlist + `resolveProjectContext()` (allowlist-first resolution), `findContainingProject()` (child-path matching). Lazy env var reading. |
 | `chroma-utils.ts` | `getCollectionName(dbPath)`: deterministic `cm__<name>_<8char-hash>` |
 
 ## Configuration

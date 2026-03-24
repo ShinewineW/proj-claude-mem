@@ -16,7 +16,9 @@ Claude-mem is a Claude Code plugin providing persistent memory across sessions. 
 
 **Database** (`src/services/sqlite/`) - Per-project SQLite3 at `<repo>/.claude/mem.db`, managed by `DbConnectionPool` (`src/shared/project-db.ts`). Falls back to global `~/.claude-mem/claude-mem.db` when no project context is available.
 
-**DB Path Resolution** (`src/shared/paths.ts: resolveProjectDbPath()`) - Resolves per-project DB path: env override → git worktree parent → git root → cwd. All worktrees of the same repo share one database.
+**Project Resolution** (`src/shared/project-allowlist.ts: resolveProjectContext()`) - Allowlist child-path matching (Priority 1) → git-root heuristic fallback (Priority 2). Hook guard injects `_projectContext` for all handlers.
+
+**DB Path Resolution (legacy)** (`src/shared/paths.ts: resolveProjectDbPath()`) - Resolves per-project DB path: env override → git worktree parent → git root → cwd. All worktrees of the same repo share one database.
 
 **Search Skill** (`plugin/skills/mem-search/SKILL.md`) - HTTP API for searching past work, auto-invoked when users ask about history
 
