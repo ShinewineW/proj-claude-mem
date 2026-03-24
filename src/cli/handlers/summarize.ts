@@ -11,7 +11,7 @@ import { ensureWorkerRunning, getWorkerPort, fetchWithTimeout } from '../../shar
 import { logger } from '../../utils/logger.js';
 import { extractLastMessage } from '../../shared/transcript-parser.js';
 import { HOOK_EXIT_CODES, HOOK_TIMEOUTS, getTimeout } from '../../shared/hook-constants.js';
-import { resolveProjectDbPath } from '../../shared/paths.js';
+import { resolveProjectContext } from '../../shared/project-allowlist.js';
 import { writeFallbackEntry } from '../../shared/fallback-queue.js';
 
 const SUMMARIZE_TIMEOUT_MS = getTimeout(HOOK_TIMEOUTS.DEFAULT);
@@ -27,8 +27,12 @@ export const summarizeHandler: EventHandler = {
 
     const { sessionId, cwd, transcriptPath } = input;
 
+    const ctx = input._projectContext ?? resolveProjectContext(cwd);
+    if (!ctx) {
+      return { continue: true, suppressOutput: true, exitCode: HOOK_EXIT_CODES.SUCCESS };
+    }
+    const { dbPath } = ctx;
     const port = getWorkerPort();
-    const dbPath = resolveProjectDbPath(cwd);
 
     // Validate required fields before processing
     if (!transcriptPath) {

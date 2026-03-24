@@ -106,6 +106,11 @@ describe("dbPath threading in CLI handlers", () => {
         cwd: "/test/project",
         prompt: "hello world",
         platform: "claude-code",
+        _projectContext: {
+          projectRoot: "/test/project",
+          dbPath: "/test/project/.claude/mem.db",
+          projectName: "test-project",
+        },
       } as any);
 
       // First request: /api/sessions/init
@@ -132,6 +137,11 @@ describe("dbPath threading in CLI handlers", () => {
         toolName: "Bash",
         toolInput: '{"command": "ls"}',
         toolResponse: "file1.ts\nfile2.ts",
+        _projectContext: {
+          projectRoot: "/test/project",
+          dbPath: "/test/project/.claude/mem.db",
+          projectName: "test-project",
+        },
       } as any);
 
       const obsRequest = fetchCalls.find(c => c.url.includes("/api/sessions/observations"));

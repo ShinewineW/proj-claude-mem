@@ -96,6 +96,11 @@ describe('Context Re-Injection Guard (#1079)', () => {
           cwd: '/test/project',
           prompt: 'second prompt in this session',
           platform: 'claude-code',
+          _projectContext: {
+            projectRoot: '/test/project',
+            dbPath: '/test/project/.claude/mem.db',
+            projectName: 'test-project',
+          },
         });
 
         // Should return success without making the second /sessions/42/init call
@@ -150,6 +155,11 @@ describe('Context Re-Injection Guard (#1079)', () => {
           cwd: '/test/project',
           prompt: 'first prompt in session',
           platform: 'claude-code',
+          _projectContext: {
+            projectRoot: '/test/project',
+            dbPath: '/test/project/.claude/mem.db',
+            projectName: 'test-project',
+          },
         });
 
         expect(result.continue).toBe(true);
@@ -202,6 +212,11 @@ describe('Context Re-Injection Guard (#1079)', () => {
           cwd: '/test/project',
           prompt: 'test prompt',
           platform: 'claude-code',
+          _projectContext: {
+            projectRoot: '/test/project',
+            dbPath: '/test/project/.claude/mem.db',
+            projectName: 'test-project',
+          },
         });
 
         expect(result.continue).toBe(true);

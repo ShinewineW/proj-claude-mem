@@ -6,12 +6,12 @@
 
 import type { EventHandler, NormalizedHookInput, HookResult } from '../types.js';
 import { ensureWorkerRunning, getWorkerPort } from '../../shared/worker-utils.js';
-import { getProjectName } from '../../utils/project-name.js';
 import { logger } from '../../utils/logger.js';
 import { HOOK_EXIT_CODES } from '../../shared/hook-constants.js';
 import { isProjectExcluded } from '../../utils/project-filter.js';
 import { SettingsDefaultsManager } from '../../shared/SettingsDefaultsManager.js';
-import { USER_SETTINGS_PATH, resolveProjectDbPath } from '../../shared/paths.js';
+import { USER_SETTINGS_PATH } from '../../shared/paths.js';
+import { resolveProjectContext } from '../../shared/project-allowlist.js';
 
 export const sessionInitHandler: EventHandler = {
   async execute(input: NormalizedHookInput): Promise<HookResult> {
@@ -41,8 +41,11 @@ export const sessionInitHandler: EventHandler = {
     // Use placeholder so sessions still get created and tracked for memory
     const prompt = (!rawPrompt || !rawPrompt.trim()) ? '[media prompt]' : rawPrompt;
 
-    const project = getProjectName(cwd);
-    const dbPath = resolveProjectDbPath(cwd);
+    const ctx = input._projectContext ?? resolveProjectContext(cwd);
+    if (!ctx) {
+      return { continue: true, suppressOutput: true, exitCode: HOOK_EXIT_CODES.SUCCESS };
+    }
+    const { dbPath, projectName: project } = ctx;
     const port = getWorkerPort();
 
     logger.debug('HOOK', 'session-init: Calling /api/sessions/init', { contentSessionId: sessionId, project });

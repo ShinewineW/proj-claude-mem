@@ -9,7 +9,7 @@ import type { EventHandler, NormalizedHookInput, HookResult } from '../types.js'
 import { ensureWorkerRunning, getWorkerPort } from '../../shared/worker-utils.js';
 import { logger } from '../../utils/logger.js';
 import { HOOK_EXIT_CODES } from '../../shared/hook-constants.js';
-import { resolveProjectDbPath } from '../../shared/paths.js';
+import { resolveProjectContext } from '../../shared/project-allowlist.js';
 
 export const fileEditHandler: EventHandler = {
   async execute(input: NormalizedHookInput): Promise<HookResult> {
@@ -38,8 +38,12 @@ export const fileEditHandler: EventHandler = {
       throw new Error(`Missing cwd in FileEdit hook input for session ${sessionId}, file ${filePath}`);
     }
 
-    // Compute project-specific DB path (after cwd validation)
-    const dbPath = resolveProjectDbPath(cwd);
+    // Project context resolution
+    const ctx = input._projectContext ?? resolveProjectContext(cwd);
+    if (!ctx) {
+      return { continue: true, suppressOutput: true, exitCode: HOOK_EXIT_CODES.SUCCESS };
+    }
+    const { dbPath } = ctx;
 
     // Send to worker as an observation with file edit metadata
     // The observation handler on the worker will process this appropriately
