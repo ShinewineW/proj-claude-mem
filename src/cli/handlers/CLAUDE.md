@@ -2,8 +2,8 @@
 
 Each handler corresponds to a Claude Code hook event. All follow the same pattern:
 1. `ensureWorkerRunning()` → graceful no-op if worker down
-2. `dbPath = resolveProjectDbPath(cwd)` → per-project DB path
-3. HTTP request to Worker with `dbPath` in body (POST) or query param (GET)
+2. `ctx = input._projectContext ?? resolveProjectContext(cwd)` → allowlist-first project resolution
+3. HTTP request to Worker with `ctx.dbPath` in body (POST) or query param (GET)
 
 | File | Hook Event | Purpose |
 |------|-----------|---------|
