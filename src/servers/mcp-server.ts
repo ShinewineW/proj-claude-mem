@@ -28,8 +28,8 @@ import {
   ListToolsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 import { getWorkerPort, getWorkerHost, ensureWorkerRunning } from '../shared/worker-utils.js';
-import { resolveProjectRoot } from '../shared/paths.js';
-import { isProjectEnabled, resolveProjectByName, resolveAllProjectDbPaths } from '../shared/project-allowlist.js';
+import { resolveProjectContext, resolveProjectByName, resolveAllProjectDbPaths } from '../shared/project-allowlist.js';
+import type { ResolvedProject } from '../shared/project-allowlist.js';
 import { existsSync } from 'node:fs';
 import { searchCodebase, formatSearchResults } from '../services/smart-file-read/search.js';
 import { parseFile, formatFoldedView, unfoldSymbol } from '../services/smart-file-read/parser.js';
@@ -50,26 +50,23 @@ const WORKER_BASE_URL = `http://${WORKER_HOST}:${WORKER_PORT}`;
  * check the allowlist, and derive the dbPath. This is the single source
  * of truth — no heuristic guessing.
  */
-const PROJECT_ROOT = resolveProjectRoot(process.cwd());
-
 // Check allowlist per-request to reflect runtime /mem-enable and /mem-disable.
 // Cached for 1 second to avoid re-reading JSON file on every tool call.
-let _cachedEnabled: boolean | null = null;
+let _cachedContext: ResolvedProject | null | undefined = undefined; // undefined = not cached
 let _cacheTimestamp = 0;
 const CACHE_TTL_MS = 1_000;
 
 function getProjectDbPath(): string | null {
   const now = Date.now();
-  if (_cachedEnabled === null || now - _cacheTimestamp > CACHE_TTL_MS) {
-    _cachedEnabled = isProjectEnabled(PROJECT_ROOT);
+  if (_cachedContext === undefined || now - _cacheTimestamp > CACHE_TTL_MS) {
+    _cachedContext = resolveProjectContext(process.cwd());
     _cacheTimestamp = now;
   }
-  if (!_cachedEnabled) return null;
-  return join(PROJECT_ROOT, '.claude', 'mem.db');
+  return _cachedContext?.dbPath ?? null;
 }
 
 function getNotEnabledMessage(): string {
-  return `claude-mem is not enabled for this project.\n\nDetected project root: ${PROJECT_ROOT}\nRun /mem-enable to start recording and searching memory.`;
+  return `claude-mem is not enabled for this project.\n\nRun /mem-enable to start recording and searching memory.`;
 }
 
 /**

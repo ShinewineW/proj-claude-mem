@@ -12,7 +12,6 @@
 
 import { Database } from 'bun:sqlite';
 import path from 'path';
-import { getProjectName } from '../utils/project-name.js';
 import {
   existsSync,
   writeFileSync,
@@ -25,7 +24,8 @@ import { execSync } from 'child_process';
 import { SettingsDefaultsManager } from '../shared/SettingsDefaultsManager.js';
 import { formatTime, groupByDate } from '../shared/timeline-formatting.js';
 import { isDirectChild } from '../shared/path-utils.js';
-import { resolveProjectDbPath, USER_SETTINGS_PATH } from '../shared/paths.js';
+import { USER_SETTINGS_PATH } from '../shared/paths.js';
+import { resolveProjectContext } from '../shared/project-allowlist.js';
 import { logger } from '../utils/logger.js';
 
 interface ObservationRow {
@@ -363,7 +363,13 @@ export async function generateClaudeMd(dryRun: boolean): Promise<number> {
       observationLimit
     });
 
-    const project = getProjectName(workingDir);
+    const ctx = resolveProjectContext(workingDir);
+    if (!ctx) {
+      logger.info('CLAUDE_MD', 'Project not enabled, skipping CLAUDE.md generation', { workingDir });
+      return 0;
+    }
+    const { dbPath, projectName: project } = ctx;
+
     const trackedFolders = getTrackedFolders(workingDir);
 
     if (trackedFolders.size === 0) {
@@ -372,8 +378,6 @@ export async function generateClaudeMd(dryRun: boolean): Promise<number> {
     }
 
     logger.info('CLAUDE_MD', `Found ${trackedFolders.size} folders in project`);
-
-    const dbPath = resolveProjectDbPath(workingDir);
 
     if (!existsSync(dbPath)) {
       logger.info('CLAUDE_MD', 'Database not found, no observations to process', { dbPath });

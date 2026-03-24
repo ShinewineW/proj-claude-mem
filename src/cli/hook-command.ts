@@ -3,8 +3,7 @@ import { getPlatformAdapter } from './adapters/index.js';
 import { getEventHandler } from './handlers/index.js';
 import { HOOK_EXIT_CODES } from '../shared/hook-constants.js';
 import { logger } from '../utils/logger.js';
-import { isProjectEnabled } from '../shared/project-allowlist.js';
-import { resolveProjectRoot } from '../shared/paths.js';
+import { resolveProjectContext } from '../shared/project-allowlist.js';
 
 export interface HookCommandOptions {
   /** If true, don't call process.exit() - let caller handle process lifecycle */
@@ -79,20 +78,18 @@ export async function hookCommand(platform: string, event: string, options: Hook
     const handler = getEventHandler(event);
 
     const rawInput = await readJsonFromStdin();
+    const input = adapter.normalizeInput(rawInput);
+    input.platform = platform;
 
-    // Allowlist guard: exit silently if project not opted in
-    interface HookRawInput { cwd?: string; [key: string]: unknown; }
-    const projectCwd = (rawInput as HookRawInput)?.cwd ?? process.cwd();
-    const projectRoot = resolveProjectRoot(projectCwd);
-    if (!isProjectEnabled(projectRoot)) {
+    // Allowlist guard: resolve project from post-adapter cwd, exit if not in any enabled project
+    const projectContext = resolveProjectContext(input.cwd);
+    if (!projectContext) {
       if (!options.skipExit) {
         process.exit(HOOK_EXIT_CODES.SUCCESS);
       }
       return HOOK_EXIT_CODES.SUCCESS;
     }
-
-    const input = adapter.normalizeInput(rawInput);
-    input.platform = platform;  // Inject platform for handler-level decisions
+    input._projectContext = projectContext;
     const result = await handler.execute(input);
     const output = adapter.formatOutput(result);
 

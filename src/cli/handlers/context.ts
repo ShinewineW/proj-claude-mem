@@ -11,7 +11,8 @@ import { getProjectContext } from '../../utils/project-name.js';
 import { HOOK_EXIT_CODES } from '../../shared/hook-constants.js';
 import { logger } from '../../utils/logger.js';
 import { SettingsDefaultsManager } from '../../shared/SettingsDefaultsManager.js';
-import { USER_SETTINGS_PATH, resolveProjectDbPath } from '../../shared/paths.js';
+import { USER_SETTINGS_PATH } from '../../shared/paths.js';
+import { resolveProjectContext } from '../../shared/project-allowlist.js';
 
 export const contextHandler: EventHandler = {
   async execute(input: NormalizedHookInput): Promise<HookResult> {
@@ -29,15 +30,19 @@ export const contextHandler: EventHandler = {
     }
 
     const cwd = input.cwd ?? process.cwd();
-    const context = getProjectContext(cwd);
+    const ctx = input._projectContext ?? resolveProjectContext(cwd);
+    if (!ctx) {
+      return { continue: true, suppressOutput: true, exitCode: HOOK_EXIT_CODES.SUCCESS };
+    }
+    const { dbPath } = ctx;
+
+    // Use ctx.projectRoot for allProjects query (not drifted cwd which may point to nested git repo)
+    const context = getProjectContext(ctx.projectRoot);
     const port = getWorkerPort();
 
     // Check if terminal output should be shown (load settings early)
     const settings = SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH);
     const showTerminalOutput = settings.CLAUDE_MEM_CONTEXT_SHOW_TERMINAL_OUTPUT === 'true';
-
-    // Compute project-specific DB path
-    const dbPath = resolveProjectDbPath(cwd);
 
     // Pass all projects (parent + worktree if applicable) for unified timeline
     const projectsParam = context.allProjects.join(',');

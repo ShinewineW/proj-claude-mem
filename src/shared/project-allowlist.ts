@@ -7,9 +7,10 @@
  */
 
 import { existsSync, readFileSync, writeFileSync, writeSync, mkdirSync, renameSync, openSync, closeSync, unlinkSync, constants } from 'fs';
-import { basename, dirname, join } from 'path';
+import { basename, dirname, join, resolve, sep } from 'path';
 import { homedir } from 'os';
 import { logger } from '../utils/logger.js';
+import { resolveProjectRoot, resolveProjectDbPath } from './paths.js';
 
 /**
  * Resolve the allowlist path at call time (not module load time).
@@ -177,4 +178,74 @@ export function resolveAllProjectDbPaths(): Array<{ name: string; projectRoot: s
     projectRoot: root,
     dbPath: join(root, '.claude', 'mem.db'),
   }));
+}
+
+// --- Allowlist-first project resolution ---
+
+export interface ResolvedProject {
+  projectRoot: string;
+  dbPath: string;
+  projectName: string;
+}
+
+/**
+ * Check if cwd is inside any enabled project's directory tree.
+ * Returns the matching allowlist entry (longest match), or null.
+ *
+ * Uses path.sep boundary check to prevent prefix collisions
+ * (e.g., /ClaudeMem does NOT match /ClaudeMem-ProjIso).
+ *
+ * No caching: readAllowlist() reads the file on every call (~<1ms for <1KB).
+ * This ensures long-lived processes (MCP server, Worker) always see the
+ * latest allowlist. Hook processes call this once per invocation; transcript
+ * processing calls it per-event (hundreds at most) — both negligible.
+ */
+export function findContainingProject(cwd: string): string | null {
+  const normalizedCwd = resolve(cwd).normalize('NFC');
+  const entries = Object.keys(readAllowlist());
+
+  let bestMatch: string | null = null;
+  let bestLength = 0;
+
+  for (const entry of entries) {
+    const normalizedEntry = resolve(entry).normalize('NFC');
+    const isMatch =
+      normalizedCwd === normalizedEntry ||
+      normalizedCwd.startsWith(normalizedEntry + sep);
+    if (isMatch && normalizedEntry.length > bestLength) {
+      bestMatch = normalizedEntry;
+      bestLength = normalizedEntry.length;
+    }
+  }
+  return bestMatch;
+}
+
+/**
+ * Unified project resolution: allowlist-first, fallback to git root heuristic.
+ *
+ * Returns null if cwd does not belong to any enabled project.
+ * Handlers should use this as the single source of truth for projectRoot/dbPath/projectName.
+ */
+export function resolveProjectContext(cwd: string): ResolvedProject | null {
+  // Priority 1: allowlist child-path matching
+  const match = findContainingProject(cwd);
+  if (match) {
+    return {
+      projectRoot: match,
+      dbPath: join(match, '.claude', 'mem.db'),
+      projectName: basename(match),
+    };
+  }
+
+  // Priority 2: fallback to existing heuristic
+  // Note: env var CLAUDE_MEM_PROJECT_DB_PATH handled by resolveProjectDbPath internally.
+  // When set, dbPath may not correspond to projectRoot — existing behavior, not a regression.
+  const root = resolveProjectRoot(cwd);
+  if (!isProjectEnabled(root)) return null;
+
+  return {
+    projectRoot: root,
+    dbPath: resolveProjectDbPath(cwd),
+    projectName: basename(root),
+  };
 }

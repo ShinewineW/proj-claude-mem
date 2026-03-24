@@ -10,53 +10,53 @@ import { logger } from '../../utils/logger.js';
 import { HOOK_EXIT_CODES } from '../../shared/hook-constants.js';
 import { isProjectExcluded } from '../../utils/project-filter.js';
 import { SettingsDefaultsManager } from '../../shared/SettingsDefaultsManager.js';
-import { USER_SETTINGS_PATH, resolveProjectDbPath } from '../../shared/paths.js';
+import { USER_SETTINGS_PATH } from '../../shared/paths.js';
+import { resolveProjectContext } from '../../shared/project-allowlist.js';
 import { writeFallbackEntry } from '../../shared/fallback-queue.js';
 
 export const observationHandler: EventHandler = {
   async execute(input: NormalizedHookInput): Promise<HookResult> {
     const { sessionId, cwd, toolName, toolInput, toolResponse } = input;
 
-    // Ensure worker is running before any other logic
-    const workerReady = await ensureWorkerRunning();
-    if (!workerReady) {
-      if (toolName && cwd) {
-        writeFallbackEntry({
-          type: 'observation', sessionId, cwd, dbPath: resolveProjectDbPath(cwd),
-          timestamp: Date.now(),
-          payload: { tool_name: toolName, tool_input: toolInput, tool_response: toolResponse }
-        });
-      }
-      return { continue: true, suppressOutput: true, exitCode: HOOK_EXIT_CODES.SUCCESS };
-    }
-
+    // 1. Quick exit if no tool name
     if (!toolName) {
-      // No tool name provided - skip observation gracefully
       return { continue: true, suppressOutput: true, exitCode: HOOK_EXIT_CODES.SUCCESS };
     }
 
-    const port = getWorkerPort();
-
-    const toolStr = logger.formatTool(toolName, toolInput);
-
-    logger.dataIn('HOOK', `PostToolUse: ${toolStr}`, {
-      workerPort: port
-    });
-
-    // Validate required fields before sending to worker
+    // 2. cwd validation (ctx depends on cwd)
     if (!cwd) {
       throw new Error(`Missing cwd in PostToolUse hook input for session ${sessionId}, tool ${toolName}`);
     }
 
-    // Check if project is excluded from tracking
+    // 3. Project context resolution (must be before worker check — fallback needs dbPath)
+    const ctx = input._projectContext ?? resolveProjectContext(cwd);
+    if (!ctx) {
+      return { continue: true, suppressOutput: true, exitCode: HOOK_EXIT_CODES.SUCCESS };
+    }
+    const { dbPath } = ctx;
+
+    // 4. Exclusion check
     const settings = SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH);
     if (isProjectExcluded(cwd, settings.CLAUDE_MEM_EXCLUDED_PROJECTS)) {
       logger.debug('HOOK', 'Project excluded from tracking, skipping observation', { cwd, toolName });
       return { continue: true, suppressOutput: true };
     }
 
-    // Compute project-specific DB path
-    const dbPath = resolveProjectDbPath(cwd);
+    // 5. Worker readiness check (dbPath available for fallback)
+    const workerReady = await ensureWorkerRunning();
+    if (!workerReady) {
+      writeFallbackEntry({
+        type: 'observation', sessionId, cwd, dbPath,
+        timestamp: Date.now(),
+        payload: { tool_name: toolName, tool_input: toolInput, tool_response: toolResponse }
+      });
+      return { continue: true, suppressOutput: true, exitCode: HOOK_EXIT_CODES.SUCCESS };
+    }
+
+    // 6. Main path: log + POST to worker
+    const port = getWorkerPort();
+    const toolStr = logger.formatTool(toolName, toolInput);
+    logger.dataIn('HOOK', `PostToolUse: ${toolStr}`, { workerPort: port });
 
     // Send to worker - worker handles privacy check and database operations
     try {

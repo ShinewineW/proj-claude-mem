@@ -1,3 +1,4 @@
+import { resolve } from 'path';
 import type { PlatformAdapter, NormalizedHookInput, HookResult } from '../types.js';
 
 // Maps Claude Code stdin format (session_id, cwd, tool_name, etc.)
@@ -7,7 +8,7 @@ export const claudeCodeAdapter: PlatformAdapter = {
     const r = (raw ?? {}) as any;
     return {
       sessionId: r.session_id ?? r.id ?? r.sessionId,
-      cwd: r.cwd ?? process.cwd(),
+      cwd: resolve(r.cwd ?? process.cwd()),
       prompt: r.prompt,
       toolName: r.tool_name,
       toolInput: r.tool_input,
