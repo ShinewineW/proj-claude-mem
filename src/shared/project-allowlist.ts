@@ -228,10 +228,8 @@ export function findContainingProject(cwd: string): string | null {
  * Handlers should use this as the single source of truth for projectRoot/dbPath/projectName.
  */
 export function resolveProjectContext(cwd: string): ResolvedProject | null {
-  const resolved = resolve(cwd);
-
   // Priority 1: allowlist child-path matching
-  const match = findContainingProject(resolved);
+  const match = findContainingProject(cwd);
   if (match) {
     const root = resolve(match);
     return {
@@ -244,12 +242,12 @@ export function resolveProjectContext(cwd: string): ResolvedProject | null {
   // Priority 2: fallback to existing heuristic
   // Note: env var CLAUDE_MEM_PROJECT_DB_PATH handled by resolveProjectDbPath internally.
   // When set, dbPath may not correspond to projectRoot — existing behavior, not a regression.
-  const root = resolveProjectRoot(resolved);
+  const root = resolveProjectRoot(cwd);
   if (!isProjectEnabled(root)) return null;
 
   return {
     projectRoot: root,
-    dbPath: resolveProjectDbPath(resolved),
+    dbPath: resolveProjectDbPath(cwd),
     projectName: basename(root),
   };
 }

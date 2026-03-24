@@ -28,7 +28,6 @@ import {
   ListToolsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 import { getWorkerPort, getWorkerHost, ensureWorkerRunning } from '../shared/worker-utils.js';
-import { resolveProjectRoot } from '../shared/paths.js';
 import { resolveProjectContext, resolveProjectByName, resolveAllProjectDbPaths } from '../shared/project-allowlist.js';
 import type { ResolvedProject } from '../shared/project-allowlist.js';
 import { existsSync } from 'node:fs';
@@ -51,8 +50,6 @@ const WORKER_BASE_URL = `http://${WORKER_HOST}:${WORKER_PORT}`;
  * check the allowlist, and derive the dbPath. This is the single source
  * of truth — no heuristic guessing.
  */
-const PROJECT_ROOT = resolveProjectRoot(process.cwd());
-
 // Check allowlist per-request to reflect runtime /mem-enable and /mem-disable.
 // Cached for 1 second to avoid re-reading JSON file on every tool call.
 let _cachedContext: ResolvedProject | null | undefined = undefined; // undefined = not cached
@@ -69,7 +66,7 @@ function getProjectDbPath(): string | null {
 }
 
 function getNotEnabledMessage(): string {
-  return `claude-mem is not enabled for this project.\n\nDetected project root: ${PROJECT_ROOT}\nRun /mem-enable to start recording and searching memory.`;
+  return `claude-mem is not enabled for this project.\n\nRun /mem-enable to start recording and searching memory.`;
 }
 
 /**
