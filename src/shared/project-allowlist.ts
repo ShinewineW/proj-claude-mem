@@ -10,6 +10,7 @@ import { existsSync, readFileSync, writeFileSync, writeSync, mkdirSync, renameSy
 import { basename, dirname, join, resolve, sep } from 'path';
 import { homedir } from 'os';
 import { logger } from '../utils/logger.js';
+import { resolveProjectRoot, resolveProjectDbPath } from './paths.js';
 
 /**
  * Resolve the allowlist path at call time (not module load time).
@@ -181,8 +182,6 @@ export function resolveAllProjectDbPaths(): Array<{ name: string; projectRoot: s
 
 // --- Allowlist-first project resolution ---
 
-import { resolveProjectRoot, resolveProjectDbPath } from './paths.js';
-
 export interface ResolvedProject {
   projectRoot: string;
   dbPath: string;
@@ -214,7 +213,7 @@ export function findContainingProject(cwd: string): string | null {
       normalizedCwd === normalizedEntry ||
       normalizedCwd.startsWith(normalizedEntry + sep);
     if (isMatch && normalizedEntry.length > bestLength) {
-      bestMatch = entry;
+      bestMatch = normalizedEntry;
       bestLength = normalizedEntry.length;
     }
   }
@@ -231,11 +230,10 @@ export function resolveProjectContext(cwd: string): ResolvedProject | null {
   // Priority 1: allowlist child-path matching
   const match = findContainingProject(cwd);
   if (match) {
-    const root = resolve(match);
     return {
-      projectRoot: root,
-      dbPath: join(root, '.claude', 'mem.db'),
-      projectName: basename(root),
+      projectRoot: match,
+      dbPath: join(match, '.claude', 'mem.db'),
+      projectName: basename(match),
     };
   }
 

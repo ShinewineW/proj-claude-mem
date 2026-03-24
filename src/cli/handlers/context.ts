@@ -36,7 +36,8 @@ export const contextHandler: EventHandler = {
     }
     const { dbPath } = ctx;
 
-    const context = getProjectContext(cwd);
+    // Use ctx.projectRoot for allProjects query (not drifted cwd which may point to nested git repo)
+    const context = getProjectContext(ctx.projectRoot);
     const port = getWorkerPort();
 
     // Check if terminal output should be shown (load settings early)

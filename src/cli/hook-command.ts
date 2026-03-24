@@ -78,20 +78,17 @@ export async function hookCommand(platform: string, event: string, options: Hook
     const handler = getEventHandler(event);
 
     const rawInput = await readJsonFromStdin();
+    const input = adapter.normalizeInput(rawInput);
+    input.platform = platform;
 
-    // Allowlist guard: resolve project from cwd, exit if not in any enabled project
-    interface HookRawInput { cwd?: string; [key: string]: unknown; }
-    const projectCwd = (rawInput as HookRawInput)?.cwd ?? process.cwd();
-    const projectContext = resolveProjectContext(projectCwd);
+    // Allowlist guard: resolve project from post-adapter cwd, exit if not in any enabled project
+    const projectContext = resolveProjectContext(input.cwd);
     if (!projectContext) {
       if (!options.skipExit) {
         process.exit(HOOK_EXIT_CODES.SUCCESS);
       }
       return HOOK_EXIT_CODES.SUCCESS;
     }
-
-    const input = adapter.normalizeInput(rawInput);
-    input.platform = platform;
     input._projectContext = projectContext;
     const result = await handler.execute(input);
     const output = adapter.formatOutput(result);

@@ -355,7 +355,8 @@ export class TranscriptEventProcessor {
     if (!resolvedCtx) return;
     const dbPath = resolvedCtx.dbPath;
 
-    const context = getProjectContext(cwd);
+    // Use resolved projectRoot for allProjects (not potentially drifted cwd)
+    const context = getProjectContext(resolvedCtx.projectRoot);
     const projectsParam = context.allProjects.join(',');
     const port = getWorkerPort();
 
