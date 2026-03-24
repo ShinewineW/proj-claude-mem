@@ -1,3 +1,5 @@
+import type { ResolvedProject } from '../shared/project-allowlist.js';
+
 export interface NormalizedHookInput {
   sessionId: string;
   cwd: string;
@@ -10,6 +12,7 @@ export interface NormalizedHookInput {
   // Cursor-specific fields
   filePath?: string;   // afterFileEdit
   edits?: unknown[];   // afterFileEdit
+  _projectContext?: ResolvedProject;  // Injected by hook-command.ts guard
 }
 
 export interface HookResult {
