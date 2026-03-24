@@ -4,11 +4,11 @@ import { fileEditHandler } from '../../cli/handlers/file-edit.js';
 import { sessionCompleteHandler } from '../../cli/handlers/session-complete.js';
 import { ensureWorkerRunning, getWorkerPort } from '../../shared/worker-utils.js';
 import { logger } from '../../utils/logger.js';
-import { getProjectContext, getProjectName } from '../../utils/project-name.js';
+import { getProjectContext } from '../../utils/project-name.js';
 import { writeAgentsMd } from '../../utils/agents-md-utils.js';
 import { resolveFieldSpec, resolveFields, matchesRule } from './field-utils.js';
 import { expandHomePath } from './config.js';
-import { resolveProjectDbPath } from '../../shared/paths.js';
+import { resolveProjectContext } from '../../shared/project-allowlist.js';
 import type { TranscriptSchema, WatchTarget, SchemaEvent } from './types.js';
 
 interface SessionState {
@@ -102,7 +102,7 @@ export class TranscriptEventProcessor {
     const resolved = resolveFieldSpec(fieldSpec, entry, ctx);
     if (typeof resolved === 'string' && resolved.trim()) return resolved;
     if (watch.project) return watch.project;
-    if (session.cwd) return getProjectName(session.cwd);
+    if (session.cwd) return resolveProjectContext(session.cwd)?.projectName ?? session.project;
     return session.project;
   }
 
@@ -321,6 +321,9 @@ export class TranscriptEventProcessor {
     const port = getWorkerPort();
     const lastAssistantMessage = session.lastAssistantMessage ?? '';
 
+    const summaryCtx = resolveProjectContext(session.cwd ?? process.cwd());
+    if (!summaryCtx) return;  // Cannot resolve project — skip summary
+
     try {
       await fetch(`http://127.0.0.1:${port}/api/sessions/summarize`, {
         method: 'POST',
@@ -328,7 +331,7 @@ export class TranscriptEventProcessor {
         body: JSON.stringify({
           contentSessionId: session.sessionId,
           last_assistant_message: lastAssistantMessage,
-          dbPath: resolveProjectDbPath(session.cwd ?? process.cwd())
+          dbPath: summaryCtx.dbPath
         })
       });
     } catch (error) {
@@ -348,10 +351,13 @@ export class TranscriptEventProcessor {
     const cwd = session.cwd ?? watch.workspace;
     if (!cwd) return;
 
+    const resolvedCtx = resolveProjectContext(cwd);
+    if (!resolvedCtx) return;
+    const dbPath = resolvedCtx.dbPath;
+
     const context = getProjectContext(cwd);
     const projectsParam = context.allProjects.join(',');
     const port = getWorkerPort();
-    const dbPath = resolveProjectDbPath(cwd);
 
     try {
       const response = await fetch(

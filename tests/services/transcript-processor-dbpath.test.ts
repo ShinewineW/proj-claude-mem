@@ -93,6 +93,16 @@ mock.module("../../src/utils/project-name.js", () => ({
   }),
 }));
 
+mock.module("../../src/shared/project-allowlist.js", () => ({
+  resolveProjectContext: () => ({
+    projectRoot: "/test/project",
+    dbPath: "/test/project/.claude/mem.db",
+    projectName: "test-project",
+  }),
+  isProjectEnabled: () => true,
+  findContainingProject: () => "/test/project",
+}));
+
 mock.module("../../src/utils/agents-md-utils.js", () => ({
   writeAgentsMd: () => {},
 }));
