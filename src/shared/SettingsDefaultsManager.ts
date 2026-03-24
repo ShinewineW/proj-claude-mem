@@ -111,7 +111,7 @@ export class SettingsDefaultsManager {
     CLAUDE_MEM_CONTEXT_SHOW_TERMINAL_OUTPUT: 'true',
     CLAUDE_MEM_FOLDER_CLAUDEMD_ENABLED: 'false',
     // Process Management
-    CLAUDE_MEM_MAX_CONCURRENT_AGENTS: '4',  // Max concurrent Claude SDK agent subprocesses
+    CLAUDE_MEM_MAX_CONCURRENT_AGENTS: '2',  // Max concurrent Claude SDK agent subprocesses
     CLAUDE_MEM_RESPONSE_WATCHDOG_MS: '300000',  // 5 minutes — kill subprocess if no response
     // Exclusion Settings
     CLAUDE_MEM_EXCLUDED_PROJECTS: '',  // Comma-separated glob patterns for excluded project paths

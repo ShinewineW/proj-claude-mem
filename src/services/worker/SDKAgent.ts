@@ -93,7 +93,7 @@ export class SDKAgent {
 
     // Wait for agent pool slot (configurable via CLAUDE_MEM_MAX_CONCURRENT_AGENTS)
     const settings = SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH);
-    const maxConcurrent = parseInt(settings.CLAUDE_MEM_MAX_CONCURRENT_AGENTS, 10) || 4;
+    const maxConcurrent = parseInt(settings.CLAUDE_MEM_MAX_CONCURRENT_AGENTS, 10) || 2;
 
     // Active reclamation callback: detect zombie processes occupying pool slots.
     // Uses dbPath (stored on TrackedProcess) for O(1) composite key lookup,
