@@ -71,7 +71,32 @@ mock.module("../../../src/utils/logger.js", () => ({
 
 mock.module("../../../src/shared/paths.js", () => ({
   resolveProjectDbPath: () => "/test/project/.claude/mem.db",
+  resolveProjectRoot: () => "/test/project",
   USER_SETTINGS_PATH: "/tmp/test-settings.json",
+  DATA_DIR: "/tmp/test-claude-mem",
+  CLAUDE_CONFIG_DIR: "/tmp/test-claude",
+  MARKETPLACE_ROOT: "/tmp/test-marketplace",
+  ARCHIVES_DIR: "/tmp/test-claude-mem/archives",
+  LOGS_DIR: "/tmp/test-claude-mem/logs",
+  TRASH_DIR: "/tmp/test-claude-mem/trash",
+  BACKUPS_DIR: "/tmp/test-claude-mem/backups",
+  MODES_DIR: "/tmp/test-claude-mem/modes",
+  DB_PATH: "/tmp/test-claude-mem/claude-mem.db",
+  VECTOR_DB_DIR: "/tmp/test-claude-mem/vector-db",
+  OBSERVER_SESSIONS_DIR: "/tmp/test-claude-mem/observer-sessions",
+  CLAUDE_SETTINGS_PATH: "/tmp/test-claude/settings.json",
+  CLAUDE_COMMANDS_DIR: "/tmp/test-claude/commands",
+  CLAUDE_MD_PATH: "/tmp/test-claude/CLAUDE.md",
+  getProjectArchiveDir: (name: string) => `/tmp/test-claude-mem/archives/${name}`,
+  getWorkerSocketPath: (id: number) => `/tmp/test-claude-mem/worker-${id}.sock`,
+  ensureDir: () => {},
+  ensureAllDataDirs: () => {},
+  ensureModesDir: () => {},
+  ensureAllClaudeDirs: () => {},
+  getCurrentProjectName: () => "test-project",
+  getPackageRoot: () => "/tmp/test-package",
+  getPackageCommandsDir: () => "/tmp/test-package/commands",
+  createBackupFilename: (p: string) => `${p}.backup`,
 }));
 
 mock.module("../../../src/shared/SettingsDefaultsManager.js", () => ({
@@ -86,6 +111,17 @@ mock.module("../../../src/utils/project-filter.js", () => ({
 
 mock.module("../../../src/shared/hook-constants.js", () => ({
   HOOK_EXIT_CODES: { SUCCESS: 0, FAILURE: 1, BLOCKING_ERROR: 2, USER_MESSAGE_ONLY: 3 },
+}));
+
+// Mock resolveProjectContext for fallback path tests (when _projectContext is NOT injected)
+mock.module("../../../src/shared/project-allowlist.js", () => ({
+  resolveProjectContext: () => ({
+    projectRoot: "/test/project",
+    dbPath: "/test/project/.claude/mem.db",
+    projectName: "test-project",
+  }),
+  isProjectEnabled: () => true,
+  findContainingProject: () => "/test/project",
 }));
 
 describe("dbPath threading in CLI handlers", () => {
@@ -142,6 +178,45 @@ describe("dbPath threading in CLI handlers", () => {
           dbPath: "/test/project/.claude/mem.db",
           projectName: "test-project",
         },
+      } as any);
+
+      const obsRequest = fetchCalls.find(c => c.url.includes("/api/sessions/observations"));
+      expect(obsRequest).toBeDefined();
+      expect(obsRequest!.body.dbPath).toBe("/test/project/.claude/mem.db");
+    });
+  });
+
+  // --- Fallback path tests: no _projectContext (TranscriptEventProcessor scenario) ---
+
+  describe("session-init handler (fallback via resolveProjectContext)", () => {
+    it("includes correct dbPath when _projectContext is NOT injected", async () => {
+      const { sessionInitHandler } = await import("../../../src/cli/handlers/session-init.js");
+
+      await sessionInitHandler.execute({
+        sessionId: "test-session-fallback-1",
+        cwd: "/test/project",
+        prompt: "hello world",
+        platform: "transcript",
+        // NO _projectContext — handler must fall back to resolveProjectContext(cwd)
+      } as any);
+
+      const initRequest = fetchCalls.find(c => c.url.includes("/api/sessions/init"));
+      expect(initRequest).toBeDefined();
+      expect(initRequest!.body.dbPath).toBe("/test/project/.claude/mem.db");
+    });
+  });
+
+  describe("observation handler (fallback via resolveProjectContext)", () => {
+    it("includes correct dbPath when _projectContext is NOT injected", async () => {
+      const { observationHandler } = await import("../../../src/cli/handlers/observation.js");
+
+      await observationHandler.execute({
+        sessionId: "test-session-fallback-2",
+        cwd: "/test/project",
+        toolName: "Bash",
+        toolInput: '{"command": "ls"}',
+        toolResponse: "file1.ts\nfile2.ts",
+        // NO _projectContext — handler must fall back to resolveProjectContext(cwd)
       } as any);
 
       const obsRequest = fetchCalls.find(c => c.url.includes("/api/sessions/observations"));
