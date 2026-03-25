@@ -42,6 +42,9 @@ export interface ActiveSession {
   lastExitWasIdleTimeout?: boolean;  // Persists after idle timeout exit — cleared when new hook messages arrive, checked by reaper to skip futile proactive summarize
   lastGeneratorActivity: number;  // Timestamp of last generator progress (for stale detection, Issue #1099)
   proactiveSummarizeQueued?: boolean; // Set when reaper queues a proactive summarize to prevent double-queuing
+  currentSDKMessageKind?: SDKUsageMessageKind;  // Current observer prompt kind for usage attribution
+  currentSDKPromptNumber?: number;  // Prompt number associated with current observer prompt
+  cumulativeSDKUsage?: SDKUsageTotals;  // Aggregate usage for the logical observer session
   // CLAIM-CONFIRM FIX: Track IDs of messages currently being processed
   // These IDs will be confirmed (deleted) after successful storage
   processingMessageIds: number[];
@@ -177,6 +180,31 @@ export interface DBSession {
 // ============================================================================
 // SDK Types
 // ============================================================================
+
+export type SDKUsageMessageKind = 'init' | 'continuation' | 'observation' | 'summarize' | 'unknown';
+
+export interface SDKUsageKindTotals {
+  responses: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheCreationInputTokens: number;
+  cacheReadInputTokens: number;
+  reportedTotalTokens: number;
+  discoveryTokens: number;
+}
+
+export type SDKUsageByKind = Record<SDKUsageMessageKind, SDKUsageKindTotals>;
+
+export interface SDKUsageTotals {
+  totalResponses: number;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  totalCacheCreationInputTokens: number;
+  totalCacheReadInputTokens: number;
+  totalReportedTokens: number;
+  totalDiscoveryTokens: number;
+  byKind: SDKUsageByKind;
+}
 
 // Re-export the actual SDK type to ensure compatibility
 export type { SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';

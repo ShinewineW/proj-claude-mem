@@ -23,6 +23,7 @@ import { ModeManager } from '../domain/ModeManager.js';
 import { processAgentResponse } from './agents/ResponseProcessor.js';
 import type { WorkerRef } from './agents/types.js';
 import { createPidCapturingSpawn, getProcessBySession, ensureProcessExit, waitForSlot } from './ProcessRegistry.js';
+import { createSDKUsageTotals, logSDKUsageSummary, recordSDKUsage } from './SDKUsageTelemetry.js';
 
 // Import Agent SDK (assumes it's installed)
 // @ts-ignore - Agent SDK types may not be available
@@ -181,6 +182,7 @@ export class SDKAgent {
       || SDKAgent.RESPONSE_WATCHDOG_MS;
     let watchdogTimer: ReturnType<typeof setTimeout> | undefined;
     let watchdogFiredCount = 0;
+    const runUsageTotals = createSDKUsageTotals();
 
     const resetWatchdog = () => {
       if (watchdogTimer) clearTimeout(watchdogTimer);
@@ -256,33 +258,17 @@ export class SDKAgent {
 
           const responseSize = textContent.length;
 
-          // Capture token state BEFORE updating (for delta calculation)
-          const tokensBeforeResponse = session.cumulativeInputTokens + session.cumulativeOutputTokens;
-
           // Extract and track token usage
           const usage = message.message.usage;
-          if (usage) {
-            session.cumulativeInputTokens += usage.input_tokens || 0;
-            session.cumulativeOutputTokens += usage.output_tokens || 0;
-
-            // Cache creation counts as discovery, cache read doesn't
-            if (usage.cache_creation_input_tokens) {
-              session.cumulativeInputTokens += usage.cache_creation_input_tokens;
-            }
-
-            logger.debug('SDK', 'Token usage captured', {
-              sessionId: session.sessionDbId,
-              inputTokens: usage.input_tokens,
-              outputTokens: usage.output_tokens,
-              cacheCreation: usage.cache_creation_input_tokens || 0,
-              cacheRead: usage.cache_read_input_tokens || 0,
-              cumulativeInput: session.cumulativeInputTokens,
-              cumulativeOutput: session.cumulativeOutputTokens
-            });
-          }
-
-          // Calculate discovery tokens (delta for this response only)
-          const discoveryTokens = (session.cumulativeInputTokens + session.cumulativeOutputTokens) - tokensBeforeResponse;
+          const discoveryTokens = usage
+            ? recordSDKUsage({
+                session,
+                promptNumber: session.currentSDKPromptNumber ?? session.lastPromptNumber,
+                messageKind: session.currentSDKMessageKind ?? 'unknown',
+                usage,
+                usageTotals: runUsageTotals,
+              })
+            : 0;
 
           // Process response (empty or not) and mark messages as processed
           // Capture earliest timestamp BEFORE processing (will be cleared after)
@@ -332,13 +318,22 @@ export class SDKAgent {
       if (tracked && tracked.process.exitCode === null) {
         await ensureProcessExit(tracked, 5000);
       }
+
+      logSDKUsageSummary({
+        session,
+        summaryType: 'run',
+        usageTotals: runUsageTotals,
+      });
     }
 
     // Mark session complete
     const sessionDuration = Date.now() - session.startTime;
     logger.success('SDK', 'Agent completed', {
       sessionId: session.sessionDbId,
-      duration: `${(sessionDuration / 1000).toFixed(1)}s`
+      duration: `${(sessionDuration / 1000).toFixed(1)}s`,
+      runResponses: runUsageTotals.totalResponses,
+      runDiscoveryTokens: runUsageTotals.totalDiscoveryTokens,
+      sessionDiscoveryTokens: session.cumulativeSDKUsage?.totalDiscoveryTokens ?? 0
     });
   }
 
@@ -417,6 +412,8 @@ export class SDKAgent {
 
     // Add to shared conversation history for provider interop
     session.conversationHistory.push({ role: 'user', content: initPrompt });
+    session.currentSDKMessageKind = isInitPrompt ? 'init' : 'continuation';
+    session.currentSDKPromptNumber = session.lastPromptNumber;
 
     // Yield initial user prompt with context (or continuation if prompt #2+)
     // CRITICAL: Both paths use session.contentSessionId from the hook
@@ -460,6 +457,8 @@ export class SDKAgent {
 
         // Add to shared conversation history for provider interop
         session.conversationHistory.push({ role: 'user', content: obsPrompt });
+        session.currentSDKMessageKind = 'observation';
+        session.currentSDKPromptNumber = session.lastPromptNumber;
 
         yield {
           type: 'user',
@@ -482,6 +481,8 @@ export class SDKAgent {
 
         // Add to shared conversation history for provider interop
         session.conversationHistory.push({ role: 'user', content: summaryPrompt });
+        session.currentSDKMessageKind = 'summarize';
+        session.currentSDKPromptNumber = session.lastPromptNumber;
 
         yield {
           type: 'user',

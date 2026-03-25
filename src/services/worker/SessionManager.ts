@@ -16,6 +16,7 @@ import type { ActiveSession, PendingMessage, PendingMessageWithId, ObservationDa
 import { PendingMessageStore } from '../sqlite/PendingMessageStore.js';
 import { SessionQueueProcessor } from '../queue/SessionQueueProcessor.js';
 import { getProcessBySession, ensureProcessExit } from './ProcessRegistry.js';
+import { logSDKUsageSummary } from './SDKUsageTelemetry.js';
 
 export class SessionManager {
   private dbManager: DatabaseManager;
@@ -449,6 +450,11 @@ export class SessionManager {
     }
 
     // 5. Cleanup
+    logSDKUsageSummary({
+      session,
+      summaryType: 'session'
+    });
+
     this.sessions.delete(key);
     this.sessionQueues.delete(key);
 
@@ -487,6 +493,11 @@ export class SessionManager {
     } catch (error) {
       logger.warn('SESSION', 'Failed to mark session completed in DB', { sessionDbId }, error as Error);
     }
+
+    logSDKUsageSummary({
+      session,
+      summaryType: 'session'
+    });
 
     this.sessions.delete(key);
     this.sessionQueues.delete(key);
