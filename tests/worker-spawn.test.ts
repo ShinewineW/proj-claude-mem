@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from 'bun:test';
 import { execSync, ChildProcess } from 'child_process';
 import { existsSync, readFileSync, writeFileSync, unlinkSync, mkdirSync, rmSync } from 'fs';
-import { homedir } from 'os';
+import { tmpdir } from 'os';
 import path from 'path';
 
 /**
@@ -17,7 +17,7 @@ import path from 'path';
  */
 
 const TEST_PORT = 37877;
-const TEST_DATA_DIR = path.join(homedir(), '.claude-mem-test');
+const TEST_DATA_DIR = path.join(tmpdir(), 'claude-mem-test-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8));
 const TEST_PID_FILE = path.join(TEST_DATA_DIR, 'worker.pid');
 const WORKER_SCRIPT = path.join(__dirname, '../plugin/scripts/worker-service.cjs');
 

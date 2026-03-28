@@ -1,8 +1,45 @@
-import { describe, it, expect, beforeEach, afterEach, mock, spyOn } from 'bun:test';
-import { existsSync, readFileSync } from 'fs';
-import { homedir } from 'os';
+import { describe, it, expect, beforeEach, afterEach, beforeAll, afterAll, mock } from 'bun:test';
+import { existsSync, readFileSync, writeFileSync, mkdirSync, rmSync, unlinkSync } from 'fs';
+import { tmpdir } from 'os';
 import path from 'path';
 import http from 'http';
+
+// ---------------------------------------------------------------------------
+// Mock ProcessManager to redirect PID file operations to a temp directory.
+// GracefulShutdown.ts imports removePidFile and getChildProcesses from
+// ProcessManager.js. We mock the entire module so no production paths are
+// touched. Must be before the GracefulShutdown import.
+// ---------------------------------------------------------------------------
+const TEST_DIR = path.join(tmpdir(), `claude-mem-gs-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+const TEST_DATA_DIR = path.join(TEST_DIR, '.claude-mem');
+const TEST_PID_FILE = path.join(TEST_DATA_DIR, 'worker.pid');
+
+function testWritePidFile(info: { pid: number; port: number; startedAt: string }): void {
+  mkdirSync(TEST_DATA_DIR, { recursive: true });
+  writeFileSync(TEST_PID_FILE, JSON.stringify(info, null, 2));
+}
+
+function testRemovePidFile(): void {
+  if (!existsSync(TEST_PID_FILE)) return;
+  unlinkSync(TEST_PID_FILE);
+}
+
+mock.module('../../src/services/infrastructure/ProcessManager.js', () => ({
+  writePidFile: testWritePidFile,
+  readPidFile: () => {
+    if (!existsSync(TEST_PID_FILE)) return null;
+    try {
+      return JSON.parse(readFileSync(TEST_PID_FILE, 'utf-8'));
+    } catch {
+      return null;
+    }
+  },
+  removePidFile: testRemovePidFile,
+  getChildProcesses: async () => [],
+  forceKillProcess: async () => {},
+  waitForProcessesExit: async () => {},
+}));
+
 import {
   performGracefulShutdown,
   type GracefulShutdownConfig,
@@ -10,25 +47,22 @@ import {
   type CloseableClient,
   type CloseableDatabase,
 } from '../../src/services/infrastructure/GracefulShutdown.js';
-import {
-  writePidFile,
-  readPidFile,
-  removePidFile,
-  type PidInfo
-} from '../../src/services/infrastructure/ProcessManager.js';
-
-const DATA_DIR = path.join(homedir(), '.claude-mem');
-const PID_FILE = path.join(DATA_DIR, 'worker.pid');
 
 describe('GracefulShutdown', () => {
-  // Store original PID file content if it exists
-  let originalPidContent: string | null = null;
   const originalPlatform = process.platform;
 
+  beforeAll(() => {
+    mkdirSync(TEST_DATA_DIR, { recursive: true });
+  });
+
+  afterAll(() => {
+    rmSync(TEST_DIR, { recursive: true, force: true });
+  });
+
   beforeEach(() => {
-    // Backup existing PID file if present
-    if (existsSync(PID_FILE)) {
-      originalPidContent = readFileSync(PID_FILE, 'utf-8');
+    // Ensure clean state
+    if (existsSync(TEST_PID_FILE)) {
+      unlinkSync(TEST_PID_FILE);
     }
 
     // Ensure we're testing on non-Windows to avoid child process enumeration
@@ -40,13 +74,9 @@ describe('GracefulShutdown', () => {
   });
 
   afterEach(() => {
-    // Restore original PID file or remove test one
-    if (originalPidContent !== null) {
-      const { writeFileSync } = require('fs');
-      writeFileSync(PID_FILE, originalPidContent);
-      originalPidContent = null;
-    } else {
-      removePidFile();
+    // Clean up any PID file left by tests
+    if (existsSync(TEST_PID_FILE)) {
+      unlinkSync(TEST_PID_FILE);
     }
 
     // Restore platform
@@ -96,8 +126,8 @@ describe('GracefulShutdown', () => {
       };
 
       // Create a PID file so we can verify it's removed
-      writePidFile({ pid: 12345, port: 37777, startedAt: new Date().toISOString() });
-      expect(existsSync(PID_FILE)).toBe(true);
+      testWritePidFile({ pid: 12345, port: 37777, startedAt: new Date().toISOString() });
+      expect(existsSync(TEST_PID_FILE)).toBe(true);
 
       const config: GracefulShutdownConfig = {
         server: mockServer,
@@ -136,8 +166,8 @@ describe('GracefulShutdown', () => {
       };
 
       // Create PID file
-      writePidFile({ pid: 99999, port: 37777, startedAt: new Date().toISOString() });
-      expect(existsSync(PID_FILE)).toBe(true);
+      testWritePidFile({ pid: 99999, port: 37777, startedAt: new Date().toISOString() });
+      expect(existsSync(TEST_PID_FILE)).toBe(true);
 
       const config: GracefulShutdownConfig = {
         server: null,
@@ -147,7 +177,7 @@ describe('GracefulShutdown', () => {
       await performGracefulShutdown(config);
 
       // PID file should be removed
-      expect(existsSync(PID_FILE)).toBe(false);
+      expect(existsSync(TEST_PID_FILE)).toBe(false);
     });
 
     it('should handle missing optional services gracefully', async () => {
@@ -239,8 +269,8 @@ describe('GracefulShutdown', () => {
 
     it('should handle shutdown when PID file does not exist', async () => {
       // Ensure PID file doesn't exist
-      removePidFile();
-      expect(existsSync(PID_FILE)).toBe(false);
+      testRemovePidFile();
+      expect(existsSync(TEST_PID_FILE)).toBe(false);
 
       const mockSessionManager: ShutdownableService = {
         shutdownAll: mock(async () => {})

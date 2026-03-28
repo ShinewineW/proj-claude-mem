@@ -1,7 +1,6 @@
-import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
-import { existsSync, readFileSync, mkdirSync, writeFileSync, rmSync } from 'fs';
-import { homedir } from 'os';
-import { tmpdir } from 'os';
+import { describe, it, expect, beforeEach, afterEach, beforeAll, afterAll, spyOn } from 'bun:test';
+import * as fs from 'fs';
+import { homedir, tmpdir } from 'os';
 import path from 'path';
 import {
   writePidFile,
@@ -19,29 +18,137 @@ import {
   type PidInfo
 } from '../../src/services/infrastructure/ProcessManager.js';
 
-const DATA_DIR = path.join(homedir(), '.claude-mem');
-const PID_FILE = path.join(DATA_DIR, 'worker.pid');
+// ---------------------------------------------------------------------------
+// Redirect PID file operations to a temp directory.
+//
+// ProcessManager.ts computes DATA_DIR and PID_FILE from homedir() at module
+// parse time. We cannot mock built-in modules (os, fs) via mock.module() in
+// bun. Instead, we use spyOn to intercept fs functions and redirect any path
+// targeting the production DATA_DIR to a temp directory.
+// ---------------------------------------------------------------------------
+const PROD_DATA_DIR = path.join(homedir(), '.claude-mem');
+const PROD_PID_FILE = path.join(PROD_DATA_DIR, 'worker.pid');
+const TEST_DIR = path.join(tmpdir(), `claude-mem-pm-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+const TEST_DATA_DIR = path.join(TEST_DIR, '.claude-mem');
+const TEST_PID_FILE = path.join(TEST_DATA_DIR, 'worker.pid');
+
+/** Redirect PROD_PID_FILE, PROD_DATA_DIR, and any path under PROD_DATA_DIR. */
+function redirectPath(p: string): string {
+  if (p === PROD_PID_FILE) return TEST_PID_FILE;
+  if (p === PROD_DATA_DIR) return TEST_DATA_DIR;
+  if (p.startsWith(PROD_DATA_DIR + path.sep)) {
+    return path.join(TEST_DATA_DIR, p.slice(PROD_DATA_DIR.length));
+  }
+  return p;
+}
+
+// Spies for fs functions used by PID operations
+let writeFileSpy: ReturnType<typeof spyOn>;
+let readFileSpy: ReturnType<typeof spyOn>;
+let existsSpy: ReturnType<typeof spyOn>;
+let unlinkSpy: ReturnType<typeof spyOn>;
+let mkdirSpy: ReturnType<typeof spyOn>;
+let statSpy: ReturnType<typeof spyOn>;
+let utimesSpy: ReturnType<typeof spyOn>;
+let rmSyncSpy: ReturnType<typeof spyOn>;
+
+// Keep references to the original functions
+const origWriteFileSync = fs.writeFileSync;
+const origReadFileSync = fs.readFileSync;
+const origExistsSync = fs.existsSync;
+const origUnlinkSync = fs.unlinkSync;
+const origMkdirSync = fs.mkdirSync;
+const origStatSync = fs.statSync;
+const origUtimesSync = fs.utimesSync;
+const origRmSync = fs.rmSync;
+
+function installFsRedirects(): void {
+  writeFileSpy = spyOn(fs, 'writeFileSync').mockImplementation(
+    ((p: string, ...rest: unknown[]) => {
+      return (origWriteFileSync as Function)(redirectPath(p), ...rest);
+    }) as typeof fs.writeFileSync
+  );
+
+  readFileSpy = spyOn(fs, 'readFileSync').mockImplementation(
+    ((p: string, ...rest: unknown[]) => {
+      return (origReadFileSync as Function)(redirectPath(p), ...rest);
+    }) as typeof fs.readFileSync
+  );
+
+  existsSpy = spyOn(fs, 'existsSync').mockImplementation(
+    ((p: string) => {
+      return origExistsSync(redirectPath(p));
+    }) as typeof fs.existsSync
+  );
+
+  unlinkSpy = spyOn(fs, 'unlinkSync').mockImplementation(
+    ((p: string) => {
+      return origUnlinkSync(redirectPath(p));
+    }) as typeof fs.unlinkSync
+  );
+
+  mkdirSpy = spyOn(fs, 'mkdirSync').mockImplementation(
+    ((p: string, ...rest: unknown[]) => {
+      return (origMkdirSync as Function)(redirectPath(p), ...rest);
+    }) as typeof fs.mkdirSync
+  );
+
+  statSpy = spyOn(fs, 'statSync').mockImplementation(
+    ((p: string, ...rest: unknown[]) => {
+      return (origStatSync as Function)(redirectPath(p), ...rest);
+    }) as typeof fs.statSync
+  );
+
+  utimesSpy = spyOn(fs, 'utimesSync').mockImplementation(
+    ((p: string, ...rest: unknown[]) => {
+      return (origUtimesSync as Function)(redirectPath(p), ...rest);
+    }) as typeof fs.utimesSync
+  );
+
+  rmSyncSpy = spyOn(fs, 'rmSync').mockImplementation(
+    ((p: string, ...rest: unknown[]) => {
+      return (origRmSync as Function)(redirectPath(p), ...rest);
+    }) as typeof fs.rmSync
+  );
+}
+
+function removeFsRedirects(): void {
+  writeFileSpy?.mockRestore();
+  readFileSpy?.mockRestore();
+  existsSpy?.mockRestore();
+  unlinkSpy?.mockRestore();
+  mkdirSpy?.mockRestore();
+  statSpy?.mockRestore();
+  utimesSpy?.mockRestore();
+  rmSyncSpy?.mockRestore();
+}
 
 describe('ProcessManager', () => {
-  // Store original PID file content if it exists
-  let originalPidContent: string | null = null;
-
-  beforeEach(() => {
-    // Backup existing PID file if present
-    if (existsSync(PID_FILE)) {
-      originalPidContent = readFileSync(PID_FILE, 'utf-8');
-    }
+  beforeAll(() => {
+    origMkdirSync(TEST_DATA_DIR, { recursive: true });
   });
 
-  afterEach(() => {
-    // Restore original PID file or remove test one
-    if (originalPidContent !== null) {
-      writeFileSync(PID_FILE, originalPidContent);
-      originalPidContent = null;
-    } else {
-      removePidFile();
-    }
+  afterAll(() => {
+    // Ensure spies are removed before cleanup
+    removeFsRedirects();
+    fs.rmSync(TEST_DIR, { recursive: true, force: true });
   });
+
+  // PID file tests need fs redirects
+  describe('PID file operations', () => {
+    beforeEach(() => {
+      installFsRedirects();
+      if (origExistsSync(TEST_PID_FILE)) {
+        origUnlinkSync(TEST_PID_FILE);
+      }
+    });
+
+    afterEach(() => {
+      removeFsRedirects();
+      if (origExistsSync(TEST_PID_FILE)) {
+        origUnlinkSync(TEST_PID_FILE);
+      }
+    });
 
   describe('writePidFile', () => {
     it('should create file with PID info', () => {
@@ -53,8 +160,8 @@ describe('ProcessManager', () => {
 
       writePidFile(testInfo);
 
-      expect(existsSync(PID_FILE)).toBe(true);
-      const content = JSON.parse(readFileSync(PID_FILE, 'utf-8'));
+      expect(origExistsSync(TEST_PID_FILE)).toBe(true);
+      const content = JSON.parse(origReadFileSync(TEST_PID_FILE, 'utf-8') as string);
       expect(content.pid).toBe(12345);
       expect(content.port).toBe(37777);
       expect(content.startedAt).toBe(testInfo.startedAt);
@@ -75,7 +182,7 @@ describe('ProcessManager', () => {
       writePidFile(firstInfo);
       writePidFile(secondInfo);
 
-      const content = JSON.parse(readFileSync(PID_FILE, 'utf-8'));
+      const content = JSON.parse(origReadFileSync(TEST_PID_FILE, 'utf-8') as string);
       expect(content.pid).toBe(22222);
       expect(content.port).toBe(37888);
     });
@@ -99,7 +206,6 @@ describe('ProcessManager', () => {
     });
 
     it('should return null for missing file', () => {
-      // Ensure file doesn't exist
       removePidFile();
 
       const result = readPidFile();
@@ -108,7 +214,7 @@ describe('ProcessManager', () => {
     });
 
     it('should return null for corrupted JSON', () => {
-      writeFileSync(PID_FILE, 'not valid json {{{');
+      origWriteFileSync(TEST_PID_FILE, 'not valid json {{{');
 
       const result = readPidFile();
 
@@ -124,19 +230,17 @@ describe('ProcessManager', () => {
         startedAt: new Date().toISOString()
       };
       writePidFile(testInfo);
-      expect(existsSync(PID_FILE)).toBe(true);
+      expect(origExistsSync(TEST_PID_FILE)).toBe(true);
 
       removePidFile();
 
-      expect(existsSync(PID_FILE)).toBe(false);
+      expect(origExistsSync(TEST_PID_FILE)).toBe(false);
     });
 
     it('should not throw for missing file', () => {
-      // Ensure file doesn't exist
       removePidFile();
-      expect(existsSync(PID_FILE)).toBe(false);
+      expect(origExistsSync(TEST_PID_FILE)).toBe(false);
 
-      // Should not throw
       expect(() => removePidFile()).not.toThrow();
     });
   });
@@ -318,11 +422,11 @@ describe('ProcessManager', () => {
         startedAt: '2024-01-01T00:00:00.000Z'
       };
       writePidFile(staleInfo);
-      expect(existsSync(PID_FILE)).toBe(true);
+      expect(origExistsSync(TEST_PID_FILE)).toBe(true);
 
       cleanStalePidFile();
 
-      expect(existsSync(PID_FILE)).toBe(false);
+      expect(origExistsSync(TEST_PID_FILE)).toBe(false);
     });
 
     it('should keep PID file when process is alive', () => {
@@ -337,12 +441,12 @@ describe('ProcessManager', () => {
       cleanStalePidFile();
 
       // PID file should still exist since process.pid is alive
-      expect(existsSync(PID_FILE)).toBe(true);
+      expect(origExistsSync(TEST_PID_FILE)).toBe(true);
     });
 
     it('should do nothing when PID file does not exist', () => {
       removePidFile();
-      expect(existsSync(PID_FILE)).toBe(false);
+      expect(origExistsSync(TEST_PID_FILE)).toBe(false);
 
       // Should not throw
       expect(() => cleanStalePidFile()).not.toThrow();
@@ -380,7 +484,7 @@ describe('ProcessManager', () => {
       // Wait a bit to ensure measurable mtime difference
       await new Promise(r => setTimeout(r, 50));
 
-      const statsBefore = require('fs').statSync(PID_FILE);
+      const statsBefore = origStatSync(TEST_PID_FILE);
       const mtimeBefore = statsBefore.mtimeMs;
 
       // Wait again to ensure mtime advances
@@ -388,7 +492,7 @@ describe('ProcessManager', () => {
 
       touchPidFile();
 
-      const statsAfter = require('fs').statSync(PID_FILE);
+      const statsAfter = origStatSync(TEST_PID_FILE);
       const mtimeAfter = statsAfter.mtimeMs;
 
       expect(mtimeAfter).toBeGreaterThanOrEqual(mtimeBefore);
@@ -401,12 +505,14 @@ describe('ProcessManager', () => {
     });
   });
 
+  }); // PID file operations
+
   describe('spawnDaemon', () => {
     it('should use setsid on Linux when available', () => {
       // setsid should exist at /usr/bin/setsid on Linux
       if (process.platform === 'win32') return; // Skip on Windows
 
-      const setsidAvailable = existsSync('/usr/bin/setsid');
+      const setsidAvailable = fs.existsSync('/usr/bin/setsid');
       if (!setsidAvailable) return; // Skip if setsid not installed
 
       // Spawn a daemon with a non-existent script (it will fail to start, but we can verify the spawn attempt)
@@ -475,47 +581,47 @@ describe('ProcessManager', () => {
 
     beforeEach(() => {
       testDataDir = path.join(tmpdir(), `claude-mem-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
-      mkdirSync(testDataDir, { recursive: true });
+      fs.mkdirSync(testDataDir, { recursive: true });
     });
 
     afterEach(() => {
-      rmSync(testDataDir, { recursive: true, force: true });
+      fs.rmSync(testDataDir, { recursive: true, force: true });
     });
 
     it('should wipe chroma directory and write marker file', () => {
       // Create a fake chroma directory with data
       const chromaDir = path.join(testDataDir, 'chroma');
-      mkdirSync(chromaDir, { recursive: true });
-      writeFileSync(path.join(chromaDir, 'test-data.bin'), 'fake chroma data');
+      fs.mkdirSync(chromaDir, { recursive: true });
+      fs.writeFileSync(path.join(chromaDir, 'test-data.bin'), 'fake chroma data');
 
       runOneTimeChromaMigration(testDataDir);
 
       // Chroma dir should be gone
-      expect(existsSync(chromaDir)).toBe(false);
+      expect(fs.existsSync(chromaDir)).toBe(false);
       // Marker file should exist
-      expect(existsSync(path.join(testDataDir, '.chroma-cleaned-v10.3'))).toBe(true);
+      expect(fs.existsSync(path.join(testDataDir, '.chroma-cleaned-v10.3'))).toBe(true);
     });
 
     it('should skip when marker file already exists (idempotent)', () => {
       // Write marker file first
-      writeFileSync(path.join(testDataDir, '.chroma-cleaned-v10.3'), 'already done');
+      fs.writeFileSync(path.join(testDataDir, '.chroma-cleaned-v10.3'), 'already done');
 
       // Create a chroma directory that should NOT be wiped
       const chromaDir = path.join(testDataDir, 'chroma');
-      mkdirSync(chromaDir, { recursive: true });
-      writeFileSync(path.join(chromaDir, 'important.bin'), 'should survive');
+      fs.mkdirSync(chromaDir, { recursive: true });
+      fs.writeFileSync(path.join(chromaDir, 'important.bin'), 'should survive');
 
       runOneTimeChromaMigration(testDataDir);
 
       // Chroma dir should still exist (migration was skipped)
-      expect(existsSync(chromaDir)).toBe(true);
-      expect(existsSync(path.join(chromaDir, 'important.bin'))).toBe(true);
+      expect(fs.existsSync(chromaDir)).toBe(true);
+      expect(fs.existsSync(path.join(chromaDir, 'important.bin'))).toBe(true);
     });
 
     it('should handle missing chroma directory gracefully', () => {
       // No chroma dir exists — should just write marker without error
       expect(() => runOneTimeChromaMigration(testDataDir)).not.toThrow();
-      expect(existsSync(path.join(testDataDir, '.chroma-cleaned-v10.3'))).toBe(true);
+      expect(fs.existsSync(path.join(testDataDir, '.chroma-cleaned-v10.3'))).toBe(true);
     });
   });
 });

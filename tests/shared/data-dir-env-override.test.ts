@@ -8,10 +8,10 @@
  *
  * The fix: getEnabledProjectsPath() reads process.env lazily at call time.
  */
-import { describe, it, expect, afterEach } from "bun:test";
+import { describe, it, expect, afterEach, afterAll } from "bun:test";
 import { join } from "path";
 import { tmpdir, homedir } from "os";
-import { mkdirSync } from "fs";
+import { mkdirSync, rmSync } from "fs";
 
 const savedEnv = process.env.CLAUDE_MEM_DATA_DIR;
 
@@ -42,6 +42,8 @@ describe("DATA_DIR env override", () => {
 });
 
 describe("getEnabledProjectsPath() lazy resolution", () => {
+  const createdDirs: string[] = [];
+
   afterEach(() => {
     if (savedEnv !== undefined) {
       process.env.CLAUDE_MEM_DATA_DIR = savedEnv;
@@ -50,9 +52,16 @@ describe("getEnabledProjectsPath() lazy resolution", () => {
     }
   });
 
+  afterAll(() => {
+    for (const dir of createdDirs) {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("resolves to custom dir when env var is set", () => {
     const customDir = join(tmpdir(), `test-allowlist-lazy-${Date.now()}`);
     mkdirSync(customDir, { recursive: true });
+    createdDirs.push(customDir);
     process.env.CLAUDE_MEM_DATA_DIR = customDir;
 
     const { getEnabledProjectsPath } = require("../../src/shared/project-allowlist.ts");

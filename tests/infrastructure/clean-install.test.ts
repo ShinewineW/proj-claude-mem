@@ -135,15 +135,18 @@ describe('Clean Install - hooks.json Validity', () => {
 
 describe('Clean Install - sync-marketplace.cjs Uses npm', () => {
   it('should use npm install instead of bun install', () => {
-    const syncScript = readFileSync(
-      path.join(path.dirname(path.dirname(getCachePath())), '..', '..', 'marketplaces', 'thedotmack', 'scripts', 'sync-marketplace.cjs'),
-      'utf-8'
-    ).toString();
-    // If the file doesn't exist in marketplace, check project source
-    const projectSyncScript = existsSync(path.join(process.cwd(), 'scripts', 'sync-marketplace.cjs'))
-      ? readFileSync(path.join(process.cwd(), 'scripts', 'sync-marketplace.cjs'), 'utf-8')
-      : '';
-    const script = projectSyncScript || syncScript;
+    // Try marketplace path first, fall back to project source
+    const marketplacePath = path.join(path.dirname(path.dirname(getCachePath())), '..', '..', 'marketplaces', 'thedotmack', 'scripts', 'sync-marketplace.cjs');
+    const projectPath = path.join(process.cwd(), 'scripts', 'sync-marketplace.cjs');
+
+    let script = '';
+    if (existsSync(marketplacePath)) {
+      script = readFileSync(marketplacePath, 'utf-8');
+    } else if (existsSync(projectPath)) {
+      script = readFileSync(projectPath, 'utf-8');
+    }
+
+    expect(script.length).toBeGreaterThan(0);
     expect(script).toContain('npm install');
     expect(script).not.toMatch(/execSync\([^)]*bun install/);
   });

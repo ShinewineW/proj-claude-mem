@@ -269,7 +269,7 @@ function installDeps() {
   // Quote path for Windows paths with spaces
   const bunCmd = IS_WINDOWS && bunPath.includes(' ') ? `"${bunPath}"` : bunPath;
 
-  execSync(`${bunCmd} install`, { cwd: ROOT, stdio: 'inherit', shell: IS_WINDOWS });
+  execSync(`${bunCmd} install`, { cwd: ROOT, stdio: ['ignore', 2, 2], shell: IS_WINDOWS });
 
   // Write version marker
   const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf-8'));
@@ -319,6 +319,8 @@ try {
 
     console.error('✅ Dependencies installed');
   }
+  // Hook contract: must be last stdout line on success
+  console.log(JSON.stringify({ continue: true, suppressOutput: true }));
 } catch (e) {
   console.error('❌ Installation failed:', e.message);
   process.exit(1);

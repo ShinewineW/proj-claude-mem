@@ -1,12 +1,13 @@
 // tests/shared/allowlist-first-resolution.test.ts
-import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
+import { describe, it, expect, beforeEach, afterEach, afterAll } from 'bun:test';
 import { resolve, join, sep } from 'path';
-import { writeFileSync, mkdirSync, unlinkSync } from 'fs';
-import { homedir } from 'os';
+import { writeFileSync, mkdirSync, rmSync } from 'fs';
+import { tmpdir } from 'os';
 
 // Test helper: write a temporary allowlist file
-const TEST_DATA_DIR = join(homedir(), '.claude-mem-test-allowlist-first');
+const TEST_DATA_DIR = join(tmpdir(), 'claude-mem-test-allowlist-first-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8));
 const TEST_ALLOWLIST_PATH = join(TEST_DATA_DIR, 'enabled-projects.json');
+const ORIG_DATA_DIR = process.env.CLAUDE_MEM_DATA_DIR;
 
 function writeTestAllowlist(entries: Record<string, object>) {
   mkdirSync(TEST_DATA_DIR, { recursive: true });
@@ -14,8 +15,14 @@ function writeTestAllowlist(entries: Record<string, object>) {
 }
 
 function cleanupTestAllowlist() {
-  try { unlinkSync(TEST_ALLOWLIST_PATH); } catch {}
+  rmSync(TEST_ALLOWLIST_PATH, { force: true });
 }
+
+afterAll(() => {
+  rmSync(TEST_DATA_DIR, { recursive: true, force: true });
+  if (ORIG_DATA_DIR === undefined) delete process.env.CLAUDE_MEM_DATA_DIR;
+  else process.env.CLAUDE_MEM_DATA_DIR = ORIG_DATA_DIR;
+});
 
 describe('findContainingProject', () => {
   beforeEach(() => {

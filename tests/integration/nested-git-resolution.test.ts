@@ -3,11 +3,12 @@ import { describe, it, expect, beforeAll, afterAll } from 'bun:test';
 import { mkdirSync, writeFileSync, rmSync } from 'fs';
 import { join, resolve } from 'path';
 import { execSync } from 'child_process';
-import { homedir } from 'os';
+import { tmpdir } from 'os';
 
-const TEST_DATA_DIR = join(homedir(), '.claude-mem-test-nested-git');
+const TEST_DATA_DIR = join(tmpdir(), 'claude-mem-test-nested-git-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8));
 const TEST_PROJECT = join(TEST_DATA_DIR, 'my-workspace');
 const NESTED_REPO = join(TEST_PROJECT, 'references', 'cloned-repo');
+const ORIG_DATA_DIR = process.env.CLAUDE_MEM_DATA_DIR;
 
 describe('nested git repo resolution', () => {
   beforeAll(() => {
@@ -26,7 +27,8 @@ describe('nested git repo resolution', () => {
 
   afterAll(() => {
     rmSync(TEST_DATA_DIR, { recursive: true, force: true });
-    delete process.env.CLAUDE_MEM_DATA_DIR;
+    if (ORIG_DATA_DIR === undefined) delete process.env.CLAUDE_MEM_DATA_DIR;
+    else process.env.CLAUDE_MEM_DATA_DIR = ORIG_DATA_DIR;
   });
 
   it('resolves nested git repo cwd back to parent workspace', async () => {

@@ -29,7 +29,17 @@ afterAll(() => { orig === undefined ? delete process.env.CLAUDE_MEM_DATA_DIR : p
 ```
 bun runs all test files in the same process — leaked env vars break `SettingsDefaultsManager` tests.
 
-**Temp dirs**: `join(tmpdir(), \`test-${Date.now()}\`)` with `rmSync` in `afterEach`.
+**Temp dirs**: `join(tmpdir(), \`test-${Date.now()}\`)` with `rmSync` in `afterAll`.
+**Gotcha**: Every `mkdirSync(dir)` MUST have a matching `rmSync(dir, { recursive: true, force: true })` in `afterAll` for the **same variable**. Having `rmSync` on a different path (e.g., a file inside the dir) does NOT count — the directory itself leaks. Enforced by `test-filesystem-hygiene.test.ts`.
+**Gotcha**: Never use `homedir()` for test write paths — always `tmpdir()`. Never write to production paths (`~/.claude-mem/`). Enforced by `test-filesystem-hygiene.test.ts`.
+
+**Runtime leak verification**: Static guards can have false negatives. After modifying test cleanup logic, verify with a before/after tmpdir count:
+```bash
+BEFORE=$(ls -d $TMPDIR/test-* $TMPDIR/claude-mem-* 2>/dev/null | wc -l)
+/opt/homebrew/bin/bun test
+AFTER=$(ls -d $TMPDIR/test-* $TMPDIR/claude-mem-* 2>/dev/null | wc -l)
+echo "Delta: $((AFTER - BEFORE))"  # Must be 0
+```
 
 **Logger coverage gate**: Files under `src/services/worker/`, `src/services/sqlite/`, `src/hooks/`, `src/sdk/`, `src/servers/` must `import { logger }`. Enforced by `logger-usage-standards.test.ts` — new files without logger import fail full suite.
 

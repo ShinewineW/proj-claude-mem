@@ -9,6 +9,7 @@ mkdirSync(testDataDir, { recursive: true });
 process.env.CLAUDE_MEM_DATA_DIR = testDataDir;
 
 afterAll(() => {
+  rmSync(testDataDir, { recursive: true, force: true });
   if (originalDataDir === undefined) delete process.env.CLAUDE_MEM_DATA_DIR;
   else process.env.CLAUDE_MEM_DATA_DIR = originalDataDir;
 });
