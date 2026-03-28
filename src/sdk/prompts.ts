@@ -94,16 +94,17 @@ ${mode.prompts.header_memory_start}`;
  * Truncate a string field with head/tail preservation.
  * Head: first 30% of limit, Tail: last 20% of limit (total 50% kept).
  */
-function truncateField(content: string, maxChars: number): string {
-  if (content.length <= maxChars) return content;
+function truncateField(content: string, maxChars: number): { text: string; wasTruncated: boolean } {
+  if (content.length <= maxChars) return { text: content, wasTruncated: false };
   const headSize = Math.floor(maxChars * 0.3);
   const tailSize = Math.floor(maxChars * 0.2);
   const truncated = content.length - headSize - tailSize;
-  return (
-    content.slice(0, headSize) +
-    `\n[... truncated ${truncated} chars ...]\n` +
-    content.slice(-tailSize)
-  );
+  return {
+    text: content.slice(0, headSize) +
+      `\n[... truncated ${truncated} chars ...]\n` +
+      content.slice(-tailSize),
+    wasTruncated: true,
+  };
 }
 
 /**
@@ -114,8 +115,9 @@ function renderObservationBlock(
   obs: Observation,
   maxFieldChars: number,
   index?: number,
-): string {
+): { block: string; truncatedFields: number } {
   const timestamp = new Date(obs.created_at_epoch).toISOString();
+  let truncatedFields = 0;
 
   // tool_input: parse JSON string → compact JSON
   let inputStr: string;
@@ -124,7 +126,9 @@ function renderObservationBlock(
   } catch {
     inputStr = obs.tool_input || "{}";
   }
-  inputStr = truncateField(inputStr, maxFieldChars);
+  const inputResult = truncateField(inputStr, maxFieldChars);
+  inputStr = inputResult.text;
+  if (inputResult.wasTruncated) truncatedFields++;
 
   // tool_output: parse JSON string → prefer plain text rendering
   let outcomeStr: string;
@@ -138,7 +142,9 @@ function renderObservationBlock(
   } catch {
     outcomeStr = obs.tool_output || "";
   }
-  outcomeStr = truncateField(outcomeStr, maxFieldChars);
+  const outputResult = truncateField(outcomeStr, maxFieldChars);
+  outcomeStr = outputResult.text;
+  if (outputResult.wasTruncated) truncatedFields++;
 
   const indexAttr = index !== undefined ? ` index="${index}"` : "";
   let block = `<observed_from_primary_session${indexAttr}>
@@ -155,7 +161,7 @@ ${inputStr}
 ${outcomeStr}
   </outcome>
 </observed_from_primary_session>`;
-  return block;
+  return { block, truncatedFields };
 }
 
 /**
@@ -164,12 +170,14 @@ ${outcomeStr}
 export function buildObservationPrompt(
   obs: Observation,
   maxFieldChars: number = 8000,
-): string {
-  return `--- OBSERVATION ONLY ---
+): { prompt: string; truncatedFields: number } {
+  const { block, truncatedFields } = renderObservationBlock(obs, maxFieldChars);
+  const prompt = `--- OBSERVATION ONLY ---
 Do NOT output <summary> tags. This is an observation, not a summary request.
 Your response MUST use <observation> tags ONLY. Any <summary> output will be discarded.
 
-${renderObservationBlock(obs, maxFieldChars)}`;
+${block}`;
+  return { prompt, truncatedFields };
 }
 
 /**
@@ -180,23 +188,25 @@ ${renderObservationBlock(obs, maxFieldChars)}`;
 export function buildBatchObservationPrompt(
   observations: Observation[],
   maxFieldChars: number = 8000,
-): string {
-  if (observations.length === 0) return "";
+): { prompt: string; truncatedFields: number } {
+  if (observations.length === 0) return { prompt: "", truncatedFields: 0 };
   if (observations.length === 1) {
     return buildObservationPrompt(observations[0], maxFieldChars);
   }
 
+  let totalTruncatedFields = 0;
   let prompt = `--- OBSERVATION BATCH (${observations.length} items) ---
 Do NOT output <summary> tags. These are observations, not a summary request.
 Your response MUST use <observation> tags ONLY.
 Output 0 or more observations — skip items that are not noteworthy.\n\n`;
 
   for (let i = 0; i < observations.length; i++) {
-    prompt +=
-      renderObservationBlock(observations[i], maxFieldChars, i + 1) + "\n\n";
+    const { block, truncatedFields } = renderObservationBlock(observations[i], maxFieldChars, i + 1);
+    totalTruncatedFields += truncatedFields;
+    prompt += block + "\n\n";
   }
 
-  return prompt;
+  return { prompt, truncatedFields: totalTruncatedFields };
 }
 
 /**
