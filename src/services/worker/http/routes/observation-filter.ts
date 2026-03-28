@@ -5,6 +5,8 @@
  * the pending_messages table, reducing wasted SDK API calls.
  */
 
+import { logger } from '../../../../utils/logger.js';
+
 export interface ToolPattern {
   tool: string;
   glob: string;
@@ -33,7 +35,7 @@ function globToRegex(pattern: string): RegExp {
 export function parseSkipPatterns(setting: string): ToolPattern[] {
   if (!setting || !setting.trim()) return [];
 
-  return setting
+  const patterns = setting
     .split(',')
     .map((s) => s.trim())
     .filter((s) => s.includes(':'))
@@ -46,6 +48,12 @@ export function parseSkipPatterns(setting: string): ToolPattern[] {
         regex: globToRegex(glob),
       };
     });
+
+  logger.debug('FILTER', `Parsed ${patterns.length} skip patterns`, {
+    patterns: patterns.map(p => `${p.tool}:${p.glob}`),
+  });
+
+  return patterns;
 }
 
 /**
