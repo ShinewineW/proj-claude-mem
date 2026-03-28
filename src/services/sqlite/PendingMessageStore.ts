@@ -741,22 +741,6 @@ export class PendingMessageStore {
     return result.changes;
   }
 
-  private safeParseJson(
-    json: string,
-    field: string,
-    messageId: number,
-  ): unknown | undefined {
-    try {
-      return JSON.parse(json);
-    } catch (e) {
-      logger.warn("QUEUE", `Corrupt ${field} JSON, returning undefined`, {
-        messageId,
-        error: (e as Error).message,
-      });
-      return undefined;
-    }
-  }
-
   /**
    * Convert a PersistentPendingMessage back to PendingMessage format
    */

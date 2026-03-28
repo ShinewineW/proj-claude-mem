@@ -16,7 +16,6 @@ import { SessionManager } from "./SessionManager.js";
 import { logger } from "../../utils/logger.js";
 import {
   buildInitPrompt,
-  buildObservationPrompt,
   buildBatchObservationPrompt,
   buildSummaryPrompt,
   buildContinuationPrompt,
@@ -601,10 +600,10 @@ export class SDKAgent {
                   );
             batchObservations.push({
               id: 0,
-              tool_name: p.tool_name || "unknown",
+              tool_name: p.tool_name!,
               tool_input: p.tool_input || "{}",
               tool_output: p.tool_response || "{}",
-              created_at_epoch: p.created_at_epoch || Date.now(),
+              created_at_epoch: p.created_at_epoch,
               cwd: p.cwd || undefined,
             });
           }
