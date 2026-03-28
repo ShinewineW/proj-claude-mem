@@ -124,7 +124,7 @@ export class SDKAgent {
     // Wait for agent pool slot (configurable via CLAUDE_MEM_MAX_CONCURRENT_AGENTS)
     const settings = SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH);
     const maxConcurrent =
-      parseInt(settings.CLAUDE_MEM_MAX_CONCURRENT_AGENTS, 10) || 2;
+      parseInt(settings.CLAUDE_MEM_MAX_CONCURRENT_AGENTS, 10) || 4;
 
     // Active reclamation callback: detect zombie processes occupying pool slots.
     // Uses dbPath (stored on TrackedProcess) for O(1) composite key lookup,
@@ -610,11 +610,8 @@ export class SDKAgent {
         }
 
         // Build prompt (single or batch format — buildBatchObservationPrompt delegates for length=1)
-        const obsResult = buildBatchObservationPrompt(
-          batchObservations,
-          obsMaxFieldChars,
-        );
-        const obsPrompt = obsResult.prompt;
+        const { prompt: obsPrompt, truncatedFields } =
+          buildBatchObservationPrompt(batchObservations, obsMaxFieldChars);
 
         // Track optimization stats
         if (!session.optimizationStats) {
@@ -626,7 +623,7 @@ export class SDKAgent {
           };
         }
         session.optimizationStats.totalPromptChars += obsPrompt.length;
-        session.optimizationStats.truncatedFields += obsResult.truncatedFields;
+        session.optimizationStats.truncatedFields += truncatedFields;
         if (batchObservations.length > 1) {
           session.optimizationStats.batchedObservations +=
             batchObservations.length;
