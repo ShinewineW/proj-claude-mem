@@ -32,6 +32,7 @@ Foundational modules for per-project isolation, configuration, and hook/worker c
 | `timeline-formatting.ts` | Date formatting, `estimateTokens()`, `groupByDate()` |
 | `transcript-parser.ts` | JSONL transcript extraction, `<system-reminder>` stripping |
 | `path-utils.ts` | Path normalization, folder CLAUDE.md detection |
+| `fallback-queue.ts` | Write/read/replay fallback entries (`~/.claude-mem/fallback/`) when worker is unreachable |
 | `plugin-state.ts` | Check if plugin disabled in Claude Code settings |
 
 ## Key Design Principles

@@ -15,7 +15,7 @@
 
 | Dir | Purpose |
 |-----|---------|
-| `agents/` | `ResponseProcessor` (shared response parsing), `ObservationBroadcaster` (SSE) |
+| `agents/` | `ResponseProcessor` (response parsing), `ObservationBroadcaster` (SSE), `FallbackErrorHandler` (provider error classification), `SessionCleanupHelper` (abandon/fail coordination), `types.ts` |
 | `http/routes/` | `SessionRoutes`, `SearchRoutes`, `DataRoutes`, `MemoryRoutes`, `SettingsRoutes`, `observation-filter.ts` (Layer A pattern filter) |
 | `search/` | `SearchOrchestrator`, strategies (Chroma/SQLite/Hybrid), filters |
 | `events/` | `SessionEventBroadcaster` |
@@ -25,7 +25,7 @@
 
 **Per-Project Isolation**: Every session has `dbPath` field. Routes extract from request → pass to DB methods. 3-step fallback: explicit → default → lastActive → throw.
 
-**Event-Driven Queuing**: `EventEmitter` per session for zero-latency notifications. `PendingMessageStore` persists to DB first (crash-safe). Idle timeout (3min) triggers subprocess abort.
+**Event-Driven Queuing**: `EventEmitter` per session for zero-latency notifications. `PendingMessageStore` persists to DB first (crash-safe). Subprocess idle timeout (3min, no new messages) triggers abort; session reaper (15min, no generator activity) triggers proactive summarize then reap.
 
 **Dual-Channel Processing**: Main channel always uses Claude SDK. Bypass lane (`BypassLane.ts`) processes observations in parallel via direct REST calls when `CLAUDE_MEM_PROVIDER != 'claude'`. Competing consumers on same `pending_messages` queue — main uses `claimNextMessage()` (all types), bypass uses `claimNextObservation()` (observation-only). Terminated sessions: `markAllSessionMessagesAbandoned` → cleanup. No fallback agents.
 

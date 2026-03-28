@@ -8,7 +8,8 @@
 | `PendingMessageStore.ts` | Persistent message queue with claim-confirm lifecycle (pending→processing→deleted). |
 | `SessionSearch.ts` | Filter-only structured search (vector search via ChromaDB, not local FTS). |
 | `Database.ts` | Entry point: `ClaudeMemDatabase` (recommended) wraps SessionStore + migrations. |
-| `migrations/runner.ts` | `MigrationRunner` — extracted from SessionStore, 17 migration methods (schema versions up to 25). |
+| `migrations/runner.ts` | `MigrationRunner` — extracted from SessionStore, 19 migration methods (schema versions up to 26). |
+| `Import.ts` | Bulk import: `importObservation()`, `importSessionSummary()` with content_hash dedup. |
 
 ## Key Tables
 
@@ -33,3 +34,4 @@
 - Each migration checks `schema_versions` + actual column existence (defends against #979)
 - Use `INSERT OR IGNORE` into `schema_versions` for idempotence
 - Large schema changes: `CREATE TABLE AS SELECT` + rename in transaction
+- **Dual maintenance**: Migrations must be added to BOTH `MigrationRunner` AND `SessionStore` — `DbConnectionPool` creates DBs via `new SessionStore()` directly, so missing migrations in SessionStore leave per-project DBs with incomplete schema
