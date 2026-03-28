@@ -33,6 +33,6 @@
 - **Layer A**: `observation-filter.ts` — `parseSkipPatterns()`/`shouldSkipObservation()` pre-filter before enqueue. Cached patterns, configurable via `CLAUDE_MEM_SKIP_TOOL_PATTERNS`.
 - **Layer B**: `SDKAgent.createMessageGenerator()` — batch same-prompt observations via `claimNextObservationBatch()`. Uses `buildBatchObservationPrompt()` for multi-item prompts. Settings loaded once per generator.
 - **JSON/Truncation**: `buildObservationPrompt()` uses compact JSON, plain text rendering, `truncateField()` at `CLAUDE_MEM_OBS_MAX_FIELD_CHARS`.
-- **Telemetry**: `optimizationStats` on `ActiveSession` — `batchedObservations`, `batchPromptsSaved`, `totalPromptChars` logged in `SDK_USAGE_SUMMARY`.
+- **Telemetry**: `optimizationStats` on `ActiveSession` — `batchedObservations`, `batchPromptsSaved`, `totalPromptChars`, `truncatedFields` logged in `SDK_USAGE_SUMMARY`. Bypass lane logs `truncatedFields` per-message at INFO level.
 
 **Drain Window**: `deleteSession()` polls `hasPendingSummarize()` every 500ms (max 10s) before aborting, preventing summary loss on session close.
