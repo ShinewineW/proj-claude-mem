@@ -149,7 +149,7 @@ describe("JSON serialization pipeline", () => {
 
 describe("buildObservationPrompt", () => {
   test("handles JSON string tool_input correctly", () => {
-    const prompt = buildObservationPrompt({
+    const { prompt } = buildObservationPrompt({
       id: 0,
       tool_name: "Edit",
       tool_input: '{"file_path":"/foo.ts","old_string":"a","new_string":"b"}',
@@ -166,7 +166,7 @@ describe("buildObservationPrompt", () => {
 
   test("truncates oversized tool_input", () => {
     const bigInput = JSON.stringify({ data: "x".repeat(20000) });
-    const prompt = buildObservationPrompt({
+    const { prompt } = buildObservationPrompt({
       id: 0,
       tool_name: "Bash",
       tool_input: bigInput,
@@ -179,7 +179,7 @@ describe("buildObservationPrompt", () => {
 
   test("truncates oversized tool_output", () => {
     const bigOutput = JSON.stringify("y".repeat(20000));
-    const prompt = buildObservationPrompt({
+    const { prompt } = buildObservationPrompt({
       id: 0,
       tool_name: "Bash",
       tool_input: '{"command":"cat bigfile"}',
@@ -190,7 +190,7 @@ describe("buildObservationPrompt", () => {
   });
 
   test("renders plain text tool_output without JSON wrapper", () => {
-    const prompt = buildObservationPrompt({
+    const { prompt } = buildObservationPrompt({
       id: 0,
       tool_name: "Bash",
       tool_input: '{"command":"ls"}',
@@ -213,13 +213,13 @@ describe("buildBatchObservationPrompt", () => {
   });
 
   test("single observation delegates to buildObservationPrompt (no BATCH header)", () => {
-    const prompt = buildBatchObservationPrompt([makeObs("Edit", 0)]);
+    const { prompt } = buildBatchObservationPrompt([makeObs("Edit", 0)]);
     expect(prompt).not.toContain("BATCH");
     expect(prompt).toContain("<observed_from_primary_session>");
   });
 
   test("multiple observations produce batch format with indexed items", () => {
-    const prompt = buildBatchObservationPrompt([
+    const { prompt } = buildBatchObservationPrompt([
       makeObs("Edit", 0),
       makeObs("Read", 1),
       makeObs("Bash", 2),
@@ -232,7 +232,7 @@ describe("buildBatchObservationPrompt", () => {
   });
 
   test("batch prompt instructs model to use observation tags only", () => {
-    const prompt = buildBatchObservationPrompt([
+    const { prompt } = buildBatchObservationPrompt([
       makeObs("Edit", 0),
       makeObs("Read", 1),
     ]);

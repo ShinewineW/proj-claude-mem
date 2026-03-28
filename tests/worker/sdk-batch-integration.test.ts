@@ -158,7 +158,7 @@ describe('SDKAgent batch integration semantics', () => {
       { id: 0, tool_name: 'Bash', tool_input: '{"command":"ls"}', tool_output: '"file1\\nfile2"', created_at_epoch: Date.now(), cwd: '/project' },
     ];
 
-    const prompt = buildBatchObservationPrompt(batchObservations, 8000);
+    const { prompt } = buildBatchObservationPrompt(batchObservations, 8000);
 
     // Batch format with indexed items
     expect(prompt).toContain('OBSERVATION BATCH (3 items)');
@@ -171,7 +171,7 @@ describe('SDKAgent batch integration semantics', () => {
   });
 
   test('single observation uses non-batch format', () => {
-    const prompt = buildBatchObservationPrompt([
+    const { prompt } = buildBatchObservationPrompt([
       { id: 0, tool_name: 'Read', tool_input: '{}', tool_output: '{}', created_at_epoch: Date.now() },
     ], 8000);
 

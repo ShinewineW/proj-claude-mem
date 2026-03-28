@@ -610,10 +610,11 @@ export class SDKAgent {
         }
 
         // Build prompt (single or batch format — buildBatchObservationPrompt delegates for length=1)
-        const obsPrompt = buildBatchObservationPrompt(
+        const obsResult = buildBatchObservationPrompt(
           batchObservations,
           obsMaxFieldChars,
         );
+        const obsPrompt = obsResult.prompt;
 
         // Track optimization stats
         if (!session.optimizationStats) {

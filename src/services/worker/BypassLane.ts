@@ -533,7 +533,7 @@ export class BypassLane {
       const memorySessionId = session.memorySessionId!;
 
       try {
-        await this.processObservation(
+        const obsStats = await this.processObservation(
           message,
           session,
           memorySessionId,
@@ -544,6 +544,7 @@ export class BypassLane {
           messageId: message.id,
           sessionDbId: session.sessionDbId,
           provider: this.config?.provider,
+          truncatedFields: obsStats.truncatedFields,
         });
 
         // F5 fix: Rate limiting for Gemini free tier (15 RPM = 4s interval)
@@ -590,7 +591,7 @@ export class BypassLane {
     session: ActiveSession,
     memorySessionId: string,
     signal: AbortSignal,
-  ): Promise<void> {
+  ): Promise<{ truncatedFields: number }> {
     if (!this.config || !this.dbManager || !this.sessionManager) {
       throw new Error("BypassLane not configured");
     }
@@ -600,7 +601,7 @@ export class BypassLane {
     const bypassSettings = this.getSettings();
     const obsMaxFieldChars =
       parseInt(bypassSettings.CLAUDE_MEM_OBS_MAX_FIELD_CHARS, 10) || 8000;
-    const obsPrompt = buildObservationPrompt(
+    const { prompt: obsPrompt, truncatedFields } = buildObservationPrompt(
       {
         id: 0,
         tool_name: message.tool_name!,
@@ -699,6 +700,8 @@ export class BypassLane {
         content: responseText,
       });
     }
+
+    return { truncatedFields };
   }
 
   /** Call Gemini or OpenRouter REST API. Returns response text. */
