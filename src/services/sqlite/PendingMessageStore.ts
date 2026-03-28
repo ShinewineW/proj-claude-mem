@@ -1,6 +1,6 @@
-import { Database } from './sqlite-compat.js';
-import type { PendingMessage } from '../worker-types.js';
-import { logger } from '../../utils/logger.js';
+import { Database } from "./sqlite-compat.js";
+import type { PendingMessage } from "../worker-types.js";
+import { logger } from "../../utils/logger.js";
 
 /** Messages processing longer than this are considered stale and reset to pending by self-healing */
 const STALE_PROCESSING_THRESHOLD_MS = 60_000;
@@ -12,14 +12,14 @@ export interface PersistentPendingMessage {
   id: number;
   session_db_id: number;
   content_session_id: string;
-  message_type: 'observation' | 'summarize';
+  message_type: "observation" | "summarize";
   tool_name: string | null;
   tool_input: string | null;
   tool_response: string | null;
   cwd: string | null;
   last_assistant_message: string | null;
   prompt_number: number | null;
-  status: 'pending' | 'processing' | 'processed' | 'failed';
+  status: "pending" | "processing" | "processed" | "failed";
   retry_count: number;
   created_at_epoch: number;
   started_processing_at_epoch: number | null;
@@ -57,7 +57,11 @@ export class PendingMessageStore {
    * Enqueue a new message (persist before processing)
    * @returns The database ID of the persisted message
    */
-  enqueue(sessionDbId: number, contentSessionId: string, message: PendingMessage): number {
+  enqueue(
+    sessionDbId: number,
+    contentSessionId: string,
+    message: PendingMessage,
+  ): number {
     const now = Date.now();
     const stmt = this.db.prepare(`
       INSERT INTO pending_messages (
@@ -73,12 +77,20 @@ export class PendingMessageStore {
       contentSessionId,
       message.type,
       message.tool_name || null,
-      message.tool_input ? JSON.stringify(message.tool_input) : null,
-      message.tool_response ? JSON.stringify(message.tool_response) : null,
+      typeof message.tool_input === "string"
+        ? message.tool_input
+        : message.tool_input
+          ? JSON.stringify(message.tool_input)
+          : null,
+      typeof message.tool_response === "string"
+        ? message.tool_response
+        : message.tool_response
+          ? JSON.stringify(message.tool_response)
+          : null,
       message.cwd || null,
       message.last_assistant_message || null,
       message.prompt_number || null,
-      now
+      now,
     );
 
     return result.lastInsertRowid as number;
@@ -106,7 +118,10 @@ export class PendingMessageStore {
       `);
       const resetResult = resetStmt.run(sessionId, staleCutoff);
       if (resetResult.changes > 0) {
-        logger.info('QUEUE', `SELF_HEAL | sessionDbId=${sessionId} | recovered ${resetResult.changes} stale processing message(s)`);
+        logger.info(
+          "QUEUE",
+          `SELF_HEAL | sessionDbId=${sessionId} | recovered ${resetResult.changes} stale processing message(s)`,
+        );
       }
 
       const peekStmt = this.db.prepare(`
@@ -128,9 +143,13 @@ export class PendingMessageStore {
         updateStmt.run(now, msg.id);
 
         // Log claim with minimal info (avoid logging full payload)
-        logger.info('QUEUE', `CLAIMED | sessionDbId=${sessionId} | messageId=${msg.id} | type=${msg.message_type}`, {
-          sessionId: sessionId
-        });
+        logger.info(
+          "QUEUE",
+          `CLAIMED | sessionDbId=${sessionId} | messageId=${msg.id} | type=${msg.message_type}`,
+          {
+            sessionId: sessionId,
+          },
+        );
       }
       return msg;
     });
@@ -167,9 +186,13 @@ export class PendingMessageStore {
         `);
         updateStmt.run(now, msg.id);
 
-        logger.info('QUEUE', `CLAIMED_OBS | sessionDbId=${sessionId} | messageId=${msg.id}`, {
-          sessionId: sessionId,
-        });
+        logger.info(
+          "QUEUE",
+          `CLAIMED_OBS | sessionDbId=${sessionId} | messageId=${msg.id}`,
+          {
+            sessionId: sessionId,
+          },
+        );
       }
       return msg;
     });
@@ -178,15 +201,91 @@ export class PendingMessageStore {
   }
 
   /**
+   * Claim up to maxCount FIFO-contiguous pending observations for the same
+   * session and prompt_number. Used by SDKAgent for safe same-prompt batching.
+   *
+   * FIFO boundary: only claims rows whose id is less than the next pending row
+   * that is NOT a same-prompt observation (summarize, NULL prompt_number, or
+   * different prompt_number). This prevents batch from skipping over interleaved
+   * non-observation messages.
+   *
+   * No self-healing — main channel's claimNextMessage handles recovery.
+   * prompt_number IS NULL rows are intentionally outside this helper's scope.
+   */
+  claimNextObservationBatch(
+    sessionDbId: number,
+    promptNumber: number,
+    maxCount: number,
+  ): PersistentPendingMessage[] {
+    const claimTx = this.db.transaction(
+      (sessId: number, pn: number, limit: number) => {
+        const now = Date.now();
+
+        const selectStmt = this.db.prepare(`
+        SELECT * FROM pending_messages
+        WHERE session_db_id = ?
+          AND status = 'pending'
+          AND message_type = 'observation'
+          AND prompt_number = ?
+          AND id < COALESCE(
+            (SELECT MIN(id) FROM pending_messages
+             WHERE session_db_id = ?
+               AND status IN ('pending', 'processing')
+               AND (message_type != 'observation'
+                    OR prompt_number IS NULL
+                    OR prompt_number != ?)),
+            2147483647
+          )
+        ORDER BY id ASC
+        LIMIT ?
+      `);
+        const rows = selectStmt.all(
+          sessId,
+          pn,
+          sessId,
+          pn,
+          limit,
+        ) as PersistentPendingMessage[];
+
+        if (rows.length > 0) {
+          const ids = rows.map((r) => r.id);
+          const placeholders = ids.map(() => "?").join(",");
+          const updateStmt = this.db.prepare(`
+          UPDATE pending_messages
+          SET status = 'processing', started_processing_at_epoch = ?
+          WHERE id IN (${placeholders})
+        `);
+          updateStmt.run(now, ...ids);
+
+          logger.info(
+            "QUEUE",
+            `CLAIMED_BATCH | sessionDbId=${sessId} | count=${rows.length} | promptNumber=${pn} | ids=[${ids.join(",")}]`,
+          );
+        }
+        return rows;
+      },
+    );
+
+    return claimTx(
+      sessionDbId,
+      promptNumber,
+      maxCount,
+    ) as PersistentPendingMessage[];
+  }
+
+  /**
    * Confirm a message was successfully processed - DELETE it from the queue.
    * CRITICAL: Only call this AFTER the observation/summary has been stored to DB.
    * This prevents message loss on generator crash.
    */
   confirmProcessed(messageId: number): void {
-    const stmt = this.db.prepare('DELETE FROM pending_messages WHERE id = ?');
+    const stmt = this.db.prepare("DELETE FROM pending_messages WHERE id = ?");
     const result = stmt.run(messageId);
     if (result.changes > 0) {
-      logger.debug('QUEUE', `CONFIRMED | messageId=${messageId} | deleted from queue`);
+      logger.debug(
+        "QUEUE",
+        `CONFIRMED | messageId=${messageId} | deleted from queue`,
+      );
     }
   }
 
@@ -196,7 +295,10 @@ export class PendingMessageStore {
    * @param thresholdMs Messages processing longer than this are considered stale (default: 5 minutes)
    * @returns Number of messages reset
    */
-  resetStaleProcessingMessages(thresholdMs: number = 5 * 60 * 1000, sessionDbId?: number): number {
+  resetStaleProcessingMessages(
+    thresholdMs: number = 5 * 60 * 1000,
+    sessionDbId?: number,
+  ): number {
     const cutoff = Date.now() - thresholdMs;
     let stmt;
     let result;
@@ -216,7 +318,10 @@ export class PendingMessageStore {
       result = stmt.run(cutoff);
     }
     if (result.changes > 0) {
-      logger.info('QUEUE', `RESET_STALE | count=${result.changes} | thresholdMs=${thresholdMs}${sessionDbId !== undefined ? ` | sessionDbId=${sessionDbId}` : ''}`);
+      logger.info(
+        "QUEUE",
+        `RESET_STALE | count=${result.changes} | thresholdMs=${thresholdMs}${sessionDbId !== undefined ? ` | sessionDbId=${sessionDbId}` : ""}`,
+      );
     }
     return result.changes;
   }
@@ -238,7 +343,9 @@ export class PendingMessageStore {
    * Returns pending, processing, and failed messages (not processed - they're deleted)
    * Joins with sdk_sessions to get project name
    */
-  getQueueMessages(): (PersistentPendingMessage & { project: string | null })[] {
+  getQueueMessages(): (PersistentPendingMessage & {
+    project: string | null;
+  })[] {
     const stmt = this.db.prepare(`
       SELECT pm.*, ss.project
       FROM pending_messages pm
@@ -252,7 +359,9 @@ export class PendingMessageStore {
         END,
         pm.created_at_epoch ASC
     `);
-    return stmt.all() as (PersistentPendingMessage & { project: string | null })[];
+    return stmt.all() as (PersistentPendingMessage & {
+      project: string | null;
+    })[];
   }
 
   /**
@@ -301,24 +410,33 @@ export class PendingMessageStore {
    * Messages with retry_count < maxRetries go back to 'pending'.
    * Messages at retry limit are permanently failed.
    */
-  private retryOrFail(sessionDbId: number, statusFilter: string): { retried: number; failed: number } {
+  private retryOrFail(
+    sessionDbId: number,
+    statusFilter: string,
+  ): { retried: number; failed: number } {
     const now = Date.now();
-    const rows = this.db.prepare(
-      `SELECT id, retry_count FROM pending_messages WHERE session_db_id = ? AND status IN (${statusFilter})`
-    ).all(sessionDbId) as { id: number; retry_count: number }[];
+    const rows = this.db
+      .prepare(
+        `SELECT id, retry_count FROM pending_messages WHERE session_db_id = ? AND status IN (${statusFilter})`,
+      )
+      .all(sessionDbId) as { id: number; retry_count: number }[];
 
     let retried = 0;
     let failed = 0;
     for (const row of rows) {
       if (row.retry_count < this.maxRetries) {
-        this.db.prepare(
-          `UPDATE pending_messages SET status = 'pending', retry_count = retry_count + 1, started_processing_at_epoch = NULL WHERE id = ?`
-        ).run(row.id);
+        this.db
+          .prepare(
+            `UPDATE pending_messages SET status = 'pending', retry_count = retry_count + 1, started_processing_at_epoch = NULL WHERE id = ?`,
+          )
+          .run(row.id);
         retried++;
       } else {
-        this.db.prepare(
-          `UPDATE pending_messages SET status = 'failed', failed_at_epoch = ? WHERE id = ?`
-        ).run(now, row.id);
+        this.db
+          .prepare(
+            `UPDATE pending_messages SET status = 'failed', failed_at_epoch = ? WHERE id = ?`,
+          )
+          .run(now, row.id);
         failed++;
       }
     }
@@ -328,7 +446,10 @@ export class PendingMessageStore {
   /**
    * Mark processing messages for a session as failed, with per-message retry.
    */
-  markSessionMessagesFailed(sessionDbId: number): { retried: number; failed: number } {
+  markSessionMessagesFailed(sessionDbId: number): {
+    retried: number;
+    failed: number;
+  } {
     return this.retryOrFail(sessionDbId, `'processing'`);
   }
 
@@ -338,7 +459,10 @@ export class PendingMessageStore {
    * No retries — if the pipeline is fundamentally broken, retrying produces the same failure,
    * and the session will be deleted from memory making retried messages orphans.
    */
-  markAllSessionMessagesAbandoned(sessionDbId: number): { retried: number; failed: number } {
+  markAllSessionMessagesAbandoned(sessionDbId: number): {
+    retried: number;
+    failed: number;
+  } {
     const now = Date.now();
     const stmt = this.db.prepare(`
       UPDATE pending_messages
@@ -353,18 +477,20 @@ export class PendingMessageStore {
    * Abort a specific message (delete from queue)
    */
   abortMessage(messageId: number): boolean {
-    const stmt = this.db.prepare('DELETE FROM pending_messages WHERE id = ?');
+    const stmt = this.db.prepare("DELETE FROM pending_messages WHERE id = ?");
     const result = stmt.run(messageId);
     return result.changes > 0;
   }
-
 
   /**
    * Get recently processed messages (for UI feedback)
    * Shows messages completed in the last N minutes so users can see their stuck items were processed
    */
-  getRecentlyProcessed(limit: number = 10, withinMinutes: number = 30): (PersistentPendingMessage & { project: string | null })[] {
-    const cutoff = Date.now() - (withinMinutes * 60 * 1000);
+  getRecentlyProcessed(
+    limit: number = 10,
+    withinMinutes: number = 30,
+  ): (PersistentPendingMessage & { project: string | null })[] {
+    const cutoff = Date.now() - withinMinutes * 60 * 1000;
     const stmt = this.db.prepare(`
       SELECT pm.*, ss.project
       FROM pending_messages pm
@@ -373,7 +499,9 @@ export class PendingMessageStore {
       ORDER BY pm.completed_at_epoch DESC
       LIMIT ?
     `);
-    return stmt.all(cutoff, limit) as (PersistentPendingMessage & { project: string | null })[];
+    return stmt.all(cutoff, limit) as (PersistentPendingMessage & {
+      project: string | null;
+    })[];
   }
 
   /**
@@ -385,7 +513,9 @@ export class PendingMessageStore {
     const now = Date.now();
 
     // Get current retry count
-    const msg = this.db.prepare('SELECT retry_count FROM pending_messages WHERE id = ?').get(messageId) as { retry_count: number } | undefined;
+    const msg = this.db
+      .prepare("SELECT retry_count FROM pending_messages WHERE id = ?")
+      .get(messageId) as { retry_count: number } | undefined;
 
     if (!msg) return;
 
@@ -414,11 +544,15 @@ export class PendingMessageStore {
    */
   cleanupDeadLetters(): number {
     const twentyFourHoursAgo = Date.now() - 24 * 60 * 60 * 1000;
-    return this.db.prepare(`
+    return this.db
+      .prepare(
+        `
       DELETE FROM pending_messages
       WHERE status = 'failed'
         AND (retry_count >= ? OR failed_at_epoch IS NULL OR failed_at_epoch < ?)
-    `).run(this.maxRetries, twentyFourHoursAgo).changes;
+    `,
+      )
+      .run(this.maxRetries, twentyFourHoursAgo).changes;
   }
 
   /**
@@ -426,11 +560,15 @@ export class PendingMessageStore {
    * Run on worker startup only.
    */
   cleanupOrphanMessages(): number {
-    return this.db.prepare(`
+    return this.db
+      .prepare(
+        `
       DELETE FROM pending_messages
       WHERE status = 'failed'
         AND session_db_id NOT IN (SELECT id FROM sdk_sessions)
-    `).run().changes;
+    `,
+      )
+      .run().changes;
   }
 
   /**
@@ -450,18 +588,25 @@ export class PendingMessageStore {
    * Unlike getPendingCount() which lumps both, this method separates them
    * for the diagnostics endpoint.
    */
-  getQueueStats(sessionDbId: number): { pendingCount: number; processingCount: number } {
-    const rows = this.db.prepare(`
+  getQueueStats(sessionDbId: number): {
+    pendingCount: number;
+    processingCount: number;
+  } {
+    const rows = this.db
+      .prepare(
+        `
       SELECT status, COUNT(*) as count FROM pending_messages
       WHERE session_db_id = ? AND status IN ('pending', 'processing')
       GROUP BY status
-    `).all(sessionDbId) as { status: string; count: number }[];
+    `,
+      )
+      .all(sessionDbId) as { status: string; count: number }[];
 
     let pendingCount = 0;
     let processingCount = 0;
     for (const row of rows) {
-      if (row.status === 'pending') pendingCount = row.count;
-      else if (row.status === 'processing') processingCount = row.count;
+      if (row.status === "pending") pendingCount = row.count;
+      else if (row.status === "processing") processingCount = row.count;
     }
     return { pendingCount, processingCount };
   }
@@ -491,7 +636,10 @@ export class PendingMessageStore {
    * @param staleThresholdMs - Messages older than this are considered orphaned (default: 5 minutes)
    * @returns Number of messages marked failed
    */
-  markOrphanedSummarizesFailed(activeSessionDbIds: number[], staleThresholdMs: number = 5 * 60 * 1000): number {
+  markOrphanedSummarizesFailed(
+    activeSessionDbIds: number[],
+    staleThresholdMs: number = 5 * 60 * 1000,
+  ): number {
     const now = Date.now();
     const staleCutoff = now - staleThresholdMs;
 
@@ -506,13 +654,16 @@ export class PendingMessageStore {
       `);
       const result = stmt.run(now, staleCutoff);
       if (result.changes > 0) {
-        logger.info('QUEUE', `ORPHAN_CLEANUP | marked ${result.changes} orphaned summarize message(s) as failed (no active sessions)`);
+        logger.info(
+          "QUEUE",
+          `ORPHAN_CLEANUP | marked ${result.changes} orphaned summarize message(s) as failed (no active sessions)`,
+        );
       }
       return result.changes;
     }
 
     // Build placeholders for IN clause
-    const placeholders = activeSessionDbIds.map(() => '?').join(',');
+    const placeholders = activeSessionDbIds.map(() => "?").join(",");
     const stmt = this.db.prepare(`
       UPDATE pending_messages
       SET status = 'failed', failed_at_epoch = ?
@@ -523,7 +674,10 @@ export class PendingMessageStore {
     `);
     const result = stmt.run(now, staleCutoff, ...activeSessionDbIds);
     if (result.changes > 0) {
-      logger.info('QUEUE', `ORPHAN_CLEANUP | marked ${result.changes} orphaned summarize message(s) as failed`);
+      logger.info(
+        "QUEUE",
+        `ORPHAN_CLEANUP | marked ${result.changes} orphaned summarize message(s) as failed`,
+      );
     }
     return result.changes;
   }
@@ -537,18 +691,27 @@ export class PendingMessageStore {
       WHERE status IN ('pending', 'processing')
     `);
     const results = stmt.all() as { session_db_id: number }[];
-    return results.map(r => r.session_db_id);
+    return results.map((r) => r.session_db_id);
   }
 
   /**
    * Get session info for a pending message (for recovery)
    */
-  getSessionInfoForMessage(messageId: number): { sessionDbId: number; contentSessionId: string } | null {
+  getSessionInfoForMessage(
+    messageId: number,
+  ): { sessionDbId: number; contentSessionId: string } | null {
     const stmt = this.db.prepare(`
       SELECT session_db_id, content_session_id FROM pending_messages WHERE id = ?
     `);
-    const result = stmt.get(messageId) as { session_db_id: number; content_session_id: string } | undefined;
-    return result ? { sessionDbId: result.session_db_id, contentSessionId: result.content_session_id } : null;
+    const result = stmt.get(messageId) as
+      | { session_db_id: number; content_session_id: string }
+      | undefined;
+    return result
+      ? {
+          sessionDbId: result.session_db_id,
+          contentSessionId: result.content_session_id,
+        }
+      : null;
   }
 
   /**
@@ -578,16 +741,6 @@ export class PendingMessageStore {
     return result.changes;
   }
 
-  private safeParseJson(json: string, field: string, messageId: number): unknown | undefined {
-    try { return JSON.parse(json); }
-    catch (e) {
-      logger.warn('QUEUE', `Corrupt ${field} JSON, returning undefined`, {
-        messageId, error: (e as Error).message
-      });
-      return undefined;
-    }
-  }
-
   /**
    * Convert a PersistentPendingMessage back to PendingMessage format
    */
@@ -595,11 +748,13 @@ export class PendingMessageStore {
     return {
       type: persistent.message_type,
       tool_name: persistent.tool_name || undefined,
-      tool_input: persistent.tool_input ? this.safeParseJson(persistent.tool_input, 'tool_input', persistent.id) : undefined,
-      tool_response: persistent.tool_response ? this.safeParseJson(persistent.tool_response, 'tool_response', persistent.id) : undefined,
+      // Post-claim invariant: tool_input/tool_response are raw JSON strings from DB.
+      // Consumers (SDKAgent, buildObservationPrompt) expect strings, not parsed objects.
+      tool_input: persistent.tool_input || undefined,
+      tool_response: persistent.tool_response || undefined,
       prompt_number: persistent.prompt_number || undefined,
       cwd: persistent.cwd || undefined,
-      last_assistant_message: persistent.last_assistant_message || undefined
+      last_assistant_message: persistent.last_assistant_message || undefined,
     };
   }
 }

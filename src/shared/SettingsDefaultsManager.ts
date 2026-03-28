@@ -5,9 +5,9 @@
  * Provides methods to get defaults with optional environment variable overrides.
  */
 
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
-import { join, dirname } from 'path';
-import { homedir } from 'os';
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
+import { join, dirname } from "path";
+import { homedir } from "os";
 // NOTE: Do NOT import logger here - it creates a circular dependency
 // logger.ts depends on SettingsDefaultsManager for its initialization
 
@@ -18,10 +18,10 @@ export interface SettingsDefaults {
   CLAUDE_MEM_WORKER_HOST: string;
   CLAUDE_MEM_SKIP_TOOLS: string;
   // AI Provider Configuration
-  CLAUDE_MEM_PROVIDER: string;  // 'claude' | 'gemini' | 'openrouter'
+  CLAUDE_MEM_PROVIDER: string; // 'claude' | 'gemini' | 'openrouter'
   CLAUDE_MEM_GEMINI_API_KEY: string;
-  CLAUDE_MEM_GEMINI_MODEL: string;  // 'gemini-2.5-flash-lite' | 'gemini-2.5-flash' | 'gemini-3-flash-preview'
-  CLAUDE_MEM_GEMINI_RATE_LIMITING_ENABLED: string;  // 'true' | 'false' - enable rate limiting for free tier
+  CLAUDE_MEM_GEMINI_MODEL: string; // 'gemini-2.5-flash-lite' | 'gemini-2.5-flash' | 'gemini-3-flash-preview'
+  CLAUDE_MEM_GEMINI_RATE_LIMITING_ENABLED: string; // 'true' | 'false' - enable rate limiting for free tier
   CLAUDE_MEM_OPENROUTER_API_KEY: string;
   CLAUDE_MEM_OPENROUTER_MODEL: string;
   CLAUDE_MEM_OPENROUTER_SITE_URL: string;
@@ -47,14 +47,14 @@ export interface SettingsDefaults {
   CLAUDE_MEM_CONTEXT_SHOW_TERMINAL_OUTPUT: string;
   CLAUDE_MEM_FOLDER_CLAUDEMD_ENABLED: string;
   // Process Management
-  CLAUDE_MEM_MAX_CONCURRENT_AGENTS: string;  // Max concurrent Claude SDK agent subprocesses (default: 4)
-  CLAUDE_MEM_RESPONSE_WATCHDOG_MS: string;  // Kill subprocess if no response within this time (default: 300000 = 5min)
+  CLAUDE_MEM_MAX_CONCURRENT_AGENTS: string; // Max concurrent Claude SDK agent subprocesses (default: 4)
+  CLAUDE_MEM_RESPONSE_WATCHDOG_MS: string; // Kill subprocess if no response within this time (default: 300000 = 5min)
   // Exclusion Settings
-  CLAUDE_MEM_EXCLUDED_PROJECTS: string;  // Comma-separated glob patterns for excluded project paths
-  CLAUDE_MEM_FOLDER_MD_EXCLUDE: string;  // JSON array of folder paths to exclude from CLAUDE.md generation
+  CLAUDE_MEM_EXCLUDED_PROJECTS: string; // Comma-separated glob patterns for excluded project paths
+  CLAUDE_MEM_FOLDER_MD_EXCLUDE: string; // JSON array of folder paths to exclude from CLAUDE.md generation
   // Chroma Vector Database Configuration
-  CLAUDE_MEM_CHROMA_ENABLED: string;   // 'true' | 'false' - set to 'false' for SQLite-only mode
-  CLAUDE_MEM_CHROMA_MODE: string;      // 'local' | 'remote'
+  CLAUDE_MEM_CHROMA_ENABLED: string; // 'true' | 'false' - set to 'false' for SQLite-only mode
+  CLAUDE_MEM_CHROMA_MODE: string; // 'local' | 'remote'
   CLAUDE_MEM_CHROMA_HOST: string;
   CLAUDE_MEM_CHROMA_PORT: string;
   CLAUDE_MEM_CHROMA_SSL: string;
@@ -63,12 +63,16 @@ export interface SettingsDefaults {
   CLAUDE_MEM_CHROMA_TENANT: string;
   CLAUDE_MEM_CHROMA_DATABASE: string;
   // Retention Policy
-  CLAUDE_MEM_RETENTION_ENABLED: string;           // 'true' | 'false'
-  CLAUDE_MEM_RETENTION_DAYS: string;              // grace period in days
-  CLAUDE_MEM_RETENTION_SCORE_THRESHOLD: string;   // minimum score to keep (0.0-1.0)
-  CLAUDE_MEM_RETENTION_MAX_KEPT: string;          // hard cap on >grace-period observations
+  CLAUDE_MEM_RETENTION_ENABLED: string; // 'true' | 'false'
+  CLAUDE_MEM_RETENTION_DAYS: string; // grace period in days
+  CLAUDE_MEM_RETENTION_SCORE_THRESHOLD: string; // minimum score to keep (0.0-1.0)
+  CLAUDE_MEM_RETENTION_MAX_KEPT: string; // hard cap on >grace-period observations
   // Bypass Lane
-  CLAUDE_MEM_BYPASS_COOLDOWN_MS: string;          // Cooldown period before retrying tripped bypass lane (default: 20min)
+  CLAUDE_MEM_BYPASS_COOLDOWN_MS: string; // Cooldown period before retrying tripped bypass lane (default: 20min)
+  // SDK Token Optimization (Phase 1)
+  CLAUDE_MEM_SKIP_TOOL_PATTERNS: string; // Comma-separated tool:glob pairs for pattern-based observation filtering
+  CLAUDE_MEM_BATCH_MAX_SIZE: string; // Max observations in a single batch prompt (1-20)
+  CLAUDE_MEM_OBS_MAX_FIELD_CHARS: string; // Max chars per tool_input/tool_output field before truncation
 }
 
 export class SettingsDefaultsManager {
@@ -76,63 +80,69 @@ export class SettingsDefaultsManager {
    * Default values for all settings
    */
   private static readonly DEFAULTS: SettingsDefaults = {
-    CLAUDE_MEM_MODEL: 'claude-sonnet-4-5',
-    CLAUDE_MEM_CONTEXT_OBSERVATIONS: '50',
-    CLAUDE_MEM_WORKER_PORT: '37777',
-    CLAUDE_MEM_WORKER_HOST: '127.0.0.1',
-    CLAUDE_MEM_SKIP_TOOLS: 'ListMcpResourcesTool,SlashCommand,Skill,TodoWrite,AskUserQuestion',
+    CLAUDE_MEM_MODEL: "claude-sonnet-4-5",
+    CLAUDE_MEM_CONTEXT_OBSERVATIONS: "50",
+    CLAUDE_MEM_WORKER_PORT: "37777",
+    CLAUDE_MEM_WORKER_HOST: "127.0.0.1",
+    CLAUDE_MEM_SKIP_TOOLS:
+      "ListMcpResourcesTool,SlashCommand,Skill,TodoWrite,AskUserQuestion",
     // AI Provider Configuration
-    CLAUDE_MEM_PROVIDER: 'claude',  // Default to Claude
-    CLAUDE_MEM_GEMINI_API_KEY: '',  // Empty by default, can be set via UI or env
-    CLAUDE_MEM_GEMINI_MODEL: 'gemini-2.5-flash-lite',  // Default Gemini model (highest free tier RPM)
-    CLAUDE_MEM_GEMINI_RATE_LIMITING_ENABLED: 'true',  // Rate limiting ON by default for free tier users
-    CLAUDE_MEM_OPENROUTER_API_KEY: '',  // Empty by default, can be set via UI or env
-    CLAUDE_MEM_OPENROUTER_MODEL: 'stepfun/step-3.5-flash:free',  // Default OpenRouter model (free tier, 256k context, reasoning model)
-    CLAUDE_MEM_OPENROUTER_SITE_URL: '',  // Optional: for OpenRouter analytics
-    CLAUDE_MEM_OPENROUTER_APP_NAME: 'claude-mem',  // App name for OpenRouter analytics
-    CLAUDE_MEM_OPENROUTER_MAX_CONTEXT_MESSAGES: '20',  // Max messages in context window
-    CLAUDE_MEM_OPENROUTER_MAX_TOKENS: '100000',  // Max estimated tokens (~100k safety limit)
+    CLAUDE_MEM_PROVIDER: "claude", // Default to Claude
+    CLAUDE_MEM_GEMINI_API_KEY: "", // Empty by default, can be set via UI or env
+    CLAUDE_MEM_GEMINI_MODEL: "gemini-2.5-flash-lite", // Default Gemini model (highest free tier RPM)
+    CLAUDE_MEM_GEMINI_RATE_LIMITING_ENABLED: "true", // Rate limiting ON by default for free tier users
+    CLAUDE_MEM_OPENROUTER_API_KEY: "", // Empty by default, can be set via UI or env
+    CLAUDE_MEM_OPENROUTER_MODEL: "stepfun/step-3.5-flash:free", // Default OpenRouter model (free tier, 256k context, reasoning model)
+    CLAUDE_MEM_OPENROUTER_SITE_URL: "", // Optional: for OpenRouter analytics
+    CLAUDE_MEM_OPENROUTER_APP_NAME: "claude-mem", // App name for OpenRouter analytics
+    CLAUDE_MEM_OPENROUTER_MAX_CONTEXT_MESSAGES: "20", // Max messages in context window
+    CLAUDE_MEM_OPENROUTER_MAX_TOKENS: "100000", // Max estimated tokens (~100k safety limit)
     // System Configuration
-    CLAUDE_MEM_DATA_DIR: join(homedir(), '.claude-mem'),
-    CLAUDE_MEM_LOG_LEVEL: 'INFO',
-    CLAUDE_CODE_PATH: '', // Empty means auto-detect via 'which claude'
+    CLAUDE_MEM_DATA_DIR: join(homedir(), ".claude-mem"),
+    CLAUDE_MEM_LOG_LEVEL: "INFO",
+    CLAUDE_CODE_PATH: "", // Empty means auto-detect via 'which claude'
     // Token Economics
-    CLAUDE_MEM_CONTEXT_SHOW_READ_TOKENS: 'false',
-    CLAUDE_MEM_CONTEXT_SHOW_WORK_TOKENS: 'false',
-    CLAUDE_MEM_CONTEXT_SHOW_SAVINGS_AMOUNT: 'false',
-    CLAUDE_MEM_CONTEXT_SHOW_SAVINGS_PERCENT: 'true',
+    CLAUDE_MEM_CONTEXT_SHOW_READ_TOKENS: "false",
+    CLAUDE_MEM_CONTEXT_SHOW_WORK_TOKENS: "false",
+    CLAUDE_MEM_CONTEXT_SHOW_SAVINGS_AMOUNT: "false",
+    CLAUDE_MEM_CONTEXT_SHOW_SAVINGS_PERCENT: "true",
     // Display Configuration
-    CLAUDE_MEM_CONTEXT_FULL_COUNT: '0',
-    CLAUDE_MEM_CONTEXT_FULL_FIELD: 'narrative',
-    CLAUDE_MEM_CONTEXT_SESSION_COUNT: '10',
+    CLAUDE_MEM_CONTEXT_FULL_COUNT: "0",
+    CLAUDE_MEM_CONTEXT_FULL_FIELD: "narrative",
+    CLAUDE_MEM_CONTEXT_SESSION_COUNT: "10",
     // Feature Toggles
-    CLAUDE_MEM_CONTEXT_SHOW_LAST_SUMMARY: 'true',
-    CLAUDE_MEM_CONTEXT_SHOW_LAST_MESSAGE: 'false',
-    CLAUDE_MEM_CONTEXT_SHOW_TERMINAL_OUTPUT: 'true',
-    CLAUDE_MEM_FOLDER_CLAUDEMD_ENABLED: 'false',
+    CLAUDE_MEM_CONTEXT_SHOW_LAST_SUMMARY: "true",
+    CLAUDE_MEM_CONTEXT_SHOW_LAST_MESSAGE: "false",
+    CLAUDE_MEM_CONTEXT_SHOW_TERMINAL_OUTPUT: "true",
+    CLAUDE_MEM_FOLDER_CLAUDEMD_ENABLED: "false",
     // Process Management
-    CLAUDE_MEM_MAX_CONCURRENT_AGENTS: '2',  // Max concurrent Claude SDK agent subprocesses
-    CLAUDE_MEM_RESPONSE_WATCHDOG_MS: '300000',  // 5 minutes — kill subprocess if no response
+    CLAUDE_MEM_MAX_CONCURRENT_AGENTS: "2", // Max concurrent Claude SDK agent subprocesses
+    CLAUDE_MEM_RESPONSE_WATCHDOG_MS: "300000", // 5 minutes — kill subprocess if no response
     // Exclusion Settings
-    CLAUDE_MEM_EXCLUDED_PROJECTS: '',  // Comma-separated glob patterns for excluded project paths
-    CLAUDE_MEM_FOLDER_MD_EXCLUDE: '[]',  // JSON array of folder paths to exclude from CLAUDE.md generation
+    CLAUDE_MEM_EXCLUDED_PROJECTS: "", // Comma-separated glob patterns for excluded project paths
+    CLAUDE_MEM_FOLDER_MD_EXCLUDE: "[]", // JSON array of folder paths to exclude from CLAUDE.md generation
     // Chroma Vector Database Configuration
-    CLAUDE_MEM_CHROMA_ENABLED: 'true',         // Set to 'false' to disable Chroma and use SQLite-only search
-    CLAUDE_MEM_CHROMA_MODE: 'local',           // 'local' uses persistent chroma-mcp via uvx, 'remote' connects to existing server
-    CLAUDE_MEM_CHROMA_HOST: '127.0.0.1',
-    CLAUDE_MEM_CHROMA_PORT: '8000',
-    CLAUDE_MEM_CHROMA_SSL: 'false',
+    CLAUDE_MEM_CHROMA_ENABLED: "true", // Set to 'false' to disable Chroma and use SQLite-only search
+    CLAUDE_MEM_CHROMA_MODE: "local", // 'local' uses persistent chroma-mcp via uvx, 'remote' connects to existing server
+    CLAUDE_MEM_CHROMA_HOST: "127.0.0.1",
+    CLAUDE_MEM_CHROMA_PORT: "8000",
+    CLAUDE_MEM_CHROMA_SSL: "false",
     // Future cloud support (claude-mem pro)
-    CLAUDE_MEM_CHROMA_API_KEY: '',
-    CLAUDE_MEM_CHROMA_TENANT: 'default_tenant',
-    CLAUDE_MEM_CHROMA_DATABASE: 'default_database',
+    CLAUDE_MEM_CHROMA_API_KEY: "",
+    CLAUDE_MEM_CHROMA_TENANT: "default_tenant",
+    CLAUDE_MEM_CHROMA_DATABASE: "default_database",
     // Retention Policy
-    CLAUDE_MEM_RETENTION_ENABLED: 'true',
-    CLAUDE_MEM_RETENTION_DAYS: '30',
-    CLAUDE_MEM_RETENTION_SCORE_THRESHOLD: '0.3',
-    CLAUDE_MEM_RETENTION_MAX_KEPT: '3000',
+    CLAUDE_MEM_RETENTION_ENABLED: "true",
+    CLAUDE_MEM_RETENTION_DAYS: "30",
+    CLAUDE_MEM_RETENTION_SCORE_THRESHOLD: "0.3",
+    CLAUDE_MEM_RETENTION_MAX_KEPT: "3000",
     // Bypass Lane
-    CLAUDE_MEM_BYPASS_COOLDOWN_MS: '1200000',  // 20 minutes
+    CLAUDE_MEM_BYPASS_COOLDOWN_MS: "1200000", // 20 minutes
+    // SDK Token Optimization (Phase 1)
+    CLAUDE_MEM_SKIP_TOOL_PATTERNS:
+      "Read:*SKILL.md,Read:*/.claude/rules/*,Read:*settings.json,Read:*hooks.json,Glob:*",
+    CLAUDE_MEM_BATCH_MAX_SIZE: "5",
+    CLAUDE_MEM_OBS_MAX_FIELD_CHARS: "8000",
   };
 
   /**
@@ -163,16 +173,20 @@ export class SettingsDefaultsManager {
    */
   static getBool(key: keyof SettingsDefaults): boolean {
     const value = this.get(key);
-    return value === 'true' || value === true;
+    return value === "true" || value === true;
   }
 
   /**
    * Apply environment variable overrides to settings
    * Environment variables take highest priority over file and defaults
    */
-  private static applyEnvOverrides(settings: SettingsDefaults): SettingsDefaults {
+  private static applyEnvOverrides(
+    settings: SettingsDefaults,
+  ): SettingsDefaults {
     const result = { ...settings };
-    for (const key of Object.keys(this.DEFAULTS) as Array<keyof SettingsDefaults>) {
+    for (const key of Object.keys(this.DEFAULTS) as Array<
+      keyof SettingsDefaults
+    >) {
       if (process.env[key] !== undefined) {
         result[key] = process.env[key]!;
       }
@@ -199,38 +213,62 @@ export class SettingsDefaultsManager {
           if (!existsSync(dir)) {
             mkdirSync(dir, { recursive: true });
           }
-          writeFileSync(settingsPath, JSON.stringify(defaults, null, 2), 'utf-8');
+          writeFileSync(
+            settingsPath,
+            JSON.stringify(defaults, null, 2),
+            "utf-8",
+          );
           // Use console instead of logger to avoid circular dependency
-          console.log('[SETTINGS] Created settings file with defaults:', settingsPath);
+          console.log(
+            "[SETTINGS] Created settings file with defaults:",
+            settingsPath,
+          );
         } catch (error) {
-          console.warn('[SETTINGS] Failed to create settings file, using in-memory defaults:', settingsPath, error);
+          console.warn(
+            "[SETTINGS] Failed to create settings file, using in-memory defaults:",
+            settingsPath,
+            error,
+          );
         }
         // Still apply env var overrides even when file doesn't exist
         return this.applyEnvOverrides(defaults);
       }
 
-      const settingsData = readFileSync(settingsPath, 'utf-8');
+      const settingsData = readFileSync(settingsPath, "utf-8");
       const settings = JSON.parse(settingsData);
 
       // MIGRATION: Handle old nested schema { env: {...} }
       let flatSettings = settings;
-      if (settings.env && typeof settings.env === 'object') {
+      if (settings.env && typeof settings.env === "object") {
         // Migrate from nested to flat schema
         flatSettings = settings.env;
 
         // Auto-migrate the file to flat schema
         try {
-          writeFileSync(settingsPath, JSON.stringify(flatSettings, null, 2), 'utf-8');
-          console.log('[SETTINGS] Migrated settings file from nested to flat schema:', settingsPath);
+          writeFileSync(
+            settingsPath,
+            JSON.stringify(flatSettings, null, 2),
+            "utf-8",
+          );
+          console.log(
+            "[SETTINGS] Migrated settings file from nested to flat schema:",
+            settingsPath,
+          );
         } catch (error) {
-          console.warn('[SETTINGS] Failed to auto-migrate settings file:', settingsPath, error);
+          console.warn(
+            "[SETTINGS] Failed to auto-migrate settings file:",
+            settingsPath,
+            error,
+          );
           // Continue with in-memory migration even if write fails
         }
       }
 
       // Merge file settings with defaults (flat schema)
       const result: SettingsDefaults = { ...this.DEFAULTS };
-      for (const key of Object.keys(this.DEFAULTS) as Array<keyof SettingsDefaults>) {
+      for (const key of Object.keys(this.DEFAULTS) as Array<
+        keyof SettingsDefaults
+      >) {
         if (flatSettings[key] !== undefined) {
           result[key] = flatSettings[key];
         }
@@ -239,7 +277,11 @@ export class SettingsDefaultsManager {
       // Apply environment variable overrides (highest priority)
       return this.applyEnvOverrides(result);
     } catch (error) {
-      console.warn('[SETTINGS] Failed to load settings, using defaults:', settingsPath, error);
+      console.warn(
+        "[SETTINGS] Failed to load settings, using defaults:",
+        settingsPath,
+        error,
+      );
       // Still apply env var overrides even on error
       return this.applyEnvOverrides(this.getAllDefaults());
     }

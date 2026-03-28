@@ -102,6 +102,10 @@ export class SettingsRoutes extends BaseRouteHandler {
       'CLAUDE_MEM_CONTEXT_SHOW_LAST_SUMMARY',
       'CLAUDE_MEM_CONTEXT_SHOW_LAST_MESSAGE',
       'CLAUDE_MEM_FOLDER_CLAUDEMD_ENABLED',
+      // SDK Token Optimization (Phase 1)
+      'CLAUDE_MEM_SKIP_TOOL_PATTERNS',
+      'CLAUDE_MEM_BATCH_MAX_SIZE',
+      'CLAUDE_MEM_OBS_MAX_FIELD_CHARS',
     ];
 
     for (const key of settingKeys) {
@@ -237,6 +241,41 @@ export class SettingsRoutes extends BaseRouteHandler {
         // Invalid URL format
         logger.debug('SETTINGS', 'Invalid URL format', { url: settings.CLAUDE_MEM_OPENROUTER_SITE_URL, error: error instanceof Error ? error.message : String(error) });
         return { valid: false, error: 'CLAUDE_MEM_OPENROUTER_SITE_URL must be a valid URL' };
+      }
+    }
+
+    // Validate CLAUDE_MEM_SKIP_TOOL_PATTERNS (length + format sanity)
+    if (settings.CLAUDE_MEM_SKIP_TOOL_PATTERNS) {
+      const patterns = settings.CLAUDE_MEM_SKIP_TOOL_PATTERNS;
+      if (patterns.length > 1000) {
+        return { valid: false, error: 'CLAUDE_MEM_SKIP_TOOL_PATTERNS must be under 1000 characters' };
+      }
+      // Each entry must be Tool:glob format; reject individual globs over 100 chars
+      const entries = patterns.split(',').map((s: string) => s.trim()).filter(Boolean);
+      for (const entry of entries) {
+        if (!entry.includes(':')) {
+          return { valid: false, error: `CLAUDE_MEM_SKIP_TOOL_PATTERNS: malformed entry "${entry}" (must be Tool:glob)` };
+        }
+        const glob = entry.slice(entry.indexOf(':') + 1);
+        if (glob.length > 100) {
+          return { valid: false, error: `CLAUDE_MEM_SKIP_TOOL_PATTERNS: glob pattern too long (max 100 chars)` };
+        }
+      }
+    }
+
+    // Validate CLAUDE_MEM_BATCH_MAX_SIZE
+    if (settings.CLAUDE_MEM_BATCH_MAX_SIZE) {
+      const batchMax = parseInt(settings.CLAUDE_MEM_BATCH_MAX_SIZE, 10);
+      if (isNaN(batchMax) || batchMax < 1 || batchMax > 20) {
+        return { valid: false, error: 'CLAUDE_MEM_BATCH_MAX_SIZE must be between 1 and 20' };
+      }
+    }
+
+    // Validate CLAUDE_MEM_OBS_MAX_FIELD_CHARS
+    if (settings.CLAUDE_MEM_OBS_MAX_FIELD_CHARS) {
+      const maxChars = parseInt(settings.CLAUDE_MEM_OBS_MAX_FIELD_CHARS, 10);
+      if (isNaN(maxChars) || maxChars < 500 || maxChars > 100000) {
+        return { valid: false, error: 'CLAUDE_MEM_OBS_MAX_FIELD_CHARS must be between 500 and 100000' };
       }
     }
 
