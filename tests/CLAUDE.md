@@ -15,6 +15,7 @@ new MigrationRunner(db).runAllMigrations();
 mock.module('../../src/shared/paths.js', () => ({ resolveProjectDbPath: () => '/test/mem.db' }));
 ```
 **Gotcha**: Pollutes all test files in same process. Only mock leaf deps (paths.ts, SettingsDefaultsManager), never mock handler modules.
+**Gotcha**: SettingsDefaultsManager is mocked by 15+ test files. New tests that verify settings defaults must use file-based assertions (`readFileSync` on `.ts` source) instead of importing the module — it may return incomplete stubs in full-suite runs.
 
 **Logger suppression**: `spyOn(logger, 'info').mockImplementation(() => {})` in `beforeEach`, restore in `afterEach`.
 
@@ -29,6 +30,8 @@ afterAll(() => { orig === undefined ? delete process.env.CLAUDE_MEM_DATA_DIR : p
 bun runs all test files in the same process — leaked env vars break `SettingsDefaultsManager` tests.
 
 **Temp dirs**: `join(tmpdir(), \`test-${Date.now()}\`)` with `rmSync` in `afterEach`.
+
+**Logger coverage gate**: Files under `src/services/worker/`, `src/services/sqlite/`, `src/hooks/`, `src/sdk/`, `src/servers/` must `import { logger }`. Enforced by `logger-usage-standards.test.ts` — new files without logger import fail full suite.
 
 ## Structure
 
