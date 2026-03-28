@@ -201,6 +201,79 @@ export class PendingMessageStore {
   }
 
   /**
+   * Claim up to maxCount FIFO-contiguous pending observations for the same
+   * session and prompt_number. Used by SDKAgent for safe same-prompt batching.
+   *
+   * FIFO boundary: only claims rows whose id is less than the next pending row
+   * that is NOT a same-prompt observation (summarize, NULL prompt_number, or
+   * different prompt_number). This prevents batch from skipping over interleaved
+   * non-observation messages.
+   *
+   * No self-healing — main channel's claimNextMessage handles recovery.
+   * prompt_number IS NULL rows are intentionally outside this helper's scope.
+   */
+  claimNextObservationBatch(
+    sessionDbId: number,
+    promptNumber: number,
+    maxCount: number,
+  ): PersistentPendingMessage[] {
+    const claimTx = this.db.transaction(
+      (sessId: number, pn: number, limit: number) => {
+        const now = Date.now();
+
+        const selectStmt = this.db.prepare(`
+        SELECT * FROM pending_messages
+        WHERE session_db_id = ?
+          AND status = 'pending'
+          AND message_type = 'observation'
+          AND prompt_number = ?
+          AND id < COALESCE(
+            (SELECT MIN(id) FROM pending_messages
+             WHERE session_db_id = ?
+               AND status = 'pending'
+               AND (message_type != 'observation'
+                    OR prompt_number IS NULL
+                    OR prompt_number != ?)),
+            2147483647
+          )
+        ORDER BY id ASC
+        LIMIT ?
+      `);
+        const rows = selectStmt.all(
+          sessId,
+          pn,
+          sessId,
+          pn,
+          limit,
+        ) as PersistentPendingMessage[];
+
+        if (rows.length > 0) {
+          const ids = rows.map((r) => r.id);
+          const placeholders = ids.map(() => "?").join(",");
+          const updateStmt = this.db.prepare(`
+          UPDATE pending_messages
+          SET status = 'processing', started_processing_at_epoch = ?
+          WHERE id IN (${placeholders})
+        `);
+          updateStmt.run(now, ...ids);
+
+          logger.info(
+            "QUEUE",
+            `CLAIMED_BATCH | sessionDbId=${sessId} | count=${rows.length} | promptNumber=${pn} | ids=[${ids.join(",")}]`,
+          );
+        }
+        return rows;
+      },
+    );
+
+    return claimTx(
+      sessionDbId,
+      promptNumber,
+      maxCount,
+    ) as PersistentPendingMessage[];
+  }
+
+  /**
    * Confirm a message was successfully processed - DELETE it from the queue.
    * CRITICAL: Only call this AFTER the observation/summary has been stored to DB.
    * This prevents message loss on generator crash.
