@@ -17,9 +17,11 @@ import { logger } from "../../utils/logger.js";
 import {
   buildInitPrompt,
   buildObservationPrompt,
+  buildBatchObservationPrompt,
   buildSummaryPrompt,
   buildContinuationPrompt,
   buildSessionHistorySummary,
+  type Observation,
 } from "../../sdk/prompts.js";
 import { SettingsDefaultsManager } from "../../shared/SettingsDefaultsManager.js";
 import {
@@ -468,6 +470,7 @@ export class SDKAgent {
   ): AsyncIterableIterator<SDKUserMessage> {
     // Load settings once per generator (Phase 1: changes apply on next generator start)
     const settings = SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH);
+    const batchMaxSize = parseInt(settings.CLAUDE_MEM_BATCH_MAX_SIZE, 10) || 5;
     const obsMaxFieldChars =
       parseInt(settings.CLAUDE_MEM_OBS_MAX_FIELD_CHARS, 10) || 8000;
 
@@ -552,24 +555,73 @@ export class SDKAgent {
       }
 
       if (message.type === "observation") {
-        // (messageTypeTracker removed — zero-ob detection runs unconditionally)
         // Update last prompt number
         if (message.prompt_number !== undefined) {
           session.lastPromptNumber = message.prompt_number;
         }
 
-        // tool_input/tool_response are already JSON strings from toPendingMessage
-        const obsPrompt = buildObservationPrompt(
+        const batchPromptNumber = message.prompt_number;
+        let batchOriginalTimestamp = message._originalTimestamp || Date.now();
+
+        // Build batch: start with this iterator-delivered message
+        const batchObservations: Observation[] = [
           {
             id: 0,
             tool_name: message.tool_name!,
             tool_input: (message.tool_input as string) || "{}",
             tool_output: (message.tool_response as string) || "{}",
-            created_at_epoch: message._originalTimestamp || Date.now(),
+            created_at_epoch: batchOriginalTimestamp,
             cwd: message.cwd,
           },
+        ];
+
+        // Phase 1 safe batching: claim only FIFO-contiguous same-prompt observation tails
+        if (batchMaxSize > 1 && batchPromptNumber !== undefined) {
+          const pendingStore = this.sessionManager.getPendingMessageStore(
+            session.dbPath,
+          );
+          const morePersistent = pendingStore.claimNextObservationBatch(
+            session.sessionDbId,
+            batchPromptNumber,
+            batchMaxSize - 1,
+          );
+          for (const p of morePersistent) {
+            // Track each claimed message for CLAIM-CONFIRM lifecycle
+            session.processingMessageIds.push(p.id);
+            batchOriginalTimestamp = Math.min(
+              batchOriginalTimestamp,
+              p.created_at_epoch || batchOriginalTimestamp,
+            );
+            session.earliestPendingTimestamp =
+              session.earliestPendingTimestamp === null
+                ? batchOriginalTimestamp
+                : Math.min(
+                    session.earliestPendingTimestamp,
+                    batchOriginalTimestamp,
+                  );
+            batchObservations.push({
+              id: 0,
+              tool_name: p.tool_name || "unknown",
+              tool_input: p.tool_input || "{}",
+              tool_output: p.tool_response || "{}",
+              created_at_epoch: p.created_at_epoch || Date.now(),
+              cwd: p.cwd || undefined,
+            });
+          }
+        }
+
+        // Build prompt (single or batch format — buildBatchObservationPrompt delegates for length=1)
+        const obsPrompt = buildBatchObservationPrompt(
+          batchObservations,
           obsMaxFieldChars,
         );
+
+        if (batchObservations.length > 1) {
+          logger.info(
+            "SDK",
+            `BATCH | sessionDbId=${session.sessionDbId} | count=${batchObservations.length} | promptNumber=${batchPromptNumber}`,
+          );
+        }
 
         // Add to shared conversation history for provider interop
         session.conversationHistory.push({ role: "user", content: obsPrompt });
