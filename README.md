@@ -108,7 +108,7 @@ bun run build-and-sync
 完全移除插件（代码、注册信息和进程）：
 
 ```bash
-bash ~/.claude/plugins/marketplaces/thedotmack/plugin/scripts/uninstall.sh
+bash ~/.claude/plugins/cache/thedotmack/claude-mem/10.5.2/scripts/uninstall.sh
 ```
 
 脚本会先预览所有即将执行的操作，确认后才会执行。

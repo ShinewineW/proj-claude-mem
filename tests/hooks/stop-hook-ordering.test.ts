@@ -15,7 +15,7 @@ describe('hooks.json Stop hook ordering', () => {
   it('Stop hook command uses _R fallback prefix', () => {
     const command = hooks.hooks.Stop[0].hooks[0].command;
     expect(command).toContain('_R="${CLAUDE_PLUGIN_ROOT}"');
-    expect(command).toContain('[ -z "$_R" ] && _R="$HOME/.claude/plugins/marketplaces/thedotmack/plugin"');
+    expect(command).toContain('[ -z "$_R" ] && _R="$HOME/.claude/plugins/cache/thedotmack/claude-mem/10.5.2"');
     // _R prefix only appears once (persists across ; separator)
     const prefixCount = command.split('_R="${CLAUDE_PLUGIN_ROOT}"').length - 1;
     expect(prefixCount).toBe(1);

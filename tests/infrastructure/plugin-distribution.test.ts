@@ -110,7 +110,7 @@ describe('Plugin Distribution - hooks.json Integrity', () => {
             // Must have _R= prefix to capture CLAUDE_PLUGIN_ROOT
             expect(hook.command).toContain('_R="${CLAUDE_PLUGIN_ROOT}"');
             // Must have fallback for when CLAUDE_PLUGIN_ROOT is empty
-            expect(hook.command).toContain('[ -z "$_R" ] && _R="$HOME/.claude/plugins/marketplaces/thedotmack/plugin"');
+            expect(hook.command).toContain('[ -z "$_R" ] && _R="$HOME/.claude/plugins/cache/thedotmack/claude-mem/10.5.2"');
             // Must use quoted "$_R/scripts/..." paths
             expect(hook.command).toMatch(/"\$_R\/scripts\//);
           }

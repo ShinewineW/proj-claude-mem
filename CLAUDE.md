@@ -51,8 +51,8 @@ Settings are managed in `~/.claude-mem/settings.json`. The file is auto-created 
 
 - **Source**: `<project-root>/src/`
 - **Built Plugin**: `<project-root>/plugin/`
-- **Plugin Execution (cache)**: `~/.claude/plugins/cache/thedotmack/claude-mem/<version>/`
-- **Plugin Discovery (marketplace)**: `~/.claude/plugins/marketplaces/thedotmack/plugin/` (symlinks to cache; CC loads hooks from here)
+- **Plugin (cache)**: `~/.claude/plugins/cache/thedotmack/claude-mem/<version>/` (1:1 mirror of plugin/, + node_modules)
+- **Plugin (marketplace)**: `~/.claude/plugins/marketplaces/thedotmack/plugin/` (1:1 mirror of plugin/, CC reads hooks/skills/MCP from here)
 - **Database (per-project)**: `<repo>/.claude/mem.db` (auto-gitignored)
 - **Database (global fallback)**: `~/.claude-mem/claude-mem.db`
 - **Chroma**: `~/.claude-mem/chroma/`

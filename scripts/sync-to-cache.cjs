@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 /**
- * sync-to-cache — Deploy built plugin directly to Claude Code cache.
+ * sync-to-cache — Deploy built plugin to Claude Code cache + marketplace.
  *
- * Replaces sync-marketplace.cjs by skipping the marketplace intermediate step.
- * Claude Code loads plugins from the cache path registered in installed_plugins.json.
+ * Official plugins keep marketplace and cache as 1:1 mirrors.
+ * CC reads discovery + MCP from marketplace, runs everything from cache.
+ * ${CLAUDE_PLUGIN_ROOT} resolves to cache path at runtime.
  *
- * Flow: rsync plugin/ → cache → npm install → register (cache + marketplace discovery) → restart worker
+ * Flow: rsync plugin/ → cache + marketplace → npm install (cache) → register → restart worker
  */
 
 const { execSync } = require('child_process');
@@ -14,6 +15,8 @@ const path = require('path');
 const os = require('os');
 
 const CACHE_BASE_PATH = path.join(os.homedir(), '.claude', 'plugins', 'cache', 'thedotmack', 'claude-mem');
+const MARKETPLACE_ROOT = path.join(os.homedir(), '.claude', 'plugins', 'marketplaces', 'thedotmack');
+const MARKETPLACE_PLUGIN_PATH = path.join(MARKETPLACE_ROOT, 'plugin');
 
 function getPluginVersion() {
   try {
@@ -38,17 +41,22 @@ try {
     catch { return 'unknown'; }
   })();
 
-  // Ensure cache directory exists
+  // ── Step 1: Rsync plugin/ to both cache and marketplace ─────────────────
+  // Official pattern: marketplace = cache = identical copies of plugin content.
   mkdirSync(CACHE_VERSION_PATH, { recursive: true });
+  mkdirSync(MARKETPLACE_PLUGIN_PATH, { recursive: true });
 
-  // Rsync plugin/ → cache (no .gitignore excludes needed — plugin/ has no .gitignore)
-  console.log(`Syncing plugin/ to cache (version ${version})...`);
+  console.log(`Syncing plugin/ to cache + marketplace (version ${version})...`);
   execSync(
     `rsync -av --delete --exclude=.git --exclude=node_modules plugin/ "${CACHE_VERSION_PATH}/"`,
     { cwd: rootDir, stdio: 'inherit' }
   );
+  execSync(
+    `rsync -av --delete --exclude=.git --exclude=node_modules plugin/ "${MARKETPLACE_PLUGIN_PATH}/"`,
+    { cwd: rootDir, stdio: 'inherit' }
+  );
 
-  // Install dependencies in cache
+  // ── Step 2: npm install in cache only (marketplace doesn't need node_modules) ──
   console.log(`Running npm install in cache folder (version ${version})...`);
   execSync('npm install', { cwd: CACHE_VERSION_PATH, stdio: 'inherit' });
 
@@ -57,22 +65,44 @@ try {
     try { return execSync('/opt/homebrew/bin/bun --version', { encoding: 'utf-8' }).trim(); }
     catch { return 'unknown'; }
   })();
-  const markerPath = path.join(CACHE_VERSION_PATH, '.install-version');
-  writeFileSync(markerPath, JSON.stringify({
+  writeFileSync(path.join(CACHE_VERSION_PATH, '.install-version'), JSON.stringify({
     version: version,
     bun: bunVersion,
     installedAt: new Date().toISOString(),
   }));
-  console.log('Updated .install-version marker in cache');
 
-  // Ensure .mcp.json is present (rsync may skip dotfiles)
+  // Ensure .mcp.json is present in cache (rsync may skip dotfiles)
   const mcpJsonSrc = path.join(pluginDir, '.mcp.json');
   const mcpJsonDst = path.join(CACHE_VERSION_PATH, '.mcp.json');
   if (existsSync(mcpJsonSrc)) {
     copyFileSync(mcpJsonSrc, mcpJsonDst);
   }
 
-  // Register plugin in installed_plugins.json
+  // ── Step 3: Marketplace discovery registry ──────────────────────────────
+  // marketplace.json — static registry at marketplace root level
+  const mktManifestDir = path.join(MARKETPLACE_ROOT, '.claude-plugin');
+  const mktManifestPath = path.join(mktManifestDir, 'marketplace.json');
+  mkdirSync(mktManifestDir, { recursive: true });
+  if (!existsSync(mktManifestPath)) {
+    writeFileSync(mktManifestPath, JSON.stringify({
+      name: 'thedotmack',
+      owner: { name: 'ShinewineW' },
+      metadata: {
+        description: 'claude-mem fork with per-project isolation',
+        homepage: 'https://github.com/ShinewineW/proj-claude-mem',
+      },
+      plugins: [{
+        name: 'claude-mem',
+        source: './plugin',
+        description: 'Persistent memory system for Claude Code',
+      }],
+    }, null, 2));
+  }
+  console.log('Marketplace + cache synced at', MARKETPLACE_ROOT);
+
+  // ── Step 4: Register in JSON config files ───────────────────────────────
+
+  // installed_plugins.json
   const installedPath = path.join(os.homedir(), '.claude', 'plugins', 'installed_plugins.json');
   try {
     let installed = { version: 2, plugins: {} };
@@ -97,7 +127,7 @@ try {
     console.warn('Warning: Could not update installed_plugins.json:', e.message);
   }
 
-  // Ensure plugin is enabled in settings.json
+  // settings.json — enable plugin
   const settingsPath = path.join(os.homedir(), '.claude', 'settings.json');
   try {
     if (existsSync(settingsPath)) {
@@ -115,47 +145,7 @@ try {
     console.warn('Warning: Could not update settings.json:', e.message);
   }
 
-  // Maintain minimal marketplace discovery structure.
-  // CC reads ONLY 2 files from marketplace during plugin discovery:
-  //   1. .claude-plugin/marketplace.json  → source: "./plugin"
-  //   2. plugin/.claude-plugin/plugin.json → manifest version
-  // All other resources (hooks, skills, MCP, scripts) are loaded from cache.
-  const MARKETPLACE_ROOT = path.join(os.homedir(), '.claude', 'plugins', 'marketplaces', 'thedotmack');
-  const MARKETPLACE_PLUGIN_PATH = path.join(MARKETPLACE_ROOT, 'plugin');
-  try {
-    // 1. marketplace.json — static registry, create if missing
-    const mktManifestDir = path.join(MARKETPLACE_ROOT, '.claude-plugin');
-    const mktManifestPath = path.join(mktManifestDir, 'marketplace.json');
-    mkdirSync(mktManifestDir, { recursive: true });
-    if (!existsSync(mktManifestPath)) {
-      writeFileSync(mktManifestPath, JSON.stringify({
-        name: 'thedotmack',
-        owner: { name: 'ShinewineW' },
-        metadata: {
-          description: 'claude-mem fork with per-project isolation',
-          homepage: 'https://github.com/ShinewineW/proj-claude-mem',
-        },
-        plugins: [{
-          name: 'claude-mem',
-          source: './plugin',
-          description: 'Persistent memory system for Claude Code',
-        }],
-      }, null, 2));
-    }
-    // 2. plugin.json — copy from cache on each sync (keeps version in sync)
-    const pluginManifestDir = path.join(MARKETPLACE_PLUGIN_PATH, '.claude-plugin');
-    mkdirSync(pluginManifestDir, { recursive: true });
-    const srcManifest = path.join(CACHE_VERSION_PATH, '.claude-plugin', 'plugin.json');
-    const dstManifest = path.join(pluginManifestDir, 'plugin.json');
-    if (existsSync(srcManifest)) {
-      copyFileSync(srcManifest, dstManifest);
-    }
-    console.log('Marketplace discovery structure ready at', MARKETPLACE_ROOT);
-  } catch (e) {
-    console.warn('Warning: Could not create marketplace discovery structure:', e.message);
-  }
-
-  // Register thedotmack in known_marketplaces.json so CC discovery works
+  // known_marketplaces.json
   const knownMarketplacesPath = path.join(os.homedir(), '.claude', 'plugins', 'known_marketplaces.json');
   try {
     let known = {};
@@ -170,7 +160,7 @@ try {
         source: 'github',
         repo: 'ShinewineW/proj-claude-mem',
       },
-      installLocation: path.join(os.homedir(), '.claude', 'plugins', 'marketplaces', 'thedotmack'),
+      installLocation: MARKETPLACE_ROOT,
       lastUpdated: new Date().toISOString(),
     };
     writeFileSync(knownMarketplacesPath, JSON.stringify(known, null, 2));
@@ -179,32 +169,30 @@ try {
     console.warn('Warning: Could not update known_marketplaces.json:', e.message);
   }
 
-  console.log('\x1b[32m%s\x1b[0m', 'Sync to cache complete!');
+  console.log('\x1b[32m%s\x1b[0m', 'Sync complete!');
 
-  // Trigger worker restart
-  console.log('\n🔄 Triggering worker restart...');
+  // ── Step 5: Trigger worker restart ──────────────────────────────────────
+  console.log('\nTriggering worker restart...');
   const http = require('http');
-  const workerPort = 37777;
-
   const req = http.request({
     hostname: '127.0.0.1',
-    port: workerPort,
+    port: 37777,
     path: '/api/admin/restart',
     method: 'POST',
     timeout: 3000,
   }, (res) => {
     if (res.statusCode === 200) {
-      console.log('\x1b[32m%s\x1b[0m', '✓ Worker restart triggered');
+      console.log('\x1b[32m%s\x1b[0m', 'Worker restart triggered');
     } else {
-      console.log('\x1b[33m%s\x1b[0m', `ℹ Worker restart returned status ${res.statusCode}`);
+      console.log('\x1b[33m%s\x1b[0m', `Worker restart returned status ${res.statusCode}`);
     }
   });
   req.on('error', () => {
-    console.log('\x1b[33m%s\x1b[0m', 'ℹ Worker not running, will start on next hook');
+    console.log('\x1b[33m%s\x1b[0m', 'Worker not running, will start on next hook');
   });
   req.on('timeout', () => {
     req.destroy();
-    console.log('\x1b[33m%s\x1b[0m', 'ℹ Worker restart timed out (hung worker?)');
+    console.log('\x1b[33m%s\x1b[0m', 'Worker restart timed out (hung worker?)');
   });
   req.end();
 
