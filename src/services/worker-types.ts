@@ -54,6 +54,7 @@ export interface ActiveSession {
     batchedObservations: number; // observations sent as part of a batch (count > 1)
     batchPromptsSaved: number; // SDK round-trips saved by batching
     totalPromptChars: number; // total chars sent in observation prompts
+    truncatedFields: number; // fields truncated by truncateField()
   };
 }
 

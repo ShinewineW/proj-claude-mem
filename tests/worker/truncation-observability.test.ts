@@ -12,6 +12,18 @@ function makeObs(toolInput: string, toolOutput: string) {
   };
 }
 
+describe("truncation telemetry type", () => {
+  test("optimizationStats includes truncatedFields", () => {
+    const stats: import("../../src/services/worker-types.js").ActiveSession["optimizationStats"] = {
+      batchedObservations: 0,
+      batchPromptsSaved: 0,
+      totalPromptChars: 0,
+      truncatedFields: 5,
+    };
+    expect(stats!.truncatedFields).toBe(5);
+  });
+});
+
 describe("truncation observability", () => {
   test("returns truncatedFields > 0 when fields exceed limit", () => {
     const bigInput = JSON.stringify({ file_path: "/tmp/test.ts", content: "x".repeat(5000) });

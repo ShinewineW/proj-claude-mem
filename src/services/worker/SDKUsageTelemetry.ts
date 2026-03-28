@@ -239,6 +239,7 @@ export function logSDKUsageSummary({
           optBatchedObservations: session.optimizationStats.batchedObservations,
           optBatchPromptsSaved: session.optimizationStats.batchPromptsSaved,
           optTotalPromptChars: session.optimizationStats.totalPromptChars,
+          optTruncatedFields: session.optimizationStats.truncatedFields,
         }
       : {}),
   });

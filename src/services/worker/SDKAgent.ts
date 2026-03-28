@@ -622,9 +622,11 @@ export class SDKAgent {
             batchedObservations: 0,
             batchPromptsSaved: 0,
             totalPromptChars: 0,
+            truncatedFields: 0,
           };
         }
         session.optimizationStats.totalPromptChars += obsPrompt.length;
+        session.optimizationStats.truncatedFields += obsResult.truncatedFields;
         if (batchObservations.length > 1) {
           session.optimizationStats.batchedObservations +=
             batchObservations.length;
