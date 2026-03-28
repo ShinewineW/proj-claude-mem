@@ -244,6 +244,25 @@ export class SettingsRoutes extends BaseRouteHandler {
       }
     }
 
+    // Validate CLAUDE_MEM_SKIP_TOOL_PATTERNS (length + format sanity)
+    if (settings.CLAUDE_MEM_SKIP_TOOL_PATTERNS) {
+      const patterns = settings.CLAUDE_MEM_SKIP_TOOL_PATTERNS;
+      if (patterns.length > 1000) {
+        return { valid: false, error: 'CLAUDE_MEM_SKIP_TOOL_PATTERNS must be under 1000 characters' };
+      }
+      // Each entry must be Tool:glob format; reject individual globs over 100 chars
+      const entries = patterns.split(',').map((s: string) => s.trim()).filter(Boolean);
+      for (const entry of entries) {
+        if (!entry.includes(':')) {
+          return { valid: false, error: `CLAUDE_MEM_SKIP_TOOL_PATTERNS: malformed entry "${entry}" (must be Tool:glob)` };
+        }
+        const glob = entry.slice(entry.indexOf(':') + 1);
+        if (glob.length > 100) {
+          return { valid: false, error: `CLAUDE_MEM_SKIP_TOOL_PATTERNS: glob pattern too long (max 100 chars)` };
+        }
+      }
+    }
+
     // Validate CLAUDE_MEM_BATCH_MAX_SIZE
     if (settings.CLAUDE_MEM_BATCH_MAX_SIZE) {
       const batchMax = parseInt(settings.CLAUDE_MEM_BATCH_MAX_SIZE, 10);
