@@ -10,6 +10,7 @@ import { getWorkerPort } from '../../../../shared/worker-utils.js';
 import { logger } from '../../../../utils/logger.js';
 import { stripMemoryTagsFromPrompt } from '../../../../utils/tag-stripping.js';
 import { cleanToolField } from './observation-utils.js';
+import { parseSkipPatterns, shouldSkipObservation, type ToolPattern } from './observation-filter.js';
 import { SessionManager } from '../../SessionManager.js';
 import { DatabaseManager } from '../../DatabaseManager.js';
 import { SDKAgent } from '../../SDKAgent.js';
@@ -23,6 +24,8 @@ import { USER_SETTINGS_PATH } from '../../../../shared/paths.js';
 import { getProcessBySession, ensureProcessExit } from '../../ProcessRegistry.js';
 import { getProjectName } from '../../../../utils/project-name.js';
 import type { BypassLane } from '../../BypassLane.js';
+
+let cachedPatterns: { key: string; patterns: ToolPattern[] } | null = null;
 
 export class SessionRoutes extends BaseRouteHandler {
   private completionHandler: SessionCompletionHandler;
@@ -551,6 +554,17 @@ export class SessionRoutes extends BaseRouteHandler {
     if (skipTools.has(tool_name)) {
       logger.debug('SESSION', 'Skipping observation for tool', { tool_name });
       res.json({ status: 'skipped', reason: 'tool_excluded' });
+      return;
+    }
+
+    // Phase 1: SKIP_TOOLS runs first (exact-match), then SKIP_TOOL_PATTERNS (path-aware)
+    const patternKey = settings.CLAUDE_MEM_SKIP_TOOL_PATTERNS || '';
+    if (!cachedPatterns || cachedPatterns.key !== patternKey) {
+      cachedPatterns = { key: patternKey, patterns: parseSkipPatterns(patternKey) };
+    }
+    if (shouldSkipObservation(tool_name, tool_input, cachedPatterns.patterns)) {
+      logger.debug('SESSION', 'Skipping observation by pattern filter', { tool_name, reason: 'pattern_filtered' });
+      res.json({ status: 'skipped', reason: 'pattern_filtered' });
       return;
     }
 
