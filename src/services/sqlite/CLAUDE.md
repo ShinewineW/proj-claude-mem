@@ -24,7 +24,9 @@
 
 `enqueue()` → pending → `claimNextMessage()` → processing → `confirmProcessed()` → deleted
 
-Stale 'processing' messages auto-reset after 60s. `hasPendingSummarize()` checks unclaimed summarizes for drain window.
+- **String detection in enqueue**: `typeof tool_input === 'string'` stores as-is (avoids double-encoding from cleanToolField). Objects get `JSON.stringify`. Post-claim invariant: `toPendingMessage()` returns raw JSON strings (no parsing).
+- **Batch claiming**: `claimNextObservationBatch(sessionDbId, promptNumber, maxCount)` claims FIFO-contiguous same-prompt observations with boundary protection (`status IN ('pending', 'processing')` subquery prevents skipping over summarize/different-prompt rows).
+- Stale 'processing' messages auto-reset after 60s. `hasPendingSummarize()` checks unclaimed summarizes for drain window.
 
 ## Migration Conventions
 

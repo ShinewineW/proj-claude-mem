@@ -8,13 +8,13 @@ This directory contains skills **for developing and maintaining the claude-mem p
 - Used by developers working on claude-mem
 - Not included in the plugin distribution
 - Project-specific workflows (version bumps, release management, etc.)
-- Not synced to `~/.claude/plugins/marketplaces/thedotmack/`
+- Not synced to plugin installations
 
 **Plugin Skills** (`plugin/skills/`):
 - Released as part of the claude-mem plugin
 - Available to all users who install the plugin
 - General-purpose memory search functionality
-- Synced to user installations via `npm run sync-marketplace`
+- Deployed via `bun run build-and-sync` (rsync to marketplace + cache)
 
 ## Skills in This Directory
 

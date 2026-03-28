@@ -15,7 +15,7 @@ Foundational modules for per-project isolation, configuration, and hook/worker c
 
 | File | Purpose |
 |------|---------|
-| `SettingsDefaultsManager.ts` | 40+ settings, priority: env vars > settings.json > defaults |
+| `SettingsDefaultsManager.ts` | 45+ settings, priority: env vars > settings.json > defaults. Phase 1 SDK optimization: `SKIP_TOOL_PATTERNS`, `BATCH_MAX_SIZE`, `OBS_MAX_FIELD_CHARS` |
 | `EnvManager.ts` | Credential isolation in `~/.claude-mem/.env`. Blocklist approach strips project API keys. |
 
 ## Hook/Worker Communication
