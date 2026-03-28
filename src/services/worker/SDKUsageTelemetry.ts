@@ -1,18 +1,18 @@
-import { logger as defaultLogger } from '../../utils/logger.js';
+import { logger as defaultLogger } from "../../utils/logger.js";
 import type {
   ActiveSession,
   SDKUsageKindTotals,
   SDKUsageMessageKind,
   SDKUsageTotals,
-} from '../worker-types.js';
+} from "../worker-types.js";
 
-const SDK_USAGE_CHANNEL = 'claude_sdk_main';
+const SDK_USAGE_CHANNEL = "claude_sdk_main";
 const SDK_USAGE_KINDS: SDKUsageMessageKind[] = [
-  'init',
-  'continuation',
-  'observation',
-  'summarize',
-  'unknown',
+  "init",
+  "continuation",
+  "observation",
+  "summarize",
+  "unknown",
 ];
 
 interface ClaudeSDKUsage {
@@ -23,7 +23,12 @@ interface ClaudeSDKUsage {
 }
 
 interface LoggerLike {
-  info(component: 'SDK', message: string, context?: Record<string, any>, data?: any): void;
+  info(
+    component: "SDK",
+    message: string,
+    context?: Record<string, any>,
+    data?: any,
+  ): void;
 }
 
 interface UsageMetrics {
@@ -45,9 +50,16 @@ interface RecordSDKUsageParams {
 }
 
 interface LogSDKUsageSummaryParams {
-  session: Pick<ActiveSession, 'sessionDbId' | 'contentSessionId' | 'memorySessionId' | 'cumulativeSDKUsage'>;
+  session: Pick<
+    ActiveSession,
+    | "sessionDbId"
+    | "contentSessionId"
+    | "memorySessionId"
+    | "cumulativeSDKUsage"
+    | "optimizationStats"
+  >;
   logger?: LoggerLike;
-  summaryType: 'run' | 'session';
+  summaryType: "run" | "session";
   usageTotals?: SDKUsageTotals;
 }
 
@@ -64,7 +76,7 @@ function createEmptyKindTotals(): SDKUsageKindTotals {
 }
 
 export function createSDKUsageTotals(): SDKUsageTotals {
-  const byKind = {} as SDKUsageTotals['byKind'];
+  const byKind = {} as SDKUsageTotals["byKind"];
   for (const kind of SDK_USAGE_KINDS) {
     byKind[kind] = createEmptyKindTotals();
   }
@@ -82,14 +94,16 @@ export function createSDKUsageTotals(): SDKUsageTotals {
 }
 
 function normalizeMetric(value: number | null | undefined): number {
-  if (typeof value !== 'number' || !Number.isFinite(value)) return 0;
+  if (typeof value !== "number" || !Number.isFinite(value)) return 0;
   return value > 0 ? value : 0;
 }
 
 function normalizeUsage(usage: ClaudeSDKUsage): UsageMetrics {
   const inputTokens = normalizeMetric(usage.input_tokens);
   const outputTokens = normalizeMetric(usage.output_tokens);
-  const cacheCreationInputTokens = normalizeMetric(usage.cache_creation_input_tokens);
+  const cacheCreationInputTokens = normalizeMetric(
+    usage.cache_creation_input_tokens,
+  );
   const cacheReadInputTokens = normalizeMetric(usage.cache_read_input_tokens);
   const discoveryTokens = inputTokens + outputTokens + cacheCreationInputTokens;
 
@@ -103,7 +117,11 @@ function normalizeUsage(usage: ClaudeSDKUsage): UsageMetrics {
   };
 }
 
-function applyUsageTotals(totals: SDKUsageTotals, messageKind: SDKUsageMessageKind, metrics: UsageMetrics): void {
+function applyUsageTotals(
+  totals: SDKUsageTotals,
+  messageKind: SDKUsageMessageKind,
+  metrics: UsageMetrics,
+): void {
   totals.totalResponses += 1;
   totals.totalInputTokens += metrics.inputTokens;
   totals.totalOutputTokens += metrics.outputTokens;
@@ -129,7 +147,9 @@ function ensureSessionUsageTotals(session: ActiveSession): SDKUsageTotals {
   return session.cumulativeSDKUsage;
 }
 
-function buildSummaryKindFields(totals: SDKUsageTotals): Record<string, number> {
+function buildSummaryKindFields(
+  totals: SDKUsageTotals,
+): Record<string, number> {
   const fields: Record<string, number> = {};
 
   for (const kind of SDK_USAGE_KINDS) {
@@ -155,7 +175,8 @@ export function recordSDKUsage({
   const currentRunTotals = usageTotals ?? sessionTotals;
 
   // Update legacy cumulative counters (consumed by existing log lines)
-  session.cumulativeInputTokens += metrics.inputTokens + metrics.cacheCreationInputTokens;
+  session.cumulativeInputTokens +=
+    metrics.inputTokens + metrics.cacheCreationInputTokens;
   session.cumulativeOutputTokens += metrics.outputTokens;
 
   applyUsageTotals(sessionTotals, messageKind, metrics);
@@ -163,11 +184,11 @@ export function recordSDKUsage({
     applyUsageTotals(currentRunTotals, messageKind, metrics);
   }
 
-  logger.info('SDK', 'SDK_USAGE', {
+  logger.info("SDK", "SDK_USAGE", {
     usageChannel: SDK_USAGE_CHANNEL,
     sessionDbId: session.sessionDbId,
     contentSessionId: session.contentSessionId,
-    memorySessionId: session.memorySessionId ?? '(none)',
+    memorySessionId: session.memorySessionId ?? "(none)",
     promptNumber,
     messageKind,
     inputTokens: metrics.inputTokens,
@@ -179,7 +200,8 @@ export function recordSDKUsage({
     cumulativeResponses: sessionTotals.totalResponses,
     cumulativeInputTokens: sessionTotals.totalInputTokens,
     cumulativeOutputTokens: sessionTotals.totalOutputTokens,
-    cumulativeCacheCreationInputTokens: sessionTotals.totalCacheCreationInputTokens,
+    cumulativeCacheCreationInputTokens:
+      sessionTotals.totalCacheCreationInputTokens,
     cumulativeCacheReadInputTokens: sessionTotals.totalCacheReadInputTokens,
     cumulativeReportedTotalTokens: sessionTotals.totalReportedTokens,
     cumulativeDiscoveryTokens: sessionTotals.totalDiscoveryTokens,
@@ -197,12 +219,12 @@ export function logSDKUsageSummary({
   const totals = usageTotals ?? session.cumulativeSDKUsage;
   if (!totals || totals.totalResponses === 0) return;
 
-  logger.info('SDK', 'SDK_USAGE_SUMMARY', {
+  logger.info("SDK", "SDK_USAGE_SUMMARY", {
     usageChannel: SDK_USAGE_CHANNEL,
     summaryType,
     sessionDbId: session.sessionDbId,
     contentSessionId: session.contentSessionId,
-    memorySessionId: session.memorySessionId ?? '(none)',
+    memorySessionId: session.memorySessionId ?? "(none)",
     totalResponses: totals.totalResponses,
     totalInputTokens: totals.totalInputTokens,
     totalOutputTokens: totals.totalOutputTokens,
@@ -211,5 +233,13 @@ export function logSDKUsageSummary({
     totalReportedTokens: totals.totalReportedTokens,
     totalDiscoveryTokens: totals.totalDiscoveryTokens,
     ...buildSummaryKindFields(totals),
+    // Phase 1 optimization counters
+    ...(session.optimizationStats
+      ? {
+          optBatchedObservations: session.optimizationStats.batchedObservations,
+          optBatchPromptsSaved: session.optimizationStats.batchPromptsSaved,
+          optTotalPromptChars: session.optimizationStats.totalPromptChars,
+        }
+      : {}),
   });
 }

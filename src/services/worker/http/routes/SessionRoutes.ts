@@ -563,7 +563,7 @@ export class SessionRoutes extends BaseRouteHandler {
       cachedPatterns = { key: patternKey, patterns: parseSkipPatterns(patternKey) };
     }
     if (shouldSkipObservation(tool_name, tool_input, cachedPatterns.patterns)) {
-      logger.debug('SESSION', 'Skipping observation by pattern filter', { tool_name, reason: 'pattern_filtered' });
+      logger.info('SESSION', 'Skipping observation by pattern filter', { tool_name, reason: 'pattern_filtered' });
       res.json({ status: 'skipped', reason: 'pattern_filtered' });
       return;
     }

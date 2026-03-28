@@ -2,7 +2,7 @@
  * Shared types for Worker Service architecture
  */
 
-import type { Response } from 'express';
+import type { Response } from "express";
 
 // ============================================================================
 // Active Session Types
@@ -13,46 +13,52 @@ import type { Response } from 'express';
  * Used to maintain context across Claude↔Gemini provider switches
  */
 export interface ConversationMessage {
-  role: 'user' | 'assistant';
+  role: "user" | "assistant";
   content: string;
 }
 
 export interface ActiveSession {
   sessionDbId: number;
-  contentSessionId: string;      // User's Claude Code session being observed
+  contentSessionId: string; // User's Claude Code session being observed
   memorySessionId: string | null; // Memory agent's session ID for resume
   project: string;
   userPrompt: string;
-  pendingMessages: PendingMessage[];  // Deprecated: now using persistent store, kept for compatibility
+  pendingMessages: PendingMessage[]; // Deprecated: now using persistent store, kept for compatibility
   abortController: AbortController;
   generatorPromise: Promise<void> | null;
   lastPromptNumber: number;
   startTime: number;
-  cumulativeInputTokens: number;   // Track input tokens for discovery cost
-  cumulativeOutputTokens: number;  // Track output tokens for discovery cost
-  earliestPendingTimestamp: number | null;  // Original timestamp of earliest pending message (for accurate observation timestamps)
-  conversationHistory: ConversationMessage[];  // Shared conversation history for provider switching
-  currentProvider: 'claude' | 'gemini' | 'openrouter' | null;  // Track which provider is currently running
-  consecutiveRestarts: number;  // Track consecutive restart attempts to prevent infinite loops
-  dbPath?: string;  // Project-specific SQLite DB path
-  forceInit?: boolean;  // Force fresh SDK session (skip resume)
-  previousMemorySessionId?: string;  // Saved before forceInit clear, used for summary injection
-  contextResetCount: number;  // Consecutive forceInit triggers — capped to prevent infinite loop
-  idleTimedOut?: boolean;  // Set when session exits due to idle timeout (prevents restart loop)
-  lastExitWasIdleTimeout?: boolean;  // Persists after idle timeout exit — cleared when new hook messages arrive, checked by reaper to skip futile proactive summarize
-  lastGeneratorActivity: number;  // Timestamp of last generator progress (for stale detection, Issue #1099)
+  cumulativeInputTokens: number; // Track input tokens for discovery cost
+  cumulativeOutputTokens: number; // Track output tokens for discovery cost
+  earliestPendingTimestamp: number | null; // Original timestamp of earliest pending message (for accurate observation timestamps)
+  conversationHistory: ConversationMessage[]; // Shared conversation history for provider switching
+  currentProvider: "claude" | "gemini" | "openrouter" | null; // Track which provider is currently running
+  consecutiveRestarts: number; // Track consecutive restart attempts to prevent infinite loops
+  dbPath?: string; // Project-specific SQLite DB path
+  forceInit?: boolean; // Force fresh SDK session (skip resume)
+  previousMemorySessionId?: string; // Saved before forceInit clear, used for summary injection
+  contextResetCount: number; // Consecutive forceInit triggers — capped to prevent infinite loop
+  idleTimedOut?: boolean; // Set when session exits due to idle timeout (prevents restart loop)
+  lastExitWasIdleTimeout?: boolean; // Persists after idle timeout exit — cleared when new hook messages arrive, checked by reaper to skip futile proactive summarize
+  lastGeneratorActivity: number; // Timestamp of last generator progress (for stale detection, Issue #1099)
   proactiveSummarizeQueued?: boolean; // Set when reaper queues a proactive summarize to prevent double-queuing
-  currentSDKMessageKind?: SDKUsageMessageKind;  // Current observer prompt kind for usage attribution
-  currentSDKPromptNumber?: number;  // Prompt number associated with current observer prompt
-  cumulativeSDKUsage?: SDKUsageTotals;  // Aggregate usage for the logical observer session
+  currentSDKMessageKind?: SDKUsageMessageKind; // Current observer prompt kind for usage attribution
+  currentSDKPromptNumber?: number; // Prompt number associated with current observer prompt
+  cumulativeSDKUsage?: SDKUsageTotals; // Aggregate usage for the logical observer session
   // CLAIM-CONFIRM FIX: Track IDs of messages currently being processed
   // These IDs will be confirmed (deleted) after successful storage
   processingMessageIds: number[];
-  closing?: boolean;  // Set by deleteSession() before abort to prevent restart in .finally() (R2)
+  closing?: boolean; // Set by deleteSession() before abort to prevent restart in .finally() (R2)
+  // SDK Token Optimization Phase 1 counters
+  optimizationStats?: {
+    batchedObservations: number; // observations sent as part of a batch (count > 1)
+    batchPromptsSaved: number; // SDK round-trips saved by batching
+    totalPromptChars: number; // total chars sent in observation prompts
+  };
 }
 
 export interface PendingMessage {
-  type: 'observation' | 'summarize';
+  type: "observation" | "summarize";
   tool_name?: string;
   tool_input?: any;
   tool_response?: any;
@@ -115,7 +121,7 @@ export interface PaginationParams {
 export interface ViewerSettings {
   sidebarOpen: boolean;
   selectedProject: string | null;
-  theme: 'light' | 'dark' | 'system';
+  theme: "light" | "dark" | "system";
 }
 
 // ============================================================================
@@ -124,7 +130,7 @@ export interface ViewerSettings {
 
 export interface Observation {
   id: number;
-  memory_session_id: string;  // Renamed from sdk_session_id
+  memory_session_id: string; // Renamed from sdk_session_id
   project: string;
   type: string;
   title: string;
@@ -156,7 +162,7 @@ export interface Summary {
 
 export interface UserPrompt {
   id: number;
-  content_session_id: string;  // Renamed from claude_session_id
+  content_session_id: string; // Renamed from claude_session_id
   project: string; // From JOIN with sdk_sessions
   prompt_number: number;
   prompt_text: string;
@@ -166,11 +172,11 @@ export interface UserPrompt {
 
 export interface DBSession {
   id: number;
-  content_session_id: string;    // Renamed from claude_session_id
+  content_session_id: string; // Renamed from claude_session_id
   project: string;
   user_prompt: string;
-  memory_session_id: string | null;  // Renamed from sdk_session_id
-  status: 'active' | 'completed' | 'failed';
+  memory_session_id: string | null; // Renamed from sdk_session_id
+  status: "active" | "completed" | "failed";
   started_at: string;
   started_at_epoch: number;
   completed_at: string | null;
@@ -181,7 +187,12 @@ export interface DBSession {
 // SDK Types
 // ============================================================================
 
-export type SDKUsageMessageKind = 'init' | 'continuation' | 'observation' | 'summarize' | 'unknown';
+export type SDKUsageMessageKind =
+  | "init"
+  | "continuation"
+  | "observation"
+  | "summarize"
+  | "unknown";
 
 export interface SDKUsageKindTotals {
   responses: number;
@@ -207,7 +218,7 @@ export interface SDKUsageTotals {
 }
 
 // Re-export the actual SDK type to ensure compatibility
-export type { SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
+export type { SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 
 export interface ParsedObservation {
   type: string;
@@ -236,10 +247,13 @@ export interface DatabaseStats {
   totalSessions: number;
   totalPrompts: number;
   totalSummaries: number;
-  projectCounts: Record<string, {
-    observations: number;
-    sessions: number;
-    prompts: number;
-    summaries: number;
-  }>;
+  projectCounts: Record<
+    string,
+    {
+      observations: number;
+      sessions: number;
+      prompts: number;
+      summaries: number;
+    }
+  >;
 }

@@ -615,7 +615,20 @@ export class SDKAgent {
           obsMaxFieldChars,
         );
 
+        // Track optimization stats
+        if (!session.optimizationStats) {
+          session.optimizationStats = {
+            batchedObservations: 0,
+            batchPromptsSaved: 0,
+            totalPromptChars: 0,
+          };
+        }
+        session.optimizationStats.totalPromptChars += obsPrompt.length;
         if (batchObservations.length > 1) {
+          session.optimizationStats.batchedObservations +=
+            batchObservations.length;
+          session.optimizationStats.batchPromptsSaved +=
+            batchObservations.length - 1;
           logger.info(
             "SDK",
             `BATCH | sessionDbId=${session.sessionDbId} | count=${batchObservations.length} | promptNumber=${batchPromptNumber}`,
