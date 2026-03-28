@@ -466,6 +466,11 @@ export class SDKAgent {
     session: ActiveSession,
     cwdTracker: { lastCwd: string | undefined },
   ): AsyncIterableIterator<SDKUserMessage> {
+    // Load settings once per generator (Phase 1: changes apply on next generator start)
+    const settings = SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH);
+    const obsMaxFieldChars =
+      parseInt(settings.CLAUDE_MEM_OBS_MAX_FIELD_CHARS, 10) || 8000;
+
     // Load active mode
     const mode = ModeManager.getInstance().getActiveMode();
 
@@ -554,14 +559,17 @@ export class SDKAgent {
         }
 
         // tool_input/tool_response are already JSON strings from toPendingMessage
-        const obsPrompt = buildObservationPrompt({
-          id: 0,
-          tool_name: message.tool_name!,
-          tool_input: (message.tool_input as string) || "{}",
-          tool_output: (message.tool_response as string) || "{}",
-          created_at_epoch: message._originalTimestamp || Date.now(),
-          cwd: message.cwd,
-        });
+        const obsPrompt = buildObservationPrompt(
+          {
+            id: 0,
+            tool_name: message.tool_name!,
+            tool_input: (message.tool_input as string) || "{}",
+            tool_output: (message.tool_response as string) || "{}",
+            created_at_epoch: message._originalTimestamp || Date.now(),
+            cwd: message.cwd,
+          },
+          obsMaxFieldChars,
+        );
 
         // Add to shared conversation history for provider interop
         session.conversationHistory.push({ role: "user", content: obsPrompt });

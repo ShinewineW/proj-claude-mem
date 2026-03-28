@@ -1,6 +1,11 @@
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import { Database } from "bun:sqlite";
 import { PendingMessageStore } from "../../src/services/sqlite/PendingMessageStore.js";
+import {
+  buildObservationPrompt,
+  buildBatchObservationPrompt,
+  type Observation,
+} from "../../src/sdk/prompts.js";
 
 describe("JSON serialization pipeline", () => {
   let db: Database;
@@ -139,5 +144,99 @@ describe("JSON serialization pipeline", () => {
 
     const parsedResponse = JSON.parse(pending.tool_response as string);
     expect(parsedResponse).toBe("The file was updated successfully.");
+  });
+});
+
+describe("buildObservationPrompt", () => {
+  test("handles JSON string tool_input correctly", () => {
+    const prompt = buildObservationPrompt({
+      id: 0,
+      tool_name: "Edit",
+      tool_input: '{"file_path":"/foo.ts","old_string":"a","new_string":"b"}',
+      tool_output: '"The file was updated successfully."',
+      created_at_epoch: 1711411471000,
+      cwd: "/project",
+    });
+    expect(prompt).toContain("<parameters>");
+    expect(prompt).toContain("file_path");
+    expect(prompt).toContain("/foo.ts");
+    // tool_output is a plain string — should be displayed as plain text
+    expect(prompt).toContain("The file was updated successfully.");
+  });
+
+  test("truncates oversized tool_input", () => {
+    const bigInput = JSON.stringify({ data: "x".repeat(20000) });
+    const prompt = buildObservationPrompt({
+      id: 0,
+      tool_name: "Bash",
+      tool_input: bigInput,
+      tool_output: "{}",
+      created_at_epoch: Date.now(),
+    });
+    expect(prompt).toContain("truncated");
+    expect(prompt.length).toBeLessThan(bigInput.length);
+  });
+
+  test("truncates oversized tool_output", () => {
+    const bigOutput = JSON.stringify("y".repeat(20000));
+    const prompt = buildObservationPrompt({
+      id: 0,
+      tool_name: "Bash",
+      tool_input: '{"command":"cat bigfile"}',
+      tool_output: bigOutput,
+      created_at_epoch: Date.now(),
+    });
+    expect(prompt).toContain("truncated");
+  });
+
+  test("renders plain text tool_output without JSON wrapper", () => {
+    const prompt = buildObservationPrompt({
+      id: 0,
+      tool_name: "Bash",
+      tool_input: '{"command":"ls"}',
+      tool_output: '"file1.ts\\nfile2.ts\\nfile3.ts"',
+      created_at_epoch: Date.now(),
+    });
+    expect(prompt).toContain("file1.ts");
+    expect(prompt).not.toContain('\\"file1.ts');
+  });
+});
+
+describe("buildBatchObservationPrompt", () => {
+  const makeObs = (toolName: string, idx: number): Observation => ({
+    id: idx,
+    tool_name: toolName,
+    tool_input: `{"file":"file${idx}.ts"}`,
+    tool_output: '"ok"',
+    created_at_epoch: 1711411471000 + idx * 1000,
+    cwd: "/project",
+  });
+
+  test("single observation delegates to buildObservationPrompt (no BATCH header)", () => {
+    const prompt = buildBatchObservationPrompt([makeObs("Edit", 0)]);
+    expect(prompt).not.toContain("BATCH");
+    expect(prompt).toContain("<observed_from_primary_session>");
+  });
+
+  test("multiple observations produce batch format with indexed items", () => {
+    const prompt = buildBatchObservationPrompt([
+      makeObs("Edit", 0),
+      makeObs("Read", 1),
+      makeObs("Bash", 2),
+    ]);
+    expect(prompt).toContain("OBSERVATION BATCH (3 items)");
+    expect(prompt).toContain('index="1"');
+    expect(prompt).toContain('index="2"');
+    expect(prompt).toContain('index="3"');
+    expect(prompt).toContain("Do NOT output <summary> tags");
+  });
+
+  test("batch prompt instructs model to use observation tags only", () => {
+    const prompt = buildBatchObservationPrompt([
+      makeObs("Edit", 0),
+      makeObs("Read", 1),
+    ]);
+    expect(prompt).toContain("<observation>");
+    expect(prompt).toContain("skip items that are not noteworthy");
   });
 });

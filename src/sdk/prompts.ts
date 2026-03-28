@@ -3,8 +3,8 @@
  * Generates prompts for the Claude Agent SDK memory worker
  */
 
-import { logger } from '../utils/logger.js';
-import type { ModeConfig } from '../services/domain/types.js';
+import { logger } from "../utils/logger.js";
+import type { ModeConfig } from "../services/domain/types.js";
 
 export interface Observation {
   id: number;
@@ -26,12 +26,17 @@ export interface SDKSession {
 /**
  * Build initial prompt to initialize the SDK agent
  */
-export function buildInitPrompt(project: string, sessionId: string, userPrompt: string, mode: ModeConfig): string {
+export function buildInitPrompt(
+  project: string,
+  sessionId: string,
+  userPrompt: string,
+  mode: ModeConfig,
+): string {
   return `${mode.prompts.system_identity}
 
 <observed_from_primary_session>
   <user_request>${userPrompt}</user_request>
-  <requested_at>${new Date().toISOString().split('T')[0]}</requested_at>
+  <requested_at>${new Date().toISOString().split("T")[0]}</requested_at>
 </observed_from_primary_session>
 
 ${mode.prompts.observer_role}
@@ -46,7 +51,7 @@ ${mode.prompts.output_format_header}
 
 \`\`\`xml
 <observation>
-  <type>[ ${mode.observation_types.map(t => t.id).join(' | ')} ]</type>
+  <type>[ ${mode.observation_types.map((t) => t.id).join(" | ")} ]</type>
   <!--
     ${mode.prompts.type_guidance}
   -->
@@ -86,53 +91,133 @@ ${mode.prompts.header_memory_start}`;
 }
 
 /**
+ * Truncate a string field with head/tail preservation.
+ * Head: first 30% of limit, Tail: last 20% of limit (total 50% kept).
+ */
+function truncateField(content: string, maxChars: number): string {
+  if (content.length <= maxChars) return content;
+  const headSize = Math.floor(maxChars * 0.3);
+  const tailSize = Math.floor(maxChars * 0.2);
+  const truncated = content.length - headSize - tailSize;
+  return (
+    content.slice(0, headSize) +
+    `\n[... truncated ${truncated} chars ...]\n` +
+    content.slice(-tailSize)
+  );
+}
+
+/**
+ * Render a single observation's XML block (shared by single and batch prompts).
+ * @param index — 1-based index for batch mode; omit for single mode.
+ */
+function renderObservationBlock(
+  obs: Observation,
+  maxFieldChars: number,
+  index?: number,
+): string {
+  const timestamp = new Date(obs.created_at_epoch).toISOString();
+
+  // tool_input: parse JSON string → compact JSON
+  let inputStr: string;
+  try {
+    inputStr = JSON.stringify(JSON.parse(obs.tool_input));
+  } catch {
+    inputStr = obs.tool_input || "{}";
+  }
+  inputStr = truncateField(inputStr, maxFieldChars);
+
+  // tool_output: parse JSON string → prefer plain text rendering
+  let outcomeStr: string;
+  try {
+    const parsedOutput = JSON.parse(obs.tool_output);
+    if (typeof parsedOutput === "string") {
+      outcomeStr = parsedOutput; // plain text (file content, terminal output)
+    } else {
+      outcomeStr = JSON.stringify(parsedOutput); // compact object fallback
+    }
+  } catch {
+    outcomeStr = obs.tool_output || "";
+  }
+  outcomeStr = truncateField(outcomeStr, maxFieldChars);
+
+  const indexAttr = index !== undefined ? ` index="${index}"` : "";
+  let block = `<observed_from_primary_session${indexAttr}>
+  <what_happened>${obs.tool_name}</what_happened>
+  <occurred_at>${timestamp}</occurred_at>`;
+  if (obs.cwd) {
+    block += `\n  <working_directory>${obs.cwd}</working_directory>`;
+  }
+  block += `
+  <parameters>
+${inputStr}
+  </parameters>
+  <outcome>
+${outcomeStr}
+  </outcome>
+</observed_from_primary_session>`;
+  return block;
+}
+
+/**
  * Build prompt to send tool observation to SDK agent
  */
-export function buildObservationPrompt(obs: Observation): string {
-  // Safely parse tool_input and tool_output - they're already JSON strings
-  let toolInput: any;
-  let toolOutput: any;
-
-  try {
-    toolInput = typeof obs.tool_input === 'string' ? JSON.parse(obs.tool_input) : obs.tool_input;
-  } catch (error) {
-    logger.debug('SDK', 'Tool input is plain string, using as-is', {
-      toolName: obs.tool_name
-    }, error as Error);
-    toolInput = obs.tool_input;
-  }
-
-  try {
-    toolOutput = typeof obs.tool_output === 'string' ? JSON.parse(obs.tool_output) : obs.tool_output;
-  } catch (error) {
-    logger.debug('SDK', 'Tool output is plain string, using as-is', {
-      toolName: obs.tool_name
-    }, error as Error);
-    toolOutput = obs.tool_output;
-  }
-
+export function buildObservationPrompt(
+  obs: Observation,
+  maxFieldChars: number = 8000,
+): string {
   return `--- OBSERVATION ONLY ---
 Do NOT output <summary> tags. This is an observation, not a summary request.
 Your response MUST use <observation> tags ONLY. Any <summary> output will be discarded.
 
-<observed_from_primary_session>
-  <what_happened>${obs.tool_name}</what_happened>
-  <occurred_at>${new Date(obs.created_at_epoch).toISOString()}</occurred_at>${obs.cwd ? `\n  <working_directory>${obs.cwd}</working_directory>` : ''}
-  <parameters>${JSON.stringify(toolInput, null, 2)}</parameters>
-  <outcome>${JSON.stringify(toolOutput, null, 2)}</outcome>
-</observed_from_primary_session>`;
+${renderObservationBlock(obs, maxFieldChars)}`;
+}
+
+/**
+ * Build a batch observation prompt for multiple observations.
+ * Single observation: delegates to buildObservationPrompt (backward-compatible).
+ * Multiple: wraps in batch format with indexed items.
+ */
+export function buildBatchObservationPrompt(
+  observations: Observation[],
+  maxFieldChars: number = 8000,
+): string {
+  if (observations.length === 0) return "";
+  if (observations.length === 1) {
+    return buildObservationPrompt(observations[0], maxFieldChars);
+  }
+
+  let prompt = `--- OBSERVATION BATCH (${observations.length} items) ---
+Do NOT output <summary> tags. These are observations, not a summary request.
+Your response MUST use <observation> tags ONLY.
+Output 0 or more observations — skip items that are not noteworthy.\n\n`;
+
+  for (let i = 0; i < observations.length; i++) {
+    prompt +=
+      renderObservationBlock(observations[i], maxFieldChars, i + 1) + "\n\n";
+  }
+
+  return prompt;
 }
 
 /**
  * Build prompt to generate progress summary
  */
-export function buildSummaryPrompt(session: SDKSession, mode: ModeConfig): string {
-  const lastAssistantMessage = session.last_assistant_message || (() => {
-    logger.error('SDK', 'Missing last_assistant_message in session for summary prompt', {
-      sessionId: session.id
-    });
-    return '';
-  })();
+export function buildSummaryPrompt(
+  session: SDKSession,
+  mode: ModeConfig,
+): string {
+  const lastAssistantMessage =
+    session.last_assistant_message ||
+    (() => {
+      logger.error(
+        "SDK",
+        "Missing last_assistant_message in session for summary prompt",
+        {
+          sessionId: session.id,
+        },
+      );
+      return "";
+    })();
 
   return `--- MODE SWITCH: PROGRESS SUMMARY ---
 Do NOT output <observation> tags. This is a summary request, not an observation request.
@@ -178,12 +263,17 @@ ${mode.prompts.summary_footer}`;
  * Called when: promptNumber > 1 (see SDKAgent.ts line 150)
  * First prompt: Uses buildInitPrompt instead (promptNumber === 1)
  */
-export function buildContinuationPrompt(userPrompt: string, promptNumber: number, contentSessionId: string, mode: ModeConfig): string {
+export function buildContinuationPrompt(
+  userPrompt: string,
+  promptNumber: number,
+  contentSessionId: string,
+  mode: ModeConfig,
+): string {
   return `${mode.prompts.continuation_greeting}
 
 <observed_from_primary_session>
   <user_request>${userPrompt}</user_request>
-  <requested_at>${new Date().toISOString().split('T')[0]}</requested_at>
+  <requested_at>${new Date().toISOString().split("T")[0]}</requested_at>
 </observed_from_primary_session>
 
 ${mode.prompts.system_identity}
@@ -202,7 +292,7 @@ ${mode.prompts.output_format_header}
 
 \`\`\`xml
 <observation>
-  <type>[ ${mode.observation_types.map(t => t.id).join(' | ')} ]</type>
+  <type>[ ${mode.observation_types.map((t) => t.id).join(" | ")} ]</type>
   <!--
     ${mode.prompts.type_guidance}
   -->
@@ -250,17 +340,22 @@ ${mode.prompts.header_memory_continued}`;
  * @returns XML block string, or empty string if no observations
  */
 export function buildSessionHistorySummary(
-  observations: Array<{ type: string; title: string | null; subtitle: string | null; prompt_number: number | null }>
+  observations: Array<{
+    type: string;
+    title: string | null;
+    subtitle: string | null;
+    prompt_number: number | null;
+  }>,
 ): string {
-  if (observations.length === 0) return '';
+  if (observations.length === 0) return "";
 
   const lines = observations.map((obs, i) => {
-    const displayTitle = obs.title || '(untitled)';
+    const displayTitle = obs.title || "(untitled)";
     return `  ${i + 1}. [${obs.type}] ${displayTitle}`;
   });
 
   return `<session_history_summary>
   Prior observations (conversation reset for context management):
-${lines.join('\n')}
+${lines.join("\n")}
 </session_history_summary>`;
 }
