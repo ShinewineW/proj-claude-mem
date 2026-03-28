@@ -1,13 +1,13 @@
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { Database } from 'bun:sqlite';
-import { PendingMessageStore } from '../../src/services/sqlite/PendingMessageStore.js';
+import { describe, test, expect, beforeEach, afterEach } from "bun:test";
+import { Database } from "bun:sqlite";
+import { PendingMessageStore } from "../../src/services/sqlite/PendingMessageStore.js";
 
-describe('claimNextObservationBatch', () => {
+describe("claimNextObservationBatch", () => {
   let db: Database;
   let store: PendingMessageStore;
 
   beforeEach(() => {
-    db = new Database(':memory:');
+    db = new Database(":memory:");
     db.exec(`
       CREATE TABLE IF NOT EXISTS sdk_sessions (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -40,7 +40,9 @@ describe('claimNextObservationBatch', () => {
         created_at_epoch INTEGER DEFAULT (unixepoch())
       );
     `);
-    db.exec("INSERT INTO sdk_sessions (content_session_id, project) VALUES ('test-session', 'test')");
+    db.exec(
+      "INSERT INTO sdk_sessions (content_session_id, project) VALUES ('test-session', 'test')",
+    );
     store = new PendingMessageStore(db);
   });
 
@@ -48,9 +50,9 @@ describe('claimNextObservationBatch', () => {
     db.close();
   });
 
-  function insertObs(promptNumber: number | null, toolName: string = 'Read') {
+  function insertObs(promptNumber: number | null, toolName: string = "Read") {
     db.exec(`INSERT INTO pending_messages (session_db_id, content_session_id, message_type, tool_name, prompt_number, status, created_at_epoch)
-      VALUES (1, 'test-session', 'observation', '${toolName}', ${promptNumber === null ? 'NULL' : promptNumber}, 'pending', ${Date.now()})`);
+      VALUES (1, 'test-session', 'observation', '${toolName}', ${promptNumber === null ? "NULL" : promptNumber}, 'pending', ${Date.now()})`);
   }
 
   function insertSummarize() {
@@ -58,28 +60,31 @@ describe('claimNextObservationBatch', () => {
       VALUES (1, 'test-session', 'summarize', NULL, 'pending', ${Date.now()})`);
   }
 
-  test('claims up to maxCount pending observations for same prompt_number', () => {
-    insertObs(5); insertObs(5); insertObs(5); insertObs(5);
+  test("claims up to maxCount pending observations for same prompt_number", () => {
+    insertObs(5);
+    insertObs(5);
+    insertObs(5);
+    insertObs(5);
     const batch = store.claimNextObservationBatch(1, 5, 3);
     expect(batch.length).toBe(3);
-    batch.forEach(b => {
-      expect(b.message_type).toBe('observation');
+    batch.forEach((b) => {
+      expect(b.message_type).toBe("observation");
       expect(b.prompt_number).toBe(5);
     });
   });
 
-  test('preserves FIFO order within prompt group', () => {
-    insertObs(5, 'Read');
-    insertObs(5, 'Edit');
-    insertObs(5, 'Bash');
+  test("preserves FIFO order within prompt group", () => {
+    insertObs(5, "Read");
+    insertObs(5, "Edit");
+    insertObs(5, "Bash");
     const batch = store.claimNextObservationBatch(1, 5, 10);
     expect(batch.length).toBe(3);
-    expect(batch[0].tool_name).toBe('Read');
-    expect(batch[1].tool_name).toBe('Edit');
-    expect(batch[2].tool_name).toBe('Bash');
+    expect(batch[0].tool_name).toBe("Read");
+    expect(batch[1].tool_name).toBe("Edit");
+    expect(batch[2].tool_name).toBe("Bash");
   });
 
-  test('does not claim summarize messages', () => {
+  test("does not claim summarize messages", () => {
     insertObs(5);
     insertSummarize();
     insertObs(5);
@@ -88,16 +93,16 @@ describe('claimNextObservationBatch', () => {
     expect(batch.length).toBe(1);
   });
 
-  test('does not cross into the next prompt_number', () => {
+  test("does not cross into the next prompt_number", () => {
     insertObs(5);
     insertObs(5);
     insertObs(6);
     const batch = store.claimNextObservationBatch(1, 5, 10);
     expect(batch.length).toBe(2);
-    batch.forEach(b => expect(b.prompt_number).toBe(5));
+    batch.forEach((b) => expect(b.prompt_number).toBe(5));
   });
 
-  test('does not claim already-processing rows', () => {
+  test("does not claim already-processing rows", () => {
     insertObs(5);
     // Mark first as processing
     db.exec("UPDATE pending_messages SET status = 'processing' WHERE id = 1");
@@ -107,7 +112,7 @@ describe('claimNextObservationBatch', () => {
     expect(batch[0].id).toBe(2);
   });
 
-  test('leaves rows with prompt_number IS NULL unclaimed', () => {
+  test("leaves rows with prompt_number IS NULL unclaimed", () => {
     insertObs(null);
     insertObs(5);
     // NULL prompt row is a FIFO boundary — batch for pn=5 should not claim anything
@@ -116,7 +121,7 @@ describe('claimNextObservationBatch', () => {
     expect(batch.length).toBe(0);
   });
 
-  test('FIFO boundary: does not skip over interleaved summarize', () => {
+  test("FIFO boundary: does not skip over interleaved summarize", () => {
     // obs(id=1,pn=5) → summarize(id=2) → obs(id=3,pn=5)
     insertObs(5);
     insertSummarize();
@@ -127,7 +132,7 @@ describe('claimNextObservationBatch', () => {
     expect(batch[0].id).toBe(1);
   });
 
-  test('FIFO boundary: claims contiguous tail before a summarize', () => {
+  test("FIFO boundary: claims contiguous tail before a summarize", () => {
     // obs(id=1,pn=5) → obs(id=2,pn=5) → summarize(id=3) → obs(id=4,pn=5)
     insertObs(5);
     insertObs(5);
@@ -139,7 +144,7 @@ describe('claimNextObservationBatch', () => {
     expect(batch[1].id).toBe(2);
   });
 
-  test('FIFO boundary: does not skip over NULL prompt_number row', () => {
+  test("FIFO boundary: does not skip over NULL prompt_number row", () => {
     // obs(id=1,pn=5) → obs(id=2,pn=NULL) → obs(id=3,pn=5)
     insertObs(5);
     insertObs(null);
@@ -150,19 +155,34 @@ describe('claimNextObservationBatch', () => {
     expect(batch[0].id).toBe(1);
   });
 
-  test('returns empty array when no matching rows', () => {
+  test("FIFO boundary: does not skip over processing summarize", () => {
+    // obs(id=1,pn=5) → summarize(id=2,status=processing) → obs(id=3,pn=5)
+    insertObs(5);
+    insertSummarize();
+    insertObs(5);
+    // Mark summarize as processing (being handled by main channel)
+    db.exec("UPDATE pending_messages SET status = 'processing' WHERE id = 2");
+    const batch = store.claimNextObservationBatch(1, 5, 10);
+    // Should still respect the processing summarize as a boundary
+    expect(batch.length).toBe(1);
+    expect(batch[0].id).toBe(1);
+  });
+
+  test("returns empty array when no matching rows", () => {
     insertObs(6);
     const batch = store.claimNextObservationBatch(1, 5, 10);
     expect(batch.length).toBe(0);
   });
 
-  test('marks claimed rows as processing', () => {
+  test("marks claimed rows as processing", () => {
     insertObs(5);
     insertObs(5);
     store.claimNextObservationBatch(1, 5, 10);
     const remaining = store.getAllPending(1);
     expect(remaining.length).toBe(0); // no more pending
-    const all = db.prepare("SELECT * FROM pending_messages WHERE status = 'processing'").all() as any[];
+    const all = db
+      .prepare("SELECT * FROM pending_messages WHERE status = 'processing'")
+      .all() as any[];
     expect(all.length).toBe(2);
   });
 });

@@ -230,7 +230,7 @@ export class PendingMessageStore {
           AND id < COALESCE(
             (SELECT MIN(id) FROM pending_messages
              WHERE session_db_id = ?
-               AND status = 'pending'
+               AND status IN ('pending', 'processing')
                AND (message_type != 'observation'
                     OR prompt_number IS NULL
                     OR prompt_number != ?)),
