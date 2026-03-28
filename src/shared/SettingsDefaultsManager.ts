@@ -140,7 +140,7 @@ export class SettingsDefaultsManager {
     CLAUDE_MEM_BYPASS_COOLDOWN_MS: "1200000", // 20 minutes
     // SDK Token Optimization (Phase 1)
     CLAUDE_MEM_SKIP_TOOL_PATTERNS:
-      "Read:*.SKILL.md,Read:*/.claude/rules/*,Read:*settings.json,Read:*hooks.json,Glob:*",
+      "Read:*SKILL.md,Read:*/.claude/rules/*,Read:*settings.json,Read:*hooks.json,Glob:*",
     CLAUDE_MEM_BATCH_MAX_SIZE: "5",
     CLAUDE_MEM_OBS_MAX_FIELD_CHARS: "8000",
   };
