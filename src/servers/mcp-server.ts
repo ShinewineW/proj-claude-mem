@@ -342,7 +342,7 @@ NEVER fetch full details without filtering first. 10x token savings.`,
   },
   {
     name: 'search',
-    description: 'Step 1: Search memory. Returns index with IDs. Params: query, limit, project, type, obs_type, dateStart, dateEnd, offset, orderBy, from_project (cross-project: name or "*")',
+    description: 'Step 1: Search memory. Returns index with IDs. Params: query, limit, offset, project, type (entity: observations/sessions/prompts), obs_type (observation type: discovery/bugfix/feature/change/refactor/decision), dateStart, dateEnd, orderBy, from_project (cross-project: name or "*")',
     inputSchema: {
       type: 'object',
       properties: {},

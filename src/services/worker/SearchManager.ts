@@ -90,6 +90,18 @@ export class SearchManager {
       normalized.obs_type = normalized.obs_type.split(',').map((s: string) => s.trim()).filter(Boolean);
     }
 
+    // Auto-redirect observation type values passed as `type` to `obs_type`
+    // `type` controls entity category (observations/sessions/prompts),
+    // `obs_type` filters by observation type (discovery/bugfix/feature/change/refactor/decision)
+    const OBS_TYPE_VALUES = new Set(['discovery', 'bugfix', 'feature', 'change', 'refactor', 'decision']);
+    if (normalized.type && typeof normalized.type === 'string' && !normalized.obs_type) {
+      const typeValues = normalized.type.split(',').map((s: string) => s.trim()).filter(Boolean);
+      if (typeValues.every(v => OBS_TYPE_VALUES.has(v))) {
+        normalized.obs_type = typeValues.length === 1 ? typeValues : typeValues;
+        delete normalized.type;
+      }
+    }
+
     // Parse comma-separated type (for filterSchema) into array
     if (normalized.type && typeof normalized.type === 'string' && normalized.type.includes(',')) {
       normalized.type = normalized.type.split(',').map((s: string) => s.trim()).filter(Boolean);
@@ -103,6 +115,18 @@ export class SearchManager {
       };
       delete normalized.dateStart;
       delete normalized.dateEnd;
+    }
+
+    // Parse numeric params from URL query strings (all arrive as strings via Express req.query)
+    const numericKeys = ['limit', 'offset', 'depth_before', 'depth_after', 'anchor', 'max_results'];
+    for (const key of numericKeys) {
+      if (normalized[key] !== undefined && normalized[key] !== null && typeof normalized[key] === 'string') {
+        const parsed = Number(normalized[key]);
+        if (Number.isFinite(parsed)) {
+          normalized[key] = parsed;
+        }
+        // Non-numeric strings (e.g. anchor="S123", anchor="2026-03-29T10:00:00Z") keep original string
+      }
     }
 
     // Parse isFolder boolean from string
@@ -301,8 +325,10 @@ export class SearchManager {
       allResults.sort((a, b) => a.epoch - b.epoch);
     }
 
-    // Apply limit across all types
-    const limitedResults = allResults.slice(0, options.limit || 20);
+    // Apply offset and limit across all types
+    const startOffset = options.offset || 0;
+    const endIndex = startOffset + (options.limit || 20);
+    const limitedResults = allResults.slice(startOffset, endIndex);
 
     // Group by date, then by file within each day
     const cwd = process.cwd();
@@ -368,7 +394,8 @@ export class SearchManager {
    * Tool handler: timeline
    */
   async timeline(args: any): Promise<any> {
-    const { anchor, query, depth_before = 10, depth_after = 10, project } = args;
+    const normalized = this.normalizeParams(args);
+    const { anchor, query, depth_before = 10, depth_after = 10, project } = normalized;
     const cwd = process.cwd();
 
     // Validate: must provide either anchor or query, not both
@@ -1290,8 +1317,9 @@ export class SearchManager {
    * Tool handler: get_recent_context
    */
   async getRecentContext(args: any): Promise<any> {
-    const project = args.project || getProjectName(process.cwd());
-    const limit = args.limit || 3;
+    const normalized = this.normalizeParams(args);
+    const project = normalized.project || getProjectName(process.cwd());
+    const limit = normalized.limit || 3;
 
     const sessions = this.sessionStore.getRecentSessionsWithStatus(project, limit);
 
@@ -1416,7 +1444,8 @@ export class SearchManager {
    * Tool handler: get_context_timeline
    */
   async getContextTimeline(args: any): Promise<any> {
-    const { anchor, depth_before = 10, depth_after = 10, project } = args;
+    const normalized = this.normalizeParams(args);
+    const { anchor, depth_before = 10, depth_after = 10, project } = normalized;
     const cwd = process.cwd();
     let anchorEpoch: number;
     let anchorId: string | number = anchor;
@@ -1628,7 +1657,8 @@ export class SearchManager {
    * Tool handler: get_timeline_by_query
    */
   async getTimelineByQuery(args: any): Promise<any> {
-    const { query, mode = 'auto', depth_before = 10, depth_after = 10, limit = 5, project } = args;
+    const normalized = this.normalizeParams(args);
+    const { query, mode = 'auto', depth_before = 10, depth_after = 10, limit = 5, project } = normalized;
     const cwd = process.cwd();
 
     // Step 1: Search for observations
