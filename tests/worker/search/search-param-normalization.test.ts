@@ -61,6 +61,35 @@ beforeAll(() => {
     );
   }
 
+  db.run('PRAGMA foreign_keys = ON');
+
+  // Insert matching sdk_sessions for summary FKs, then session summaries
+  for (let i = 0; i < 5; i++) {
+    const epoch = now - (10 - i) * 60000;
+    db.run(`INSERT OR IGNORE INTO sdk_sessions (content_session_id, memory_session_id, project, started_at, started_at_epoch, status)
+            VALUES (?, ?, 'test-project', datetime(? / 1000, 'unixepoch'), ?, 'completed')`,
+      [`test-cs-s${i}`, `test-ms-summary-${i}`, epoch, epoch]
+    );
+    db.run(`INSERT INTO session_summaries (memory_session_id, project, request, investigated, learned, completed, next_steps, files_read, files_edited, notes, created_at, created_at_epoch)
+            VALUES (?, 'test-project', ?, 'investigated text', 'learned text', 'completed text', 'next steps', '[]', '[]', '', datetime(? / 1000, 'unixepoch'), ?)`,
+      [
+        `test-ms-summary-${i}`,
+        `Test Summary ${i + 1}`,
+        epoch,
+        epoch
+      ]
+    );
+  }
+
+  // Insert user prompts with different timestamps
+  for (let i = 0; i < 5; i++) {
+    const epoch = now - (10 - i) * 60000;
+    db.run(`INSERT INTO user_prompts (content_session_id, prompt_number, prompt_text, created_at, created_at_epoch)
+            VALUES ('test-cs', ?, ?, datetime(? / 1000, 'unixepoch'), ?)`,
+      [i + 1, `Test Prompt ${i + 1}`, epoch, epoch]
+    );
+  }
+
   // Create SessionSearch and SessionStore from same DB path
   sessionSearch = new SessionSearch(dbPath);
   sessionStore = new SessionStore(dbPath);
@@ -313,5 +342,243 @@ describe('Bug 4: timeline anchor/depth string coercion', () => {
 
     // Should attempt session lookup (may fail with "not found" but not "Invalid timestamp")
     expect(result).toBeDefined();
+  });
+});
+
+describe('P0: dateStart/dateEnd epoch coercion', () => {
+  it('epoch string dateStart filters correctly', async () => {
+    // Get all observations to find a valid epoch range
+    const all = await searchManager.search({
+      project: 'test-project',
+      limit: '100',
+      format: 'json'
+    });
+    expect(all.observations.length).toBeGreaterThan(0);
+
+    // Use earliest observation epoch - 1ms as dateStart (should return all)
+    const earliestEpoch = Math.min(...all.observations.map((o: any) => o.created_at_epoch));
+    const result = await searchManager.search({
+      project: 'test-project',
+      dateStart: String(earliestEpoch - 1),
+      limit: '100',
+      format: 'json'
+    });
+    // Before fix: NaN comparison → 0 results. After fix: returns all.
+    expect(result.observations.length).toBe(all.observations.length);
+  });
+
+  it('ISO string dateStart still works', async () => {
+    // ISO string should NOT be converted to number (Number("2020-01-01") = NaN, keeps as string)
+    const result = await searchManager.search({
+      project: 'test-project',
+      dateStart: '2020-01-01',
+      limit: '100',
+      format: 'json'
+    });
+    // Should return results (all test data is after 2020)
+    expect(result.observations.length).toBeGreaterThan(0);
+  });
+
+  it('epoch string dateEnd filters correctly', async () => {
+    const all = await searchManager.search({
+      project: 'test-project',
+      limit: '100',
+      format: 'json'
+    });
+    const latestEpoch = Math.max(...all.observations.map((o: any) => o.created_at_epoch));
+
+    // dateEnd = earliest epoch → should return only the earliest observation
+    const earliestEpoch = Math.min(...all.observations.map((o: any) => o.created_at_epoch));
+    const result = await searchManager.search({
+      project: 'test-project',
+      dateEnd: String(earliestEpoch),
+      limit: '100',
+      format: 'json'
+    });
+    expect(result.observations.length).toBeLessThan(all.observations.length);
+    expect(result.observations.length).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe('P3: unified pagination — no double-offset', () => {
+  it('filter-only offset does not double-apply', async () => {
+    // Get all results (no offset)
+    const all = await searchManager.search({
+      project: 'test-project',
+      limit: '100',
+      offset: '0',
+      orderBy: 'date_desc',
+      format: 'json'
+    });
+    const totalCount = all.observations.length;
+    expect(totalCount).toBeGreaterThanOrEqual(5); // We have 10 test observations
+
+    // Offset=2 should skip exactly 2
+    const offset2 = await searchManager.search({
+      project: 'test-project',
+      limit: '100',
+      offset: '2',
+      orderBy: 'date_desc',
+      format: 'json'
+    });
+    expect(offset2.observations.length).toBe(totalCount - 2);
+
+    // Offset=5 should skip exactly 5
+    const offset5 = await searchManager.search({
+      project: 'test-project',
+      limit: '100',
+      offset: '5',
+      orderBy: 'date_desc',
+      format: 'json'
+    });
+    expect(offset5.observations.length).toBe(totalCount - 5);
+  });
+
+  it('json and text format return same data for same offset+limit', async () => {
+    const jsonResult = await searchManager.search({
+      project: 'test-project',
+      limit: '3',
+      offset: '2',
+      orderBy: 'date_desc',
+      format: 'json'
+    });
+
+    const textResult = await searchManager.search({
+      project: 'test-project',
+      limit: '3',
+      offset: '2',
+      orderBy: 'date_desc'
+      // no format → text
+    });
+
+    // json should have 3 observations (offset=2, limit=3 from 10 total)
+    expect(jsonResult.observations.length).toBe(3);
+
+    // text result should mention the same observation titles
+    const textContent = textResult.content?.[0]?.text || '';
+    for (const obs of jsonResult.observations) {
+      expect(textContent).toContain(obs.title);
+    }
+  });
+
+  it('offset+limit pagination returns correct window', async () => {
+    // Get observations sorted by date_desc, check offset=0 limit=3 vs offset=3 limit=3
+    const page1 = await searchManager.search({
+      project: 'test-project',
+      limit: '3',
+      offset: '0',
+      orderBy: 'date_desc',
+      format: 'json'
+    });
+    const page2 = await searchManager.search({
+      project: 'test-project',
+      limit: '3',
+      offset: '3',
+      orderBy: 'date_desc',
+      format: 'json'
+    });
+
+    expect(page1.observations.length).toBe(3);
+    expect(page2.observations.length).toBe(3);
+
+    // No overlap between pages
+    const page1Ids = page1.observations.map((o: any) => o.id);
+    const page2Ids = page2.observations.map((o: any) => o.id);
+    for (const id of page1Ids) {
+      expect(page2Ids).not.toContain(id);
+    }
+  });
+
+  it('json format returns structured empty response on zero results', async () => {
+    // Query with impossible filter — should return structured json, not text "No results found"
+    const result = await searchManager.search({
+      project: 'nonexistent-project-xyz',
+      limit: '10',
+      format: 'json'
+    });
+    expect(result).toEqual({
+      observations: [],
+      sessions: [],
+      prompts: [],
+      totalResults: 0,
+      query: ''
+    });
+  });
+
+  it('multi-type pagination returns all entity types with correct offset', async () => {
+    // Query all types (no type filter) — should return observations + sessions + prompts
+    const all = await searchManager.search({
+      project: 'test-project',
+      limit: '100',
+      offset: '0',
+      orderBy: 'date_desc',
+      format: 'json'
+    });
+
+    // Verify all three entity types are present (from Step 0 test data)
+    expect(all.observations.length).toBeGreaterThan(0);
+    expect(all.sessions.length).toBeGreaterThan(0);
+    expect(all.prompts.length).toBeGreaterThan(0);
+    const totalAll = all.observations.length + all.sessions.length + all.prompts.length;
+    expect(all.totalResults).toBe(totalAll);
+
+    // With offset, total count should be consistent but returned items fewer
+    const withOffset = await searchManager.search({
+      project: 'test-project',
+      limit: '100',
+      offset: '5',
+      orderBy: 'date_desc',
+      format: 'json'
+    });
+    const returnedWithOffset = withOffset.observations.length + withOffset.sessions.length + withOffset.prompts.length;
+    expect(returnedWithOffset).toBe(totalAll - 5);
+    // totalResults should still reflect the unsliced count
+    expect(withOffset.totalResults).toBe(totalAll);
+  });
+
+  it('Chroma query path applies unified offset+limit for json results', async () => {
+    // Build expected ordering from real observation data
+    const all = await searchManager.search({
+      project: 'test-project',
+      limit: '100',
+      orderBy: 'date_desc',
+      format: 'json'
+    });
+    const seed = all.observations.slice(0, 6);
+    expect(seed.length).toBe(6);
+
+    // Mock Chroma to return those 6 observation IDs in ranked order
+    const chromaManager = new SearchManager(
+      sessionSearch,
+      sessionStore,
+      {
+        queryChroma: async () => ({
+          ids: seed.map((o: any) => o.id),
+          distances: seed.map((_o: any, i: number) => i / 100),
+          metadatas: seed.map((o: any) => ({
+            doc_type: 'observation',
+            created_at_epoch: o.created_at_epoch
+          }))
+        })
+      } as any,
+      new FormattingService(),
+      new TimelineService()
+    );
+
+    const result = await chromaManager.search({
+      query: 'semantic test query',
+      project: 'test-project',
+      limit: '3',
+      offset: '2',
+      orderBy: 'date_desc',
+      format: 'json'
+    });
+
+    expect(result.observations.length).toBe(3);
+    expect(result.sessions.length).toBe(0);
+    expect(result.prompts.length).toBe(0);
+    expect(result.observations.map((o: any) => o.title)).toEqual(
+      seed.slice(2, 5).map((o: any) => o.title)
+    );
   });
 });

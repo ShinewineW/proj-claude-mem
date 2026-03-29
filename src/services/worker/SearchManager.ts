@@ -1,16 +1,8 @@
 /**
  * SearchManager - Core search orchestration for claude-mem
  *
- * This class is a thin wrapper that delegates to the modular search infrastructure.
- * It maintains the same public interface for backward compatibility.
- *
- * The actual search logic is now in:
- * - SearchOrchestrator: Strategy selection and coordination
- * - ChromaSearchStrategy: Vector-based semantic search
- * - SQLiteSearchStrategy: Filter-only queries
- * - HybridSearchStrategy: Metadata filtering + semantic ranking
- * - ResultFormatter: Output formatting
- * - TimelineBuilder: Timeline construction
+ * Implements search, timeline, and context retrieval methods.
+ * Uses ChromaSync for vector search, SessionSearch for filter-only queries.
  */
 
 import { getProjectName } from '../../utils/project-name.js';
@@ -25,34 +17,27 @@ import { logger } from '../../utils/logger.js';
 import { formatDate, formatTime, formatDateTime, extractFirstFile, groupByDate, estimateTokens } from '../../shared/timeline-formatting.js';
 import { ModeManager } from '../domain/ModeManager.js';
 
-import { SearchOrchestrator } from './search/SearchOrchestrator.js';
-import { TimelineBuilder } from './search/TimelineBuilder.js';
-import type { TimelineData } from './search/TimelineBuilder.js';
 import { SEARCH_CONSTANTS } from './search/types.js';
 
-export class SearchManager {
-  private orchestrator: SearchOrchestrator;
-  private timelineBuilder: TimelineBuilder;
+/** Observation type values that belong in obs_type, not entity-level type */
+const OBS_TYPE_VALUES = new Set(['discovery', 'bugfix', 'feature', 'change', 'refactor', 'decision']);
 
+/** Split a comma-separated string into a trimmed, non-empty array */
+function splitCSV(value: string): string[] {
+  return value.split(',').map(s => s.trim()).filter(Boolean);
+}
+
+export class SearchManager {
   constructor(
     private sessionSearch: SessionSearch,
     private sessionStore: SessionStore,
     private chromaSync: ChromaSync | null,
     private formatter: FormattingService,
     private timelineService: TimelineService
-  ) {
-    // Initialize the new modular search infrastructure
-    this.orchestrator = new SearchOrchestrator(
-      sessionSearch,
-      sessionStore,
-      chromaSync
-    );
-    this.timelineBuilder = new TimelineBuilder();
-  }
+  ) {}
 
   /**
    * Query Chroma vector database via ChromaSync
-   * @deprecated Use orchestrator.search() instead
    */
   private async queryChroma(
     query: string,
@@ -75,58 +60,51 @@ export class SearchManager {
       delete normalized.filePath;
     }
 
-    // Parse comma-separated concepts into array
-    if (normalized.concepts && typeof normalized.concepts === 'string') {
-      normalized.concepts = normalized.concepts.split(',').map((s: string) => s.trim()).filter(Boolean);
+    // Parse comma-separated string params into arrays
+    for (const key of ['concepts', 'files', 'obs_type'] as const) {
+      if (normalized[key] && typeof normalized[key] === 'string') {
+        normalized[key] = splitCSV(normalized[key]);
+      }
     }
 
-    // Parse comma-separated files into array
-    if (normalized.files && typeof normalized.files === 'string') {
-      normalized.files = normalized.files.split(',').map((s: string) => s.trim()).filter(Boolean);
-    }
-
-    // Parse comma-separated obs_type into array
-    if (normalized.obs_type && typeof normalized.obs_type === 'string') {
-      normalized.obs_type = normalized.obs_type.split(',').map((s: string) => s.trim()).filter(Boolean);
-    }
-
-    // Auto-redirect observation type values passed as `type` to `obs_type`
+    // Auto-redirect observation type values passed as `type` to `obs_type`.
     // `type` controls entity category (observations/sessions/prompts),
-    // `obs_type` filters by observation type (discovery/bugfix/feature/change/refactor/decision)
-    const OBS_TYPE_VALUES = new Set(['discovery', 'bugfix', 'feature', 'change', 'refactor', 'decision']);
+    // `obs_type` filters by observation type (discovery/bugfix/feature/change/refactor/decision).
     if (normalized.type && typeof normalized.type === 'string' && !normalized.obs_type) {
-      const typeValues = normalized.type.split(',').map((s: string) => s.trim()).filter(Boolean);
+      const typeValues = splitCSV(normalized.type);
       if (typeValues.every(v => OBS_TYPE_VALUES.has(v))) {
-        normalized.obs_type = typeValues.length === 1 ? typeValues : typeValues;
+        normalized.obs_type = typeValues;
         delete normalized.type;
       }
     }
 
     // Parse comma-separated type (for filterSchema) into array
     if (normalized.type && typeof normalized.type === 'string' && normalized.type.includes(',')) {
-      normalized.type = normalized.type.split(',').map((s: string) => s.trim()).filter(Boolean);
+      normalized.type = splitCSV(normalized.type);
     }
 
-    // Flatten dateStart/dateEnd into dateRange object
-    if (normalized.dateStart || normalized.dateEnd) {
+    // Parse numeric params from URL query strings (all arrive as strings via Express req.query)
+    // MUST run BEFORE dateRange wrapping so dateStart/dateEnd are converted before packaging.
+    // ISO strings like "2026-03-29" → Number() = NaN → isFinite = false → kept as string (correct).
+    const numericKeys = ['limit', 'offset', 'depth_before', 'depth_after', 'anchor', 'dateStart', 'dateEnd'];
+    for (const key of numericKeys) {
+      if (typeof normalized[key] === 'string') {
+        const parsed = Number(normalized[key]);
+        if (Number.isFinite(parsed)) {
+          normalized[key] = parsed;
+        }
+        // Non-numeric strings (e.g. anchor="S123", dateStart="2026-03-29") keep original string
+      }
+    }
+
+    // Flatten dateStart/dateEnd into dateRange object (after numeric conversion)
+    if (normalized.dateStart !== undefined || normalized.dateEnd !== undefined) {
       normalized.dateRange = {
         start: normalized.dateStart,
         end: normalized.dateEnd
       };
       delete normalized.dateStart;
       delete normalized.dateEnd;
-    }
-
-    // Parse numeric params from URL query strings (all arrive as strings via Express req.query)
-    const numericKeys = ['limit', 'offset', 'depth_before', 'depth_after', 'anchor', 'max_results'];
-    for (const key of numericKeys) {
-      if (normalized[key] !== undefined && normalized[key] !== null && typeof normalized[key] === 'string') {
-        const parsed = Number(normalized[key]);
-        if (Number.isFinite(parsed)) {
-          normalized[key] = parsed;
-        }
-        // Non-numeric strings (e.g. anchor="S123", anchor="2026-03-29T10:00:00Z") keep original string
-      }
     }
 
     // Parse isFolder boolean from string
@@ -158,17 +136,21 @@ export class SearchManager {
 
     // PATH 1: FILTER-ONLY (no query text) - Skip Chroma/FTS5, use direct SQLite filtering
     // This path enables date filtering which Chroma cannot do (requires direct SQLite access)
+    // Strip limit/offset — pagination is handled uniformly by post-processing (P3 fix).
+    // Pass high ceiling limit to override SessionSearch defaults (50/20) which would silently truncate.
     if (!query) {
       logger.debug('SEARCH', 'Filter-only query (no query text), using direct SQLite filtering', { enablesDateFilters: true });
-      const obsOptions = { ...options, type: obs_type, concepts, files };
+      const { limit: _l, offset: _o, ...filterOptions } = options;
+      const unlimitedOptions = { ...filterOptions, limit: 10000, offset: 0 };
+      const obsFilterOptions = { ...unlimitedOptions, type: obs_type, concepts, files };
       if (searchObservations) {
-        observations = this.sessionSearch.searchObservations(undefined, obsOptions);
+        observations = this.sessionSearch.searchObservations(undefined, obsFilterOptions);
       }
       if (searchSessions) {
-        sessions = this.sessionSearch.searchSessions(undefined, options);
+        sessions = this.sessionSearch.searchSessions(undefined, unlimitedOptions);
       }
       if (searchPrompts) {
-        prompts = this.sessionSearch.searchUserPrompts(undefined, options);
+        prompts = this.sessionSearch.searchUserPrompts(undefined, unlimitedOptions);
       }
     }
     // PATH 2: CHROMA SEMANTIC SEARCH (query text + Chroma available)
@@ -231,16 +213,31 @@ export class SearchManager {
         logger.debug('SEARCH', 'Categorized results by type', { observations: obsIds.length, sessions: sessionIds.length, prompts: prompts.length });
 
         // Step 4: Hydrate from SQLite with additional filters
+        // Chroma hydration must NOT pre-apply limit/offset.
+        // Unified pagination happens later on allResults.slice(...).
+        const chromaOrderBy = options.orderBy === 'date_asc' ? 'date_asc' : 'date_desc';
+        const obsHydrationOptions = {
+          orderBy: chromaOrderBy,
+          project: options.project,
+          type: obs_type,
+          concepts,
+          files
+        };
+
         if (obsIds.length > 0) {
-          // Apply obs_type, concepts, files filters if provided
-          const obsOptions = { ...options, type: obs_type, concepts, files };
-          observations = this.sessionStore.getObservationsByIds(obsIds, obsOptions);
+          observations = this.sessionStore.getObservationsByIds(obsIds, obsHydrationOptions);
         }
         if (sessionIds.length > 0) {
-          sessions = this.sessionStore.getSessionSummariesByIds(sessionIds, { orderBy: 'date_desc', limit: options.limit, project: options.project });
+          sessions = this.sessionStore.getSessionSummariesByIds(sessionIds, {
+            orderBy: chromaOrderBy,
+            project: options.project
+          });
         }
         if (promptIds.length > 0) {
-          prompts = this.sessionStore.getUserPromptsByIds(promptIds, { orderBy: 'date_desc', limit: options.limit, project: options.project });
+          prompts = this.sessionStore.getUserPromptsByIds(promptIds, {
+            orderBy: chromaOrderBy,
+            project: options.project
+          });
         }
 
         logger.debug('SEARCH', 'Hydrated results from SQLite', { observations: observations.length, sessions: sessions.length, prompts: prompts.length });
@@ -261,15 +258,10 @@ export class SearchManager {
 
     const totalResults = observations.length + sessions.length + prompts.length;
 
-    // JSON format: return raw data for programmatic access (e.g., export scripts)
-    if (format === 'json') {
-      return {
-        observations,
-        sessions,
-        prompts,
-        totalResults,
-        query: query || ''
-      };
+    // JSON format: return structured empty response for zero results (P3 fix — Issue 1).
+    // Without this guard, json callers would receive text-format "No results found" string.
+    if (format === 'json' && totalResults === 0) {
+      return { observations: [], sessions: [], prompts: [], totalResults: 0, query: query || '' };
     }
 
     if (totalResults === 0) {
@@ -329,6 +321,17 @@ export class SearchManager {
     const startOffset = options.offset || 0;
     const endIndex = startOffset + (options.limit || 20);
     const limitedResults = allResults.slice(startOffset, endIndex);
+
+    // JSON format: return raw data after unified pagination (P3 fix)
+    if (format === 'json') {
+      return {
+        observations: limitedResults.filter(r => r.type === 'observation').map(r => r.data),
+        sessions: limitedResults.filter(r => r.type === 'session').map(r => r.data),
+        prompts: limitedResults.filter(r => r.type === 'prompt').map(r => r.data),
+        totalResults,
+        query: query || ''
+      };
+    }
 
     // Group by date, then by file within each day
     const cwd = process.cwd();
