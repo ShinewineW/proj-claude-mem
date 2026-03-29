@@ -1,16 +1,8 @@
 /**
  * SearchManager - Core search orchestration for claude-mem
  *
- * This class is a thin wrapper that delegates to the modular search infrastructure.
- * It maintains the same public interface for backward compatibility.
- *
- * The actual search logic is now in:
- * - SearchOrchestrator: Strategy selection and coordination
- * - ChromaSearchStrategy: Vector-based semantic search
- * - SQLiteSearchStrategy: Filter-only queries
- * - HybridSearchStrategy: Metadata filtering + semantic ranking
- * - ResultFormatter: Output formatting
- * - TimelineBuilder: Timeline construction
+ * Implements search, timeline, and context retrieval methods.
+ * Uses ChromaSync for vector search, SessionSearch for filter-only queries.
  */
 
 import { getProjectName } from '../../utils/project-name.js';
@@ -25,30 +17,16 @@ import { logger } from '../../utils/logger.js';
 import { formatDate, formatTime, formatDateTime, extractFirstFile, groupByDate, estimateTokens } from '../../shared/timeline-formatting.js';
 import { ModeManager } from '../domain/ModeManager.js';
 
-import { SearchOrchestrator } from './search/SearchOrchestrator.js';
-import { TimelineBuilder } from './search/TimelineBuilder.js';
-import type { TimelineData } from './search/TimelineBuilder.js';
 import { SEARCH_CONSTANTS } from './search/types.js';
 
 export class SearchManager {
-  private orchestrator: SearchOrchestrator;
-  private timelineBuilder: TimelineBuilder;
-
   constructor(
     private sessionSearch: SessionSearch,
     private sessionStore: SessionStore,
     private chromaSync: ChromaSync | null,
     private formatter: FormattingService,
     private timelineService: TimelineService
-  ) {
-    // Initialize the new modular search infrastructure
-    this.orchestrator = new SearchOrchestrator(
-      sessionSearch,
-      sessionStore,
-      chromaSync
-    );
-    this.timelineBuilder = new TimelineBuilder();
-  }
+  ) {}
 
   /**
    * Query Chroma vector database via ChromaSync
