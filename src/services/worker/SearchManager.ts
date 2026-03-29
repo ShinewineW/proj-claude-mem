@@ -19,6 +19,14 @@ import { ModeManager } from '../domain/ModeManager.js';
 
 import { SEARCH_CONSTANTS } from './search/types.js';
 
+/** Observation type values that belong in obs_type, not entity-level type */
+const OBS_TYPE_VALUES = new Set(['discovery', 'bugfix', 'feature', 'change', 'refactor', 'decision']);
+
+/** Split a comma-separated string into a trimmed, non-empty array */
+function splitCSV(value: string): string[] {
+  return value.split(',').map(s => s.trim()).filter(Boolean);
+}
+
 export class SearchManager {
   constructor(
     private sessionSearch: SessionSearch,
@@ -52,27 +60,18 @@ export class SearchManager {
       delete normalized.filePath;
     }
 
-    // Parse comma-separated concepts into array
-    if (normalized.concepts && typeof normalized.concepts === 'string') {
-      normalized.concepts = normalized.concepts.split(',').map((s: string) => s.trim()).filter(Boolean);
+    // Parse comma-separated string params into arrays
+    for (const key of ['concepts', 'files', 'obs_type'] as const) {
+      if (normalized[key] && typeof normalized[key] === 'string') {
+        normalized[key] = splitCSV(normalized[key]);
+      }
     }
 
-    // Parse comma-separated files into array
-    if (normalized.files && typeof normalized.files === 'string') {
-      normalized.files = normalized.files.split(',').map((s: string) => s.trim()).filter(Boolean);
-    }
-
-    // Parse comma-separated obs_type into array
-    if (normalized.obs_type && typeof normalized.obs_type === 'string') {
-      normalized.obs_type = normalized.obs_type.split(',').map((s: string) => s.trim()).filter(Boolean);
-    }
-
-    // Auto-redirect observation type values passed as `type` to `obs_type`
+    // Auto-redirect observation type values passed as `type` to `obs_type`.
     // `type` controls entity category (observations/sessions/prompts),
-    // `obs_type` filters by observation type (discovery/bugfix/feature/change/refactor/decision)
-    const OBS_TYPE_VALUES = new Set(['discovery', 'bugfix', 'feature', 'change', 'refactor', 'decision']);
+    // `obs_type` filters by observation type (discovery/bugfix/feature/change/refactor/decision).
     if (normalized.type && typeof normalized.type === 'string' && !normalized.obs_type) {
-      const typeValues = normalized.type.split(',').map((s: string) => s.trim()).filter(Boolean);
+      const typeValues = splitCSV(normalized.type);
       if (typeValues.every(v => OBS_TYPE_VALUES.has(v))) {
         normalized.obs_type = typeValues;
         delete normalized.type;
@@ -81,7 +80,7 @@ export class SearchManager {
 
     // Parse comma-separated type (for filterSchema) into array
     if (normalized.type && typeof normalized.type === 'string' && normalized.type.includes(',')) {
-      normalized.type = normalized.type.split(',').map((s: string) => s.trim()).filter(Boolean);
+      normalized.type = splitCSV(normalized.type);
     }
 
     // Parse numeric params from URL query strings (all arrive as strings via Express req.query)
@@ -89,7 +88,7 @@ export class SearchManager {
     // ISO strings like "2026-03-29" → Number() = NaN → isFinite = false → kept as string (correct).
     const numericKeys = ['limit', 'offset', 'depth_before', 'depth_after', 'anchor', 'dateStart', 'dateEnd'];
     for (const key of numericKeys) {
-      if (normalized[key] !== undefined && normalized[key] !== null && typeof normalized[key] === 'string') {
+      if (typeof normalized[key] === 'string') {
         const parsed = Number(normalized[key]);
         if (Number.isFinite(parsed)) {
           normalized[key] = parsed;
