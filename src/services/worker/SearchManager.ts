@@ -52,7 +52,6 @@ export class SearchManager {
 
   /**
    * Query Chroma vector database via ChromaSync
-   * @deprecated Use orchestrator.search() instead
    */
   private async queryChroma(
     query: string,
@@ -97,7 +96,7 @@ export class SearchManager {
     if (normalized.type && typeof normalized.type === 'string' && !normalized.obs_type) {
       const typeValues = normalized.type.split(',').map((s: string) => s.trim()).filter(Boolean);
       if (typeValues.every(v => OBS_TYPE_VALUES.has(v))) {
-        normalized.obs_type = typeValues.length === 1 ? typeValues : typeValues;
+        normalized.obs_type = typeValues;
         delete normalized.type;
       }
     }
@@ -107,26 +106,28 @@ export class SearchManager {
       normalized.type = normalized.type.split(',').map((s: string) => s.trim()).filter(Boolean);
     }
 
-    // Flatten dateStart/dateEnd into dateRange object
-    if (normalized.dateStart || normalized.dateEnd) {
-      normalized.dateRange = {
-        start: normalized.dateStart,
-        end: normalized.dateEnd
-      };
-      delete normalized.dateStart;
-      delete normalized.dateEnd;
-    }
-
     // Parse numeric params from URL query strings (all arrive as strings via Express req.query)
-    const numericKeys = ['limit', 'offset', 'depth_before', 'depth_after', 'anchor', 'max_results'];
+    // MUST run BEFORE dateRange wrapping so dateStart/dateEnd are converted before packaging.
+    // ISO strings like "2026-03-29" → Number() = NaN → isFinite = false → kept as string (correct).
+    const numericKeys = ['limit', 'offset', 'depth_before', 'depth_after', 'anchor', 'dateStart', 'dateEnd'];
     for (const key of numericKeys) {
       if (normalized[key] !== undefined && normalized[key] !== null && typeof normalized[key] === 'string') {
         const parsed = Number(normalized[key]);
         if (Number.isFinite(parsed)) {
           normalized[key] = parsed;
         }
-        // Non-numeric strings (e.g. anchor="S123", anchor="2026-03-29T10:00:00Z") keep original string
+        // Non-numeric strings (e.g. anchor="S123", dateStart="2026-03-29") keep original string
       }
+    }
+
+    // Flatten dateStart/dateEnd into dateRange object (after numeric conversion)
+    if (normalized.dateStart !== undefined || normalized.dateEnd !== undefined) {
+      normalized.dateRange = {
+        start: normalized.dateStart,
+        end: normalized.dateEnd
+      };
+      delete normalized.dateStart;
+      delete normalized.dateEnd;
     }
 
     // Parse isFolder boolean from string
@@ -158,17 +159,21 @@ export class SearchManager {
 
     // PATH 1: FILTER-ONLY (no query text) - Skip Chroma/FTS5, use direct SQLite filtering
     // This path enables date filtering which Chroma cannot do (requires direct SQLite access)
+    // Strip limit/offset — pagination is handled uniformly by post-processing (P3 fix).
+    // Pass high ceiling limit to override SessionSearch defaults (50/20) which would silently truncate.
     if (!query) {
       logger.debug('SEARCH', 'Filter-only query (no query text), using direct SQLite filtering', { enablesDateFilters: true });
-      const obsOptions = { ...options, type: obs_type, concepts, files };
+      const { limit: _l, offset: _o, ...filterOptions } = options;
+      const unlimitedOptions = { ...filterOptions, limit: 10000, offset: 0 };
+      const obsFilterOptions = { ...unlimitedOptions, type: obs_type, concepts, files };
       if (searchObservations) {
-        observations = this.sessionSearch.searchObservations(undefined, obsOptions);
+        observations = this.sessionSearch.searchObservations(undefined, obsFilterOptions);
       }
       if (searchSessions) {
-        sessions = this.sessionSearch.searchSessions(undefined, options);
+        sessions = this.sessionSearch.searchSessions(undefined, unlimitedOptions);
       }
       if (searchPrompts) {
-        prompts = this.sessionSearch.searchUserPrompts(undefined, options);
+        prompts = this.sessionSearch.searchUserPrompts(undefined, unlimitedOptions);
       }
     }
     // PATH 2: CHROMA SEMANTIC SEARCH (query text + Chroma available)
@@ -231,16 +236,31 @@ export class SearchManager {
         logger.debug('SEARCH', 'Categorized results by type', { observations: obsIds.length, sessions: sessionIds.length, prompts: prompts.length });
 
         // Step 4: Hydrate from SQLite with additional filters
+        // Chroma hydration must NOT pre-apply limit/offset.
+        // Unified pagination happens later on allResults.slice(...).
+        const chromaOrderBy = options.orderBy === 'date_asc' ? 'date_asc' : 'date_desc';
+        const obsHydrationOptions = {
+          orderBy: chromaOrderBy,
+          project: options.project,
+          type: obs_type,
+          concepts,
+          files
+        };
+
         if (obsIds.length > 0) {
-          // Apply obs_type, concepts, files filters if provided
-          const obsOptions = { ...options, type: obs_type, concepts, files };
-          observations = this.sessionStore.getObservationsByIds(obsIds, obsOptions);
+          observations = this.sessionStore.getObservationsByIds(obsIds, obsHydrationOptions);
         }
         if (sessionIds.length > 0) {
-          sessions = this.sessionStore.getSessionSummariesByIds(sessionIds, { orderBy: 'date_desc', limit: options.limit, project: options.project });
+          sessions = this.sessionStore.getSessionSummariesByIds(sessionIds, {
+            orderBy: chromaOrderBy,
+            project: options.project
+          });
         }
         if (promptIds.length > 0) {
-          prompts = this.sessionStore.getUserPromptsByIds(promptIds, { orderBy: 'date_desc', limit: options.limit, project: options.project });
+          prompts = this.sessionStore.getUserPromptsByIds(promptIds, {
+            orderBy: chromaOrderBy,
+            project: options.project
+          });
         }
 
         logger.debug('SEARCH', 'Hydrated results from SQLite', { observations: observations.length, sessions: sessions.length, prompts: prompts.length });
@@ -261,15 +281,10 @@ export class SearchManager {
 
     const totalResults = observations.length + sessions.length + prompts.length;
 
-    // JSON format: return raw data for programmatic access (e.g., export scripts)
-    if (format === 'json') {
-      return {
-        observations,
-        sessions,
-        prompts,
-        totalResults,
-        query: query || ''
-      };
+    // JSON format: return structured empty response for zero results (P3 fix — Issue 1).
+    // Without this guard, json callers would receive text-format "No results found" string.
+    if (format === 'json' && totalResults === 0) {
+      return { observations: [], sessions: [], prompts: [], totalResults: 0, query: query || '' };
     }
 
     if (totalResults === 0) {
@@ -329,6 +344,17 @@ export class SearchManager {
     const startOffset = options.offset || 0;
     const endIndex = startOffset + (options.limit || 20);
     const limitedResults = allResults.slice(startOffset, endIndex);
+
+    // JSON format: return raw data after unified pagination (P3 fix)
+    if (format === 'json') {
+      return {
+        observations: limitedResults.filter(r => r.type === 'observation').map(r => r.data),
+        sessions: limitedResults.filter(r => r.type === 'session').map(r => r.data),
+        prompts: limitedResults.filter(r => r.type === 'prompt').map(r => r.data),
+        totalResults,
+        query: query || ''
+      };
+    }
 
     // Group by date, then by file within each day
     const cwd = process.cwd();
