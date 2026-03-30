@@ -8,7 +8,33 @@
  * using minimal mocks (in-memory DB + no Chroma).
  */
 
-import { describe, it, expect, beforeAll, afterAll, spyOn, beforeEach, afterEach } from 'bun:test';
+import { describe, it, expect, beforeAll, afterAll, spyOn, beforeEach, afterEach, mock } from 'bun:test';
+
+// ModeManager mock MUST be before imports — other test files mock it with incomplete stubs
+// (missing getTypeIcon), and mock.module() is process-level. Providing a complete stub here
+// ensures FormattingService/SearchManager don't crash on getTypeIcon() in full-suite runs.
+mock.module('../../../src/services/domain/ModeManager.js', () => ({
+  ModeManager: {
+    getInstance: () => ({
+      getActiveMode: () => ({
+        name: 'code',
+        observation_types: [
+          { id: 'discovery' }, { id: 'bugfix' }, { id: 'feature' },
+          { id: 'change' }, { id: 'refactor' }, { id: 'decision' }
+        ],
+      }),
+      getTypeIcon: (type: string) => {
+        const icons: Record<string, string> = {
+          discovery: '🔵', bugfix: '🔴', feature: '🟣',
+          change: '✅', refactor: '🔄', decision: '⚖️'
+        };
+        return icons[type] || '📌';
+      },
+      loadMode: () => {},
+    }),
+  },
+}));
+
 import { Database } from 'bun:sqlite';
 import { join } from 'node:path';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
@@ -20,7 +46,6 @@ import { SessionStore } from '../../../src/services/sqlite/SessionStore.js';
 import { SearchManager } from '../../../src/services/worker/SearchManager.js';
 import { FormattingService } from '../../../src/services/worker/FormattingService.js';
 import { TimelineService } from '../../../src/services/worker/TimelineService.js';
-import { ModeManager } from '../../../src/services/domain/ModeManager.js';
 
 const testDir = join(tmpdir(), `test-search-params-${Date.now()}`);
 const dbPath = join(testDir, 'test.db');
@@ -93,10 +118,6 @@ beforeAll(() => {
   // Create SessionSearch and SessionStore from same DB path
   sessionSearch = new SessionSearch(dbPath);
   sessionStore = new SessionStore(dbPath);
-
-  // Load mode for ModeManager (needed by timeline formatter)
-  // May fail in full-suite runs due to mock.module() from other test files
-  try { ModeManager.getInstance().loadMode('code'); } catch { /* mocked */ }
 
   // SearchManager with no Chroma (filter-only path)
   searchManager = new SearchManager(
