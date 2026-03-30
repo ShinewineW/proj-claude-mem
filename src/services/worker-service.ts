@@ -1118,13 +1118,16 @@ export class WorkerService {
             deleteFallbackFile(filepath);
             continue;
           }
-          this.sessionManager.queueObservation(sessionDbId, {
+          const enqueued = this.sessionManager.queueObservation(sessionDbId, {
             tool_name: toolName,
             tool_input: entry.payload.tool_input,
             tool_response: entry.payload.tool_response,
             cwd: entry.cwd,
             prompt_number: (entry.payload.prompt_number as number) ?? 0
           }, entry.dbPath);
+          if (!enqueued) {
+            logger.info('FALLBACK', 'Replayed observation dropped by backpressure', { sessionDbId });
+          }
         } else if (entry.type === 'summarize') {
           this.sessionManager.queueSummarize(
             sessionDbId,

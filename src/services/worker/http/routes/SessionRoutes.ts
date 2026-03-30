@@ -495,13 +495,18 @@ export class SessionRoutes extends BaseRouteHandler {
 
     const { tool_name, tool_input, tool_response, prompt_number, cwd, dbPath } = req.body;
 
-    this.sessionManager.queueObservation(sessionDbId, {
+    const enqueued = this.sessionManager.queueObservation(sessionDbId, {
       tool_name,
       tool_input,
       tool_response,
       prompt_number,
       cwd
     }, dbPath);
+
+    if (!enqueued) {
+      res.json({ status: 'skipped', reason: 'backpressure' });
+      return;
+    }
 
     // CRITICAL: Ensure SDK agent is running to consume the queue
     this.ensureGeneratorRunning(sessionDbId, 'observation', dbPath);
@@ -665,7 +670,7 @@ export class SessionRoutes extends BaseRouteHandler {
     const cleanedToolResponse = cleanToolField(tool_response);
 
     // Queue observation
-    this.sessionManager.queueObservation(sessionDbId, {
+    const enqueued = this.sessionManager.queueObservation(sessionDbId, {
       tool_name,
       tool_input: cleanedToolInput,
       tool_response: cleanedToolResponse,
@@ -678,6 +683,11 @@ export class SessionRoutes extends BaseRouteHandler {
         return '';
       })()
     }, dbPath);
+
+    if (!enqueued) {
+      res.json({ status: 'skipped', reason: 'backpressure' });
+      return;
+    }
 
     // Ensure SDK agent is running
     this.ensureGeneratorRunning(sessionDbId, 'observation', dbPath);
