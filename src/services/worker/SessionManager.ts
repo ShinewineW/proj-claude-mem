@@ -9,6 +9,7 @@
  */
 
 import { EventEmitter } from 'events';
+import * as fs from 'fs';
 import path from 'path';
 import { DatabaseManager } from './DatabaseManager.js';
 import { logger } from '../../utils/logger.js';
@@ -20,6 +21,13 @@ import { logSDKUsageSummary } from './SDKUsageTelemetry.js';
 import { getBackpressureLevel, applyBackpressure } from './backpressure.js';
 import { SettingsDefaultsManager } from '../../shared/SettingsDefaultsManager.js';
 import { USER_SETTINGS_PATH } from '../../shared/paths.js';
+
+/** Info about sessions removed due to DB unreachable, for caller to handle SSE + bypass */
+export interface DbUnreachableCleanup {
+  sessionDbId: number;
+  project: string;
+  dbPath: string;
+}
 
 export class SessionManager {
   private dbManager: DatabaseManager;
@@ -587,6 +595,17 @@ export class SessionManager {
       // Skip sessions with active generators
       if (session.generatorPromise) continue;
 
+      // S1 reaper auxiliary: sessions with high crash count in active crash-restart cycle
+      if (session.totalLifetimeCrashes > 5 &&
+          (Date.now() - session.lastGeneratorActivity) < 5 * 60 * 1000) {
+        logger.warn('SESSION', `Reaping crash-looping session (${session.totalLifetimeCrashes} lifetime crashes)`, {
+          sessionDbId: session.sessionDbId,
+          totalLifetimeCrashes: session.totalLifetimeCrashes,
+        });
+        toReap.push({ key, sessionDbId: session.sessionDbId, dbPath: session.dbPath });
+        continue;
+      }
+
       // Skip sessions in pool cooldown — timer or ghost cleanup will restart them
       if (session.poolCooldownUntil && Date.now() < session.poolCooldownUntil) continue;
 
@@ -657,11 +676,34 @@ export class SessionManager {
    * Ghost = session is 'active' in DB but absent from in-memory sessions Map.
    * Called from the 2-minute stale reaper interval (worker-service.ts).
    */
-  cleanupGhostSessionsInDb(dbPaths: Set<string>): void {
+  cleanupGhostSessionsInDb(dbPaths: Set<string>): DbUnreachableCleanup[] {
     const now = Date.now();
     const threshold = now - SessionManager.GHOST_SESSION_THRESHOLD_MS;
+    const dbUnreachableCleanups: DbUnreachableCleanup[] = [];
 
     for (const dbPath of dbPaths) {
+      // S5 PRE-CHECK: Verify DB file exists before accessing DbConnectionPool
+      if (!fs.existsSync(dbPath)) {
+        const sessionsToRemove: { sessionDbId: number; project: string }[] = [];
+        for (const [, session] of this.sessions) {
+          if (session.dbPath === dbPath) {
+            sessionsToRemove.push({ sessionDbId: session.sessionDbId, project: session.project });
+          }
+        }
+        for (const { sessionDbId, project } of sessionsToRemove) {
+          this.removeSessionMemoryOnly(sessionDbId, dbPath);
+          dbUnreachableCleanups.push({ sessionDbId, project, dbPath });
+          logger.warn('SESSION', `Ghost cleanup: DB missing, removed session from memory`, {
+            sessionDbId,
+            dbPath,
+          });
+        }
+        try {
+          this.dbManager.getPool().evict(dbPath);
+        } catch {} // Best-effort
+        continue;
+      }
+
       try {
         const sessionStore = this.dbManager.getSessionStore(dbPath);
         const pendingStore = this.getPendingStore(dbPath);
@@ -698,6 +740,23 @@ export class SessionManager {
           logger.info('SESSION', `Reset ${resetCount} stuck processing message(s)`, { dbPath });
         }
       } catch (error) {
+        // S5 CATCH: Check if error is DB unreachable
+        if (error instanceof Error && (error.message.includes('disk I/O error')
+            || error.message.includes('unable to open database file'))) {
+          if (!fs.existsSync(dbPath)) {
+            const toRemoveCatch: { sessionDbId: number; project: string }[] = [];
+            for (const [, session] of this.sessions) {
+              if (session.dbPath === dbPath) toRemoveCatch.push({ sessionDbId: session.sessionDbId, project: session.project });
+            }
+            for (const { sessionDbId, project } of toRemoveCatch) {
+              this.removeSessionMemoryOnly(sessionDbId, dbPath);
+              dbUnreachableCleanups.push({ sessionDbId, project, dbPath });
+            }
+            try {
+              this.dbManager.getPool().evict(dbPath);
+            } catch {}
+          }
+        }
         logger.warn('SESSION', 'Ghost cleanup failed for DB (skipping)', { dbPath }, error as Error);
       }
     }
@@ -720,6 +779,8 @@ export class SessionManager {
         }
       }
     }
+
+    return dbUnreachableCleanups;
   }
 
   /**

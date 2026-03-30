@@ -580,7 +580,18 @@ export class WorkerService {
             logger.info('SYSTEM', `Reaped ${reaped} stale sessions`);
           }
           // Periodic DB ghost scan: clean ghost sessions + stuck processing messages
-          this.sessionManager.cleanupGhostSessionsInDb(this.getEnabledDbPaths());
+          const dbUnreachable = this.sessionManager.cleanupGhostSessionsInDb(this.getEnabledDbPaths());
+          for (const { sessionDbId, project, dbPath } of dbUnreachable) {
+            this.bypassLane.stopForSession(sessionDbId);
+            this.sessionEventBroadcaster.broadcastSessionCompleted(sessionDbId, project);
+            this.sessionEventBroadcaster.broadcastAnomaly({
+              type: 'db_unreachable',
+              sessionDbId,
+              project,
+              dbPath,
+              error: 'DB file missing during ghost cleanup',
+            });
+          }
         } catch (e) {
           logger.error('SYSTEM', 'Stale session reaper error', { error: e instanceof Error ? e.message : String(e) });
         } finally {
