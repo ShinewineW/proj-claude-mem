@@ -27,6 +27,11 @@ function makeSession(overrides: Partial<ActiveSession> = {}): ActiveSession {
     contextResetCount: 0,
     lastGeneratorActivity: Date.now(),
     processingMessageIds: [],
+    totalLifetimeCrashes: 0,
+    consecutiveEmptyObservations: 0,
+    peakConsecutiveEmptyObs: 0,
+    totalPoolTimeouts: 0,
+    lastResponseAt: null,
     ...overrides,
   };
 }

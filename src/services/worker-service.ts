@@ -579,6 +579,29 @@ export class WorkerService {
           if (reaped > 0) {
             logger.info('SYSTEM', `Reaped ${reaped} stale sessions`);
           }
+          // S4: Notify stuck sessions via SSE (10min debounce per session)
+          const STUCK_NOTIFY_COOLDOWN_MS = 10 * 60 * 1000;
+          for (const session of this.sessionManager.getActiveSessions()) {
+            if (!session.generatorPromise && session.poolCooldownUntil === undefined) {
+              if (!isProjectStillValid(session.dbPath)) continue;
+              const pendingStore = this.sessionManager.getPendingMessageStore(session.dbPath);
+              const pendingCount = pendingStore.getPendingCount(session.sessionDbId);
+              const idleMs = Date.now() - session.lastGeneratorActivity;
+              if (pendingCount > 0 && idleMs > 5 * 60 * 1000) {
+                const lastNotified = session.lastStuckNotifiedAt ?? 0;
+                if (Date.now() - lastNotified > STUCK_NOTIFY_COOLDOWN_MS) {
+                  session.lastStuckNotifiedAt = Date.now();
+                  this.sessionEventBroadcaster.broadcastAnomaly({
+                    type: 'session_stuck',
+                    sessionDbId: session.sessionDbId,
+                    project: session.project,
+                    idleSeconds: Math.round(idleMs / 1000),
+                    pendingCount,
+                  });
+                }
+              }
+            }
+          }
           // Periodic DB ghost scan: clean ghost sessions + stuck processing messages
           const dbUnreachable = this.sessionManager.cleanupGhostSessionsInDb(this.getEnabledDbPaths());
           for (const { sessionDbId, project, dbPath } of dbUnreachable) {

@@ -37,6 +37,16 @@ mock.module('../../src/services/worker/ProcessRegistry.js', () => ({
   unregisterProcess: () => {},
 }));
 
+// Mock fs.existsSync to return true for test DB paths (ghost cleanup pre-check)
+const originalFs = await import('fs');
+mock.module('fs', () => ({
+  ...originalFs,
+  existsSync: (path: string) => {
+    if (typeof path === 'string' && (path.includes('test-project') || path.includes('/tmp/'))) return true;
+    return originalFs.existsSync(path);
+  },
+}));
+
 import { DatabaseManager } from '../../src/services/worker/DatabaseManager.js';
 import { SessionManager } from '../../src/services/worker/SessionManager.js';
 
