@@ -47,6 +47,8 @@ import {
   logSDKUsageSummary,
   recordSDKUsage,
 } from "./SDKUsageTelemetry.js";
+import { checkProcessStaleness } from "./stale-detection.js";
+import { processRegistry } from "./ProcessRegistry.js";
 
 // Import Agent SDK (assumes it's installed)
 // @ts-ignore - Agent SDK types may not be available
@@ -129,22 +131,24 @@ export class SDKAgent {
     // Active reclamation callback: detect zombie processes occupying pool slots.
     // Uses dbPath (stored on TrackedProcess) for O(1) composite key lookup,
     // preventing cross-project session collisions (B6 architecture).
+    const staleResponseThresholdMs =
+      parseInt(settings.CLAUDE_MEM_STALE_RESPONSE_THRESHOLD_MS, 10) || 180000;
+    const staleInitThresholdMs =
+      parseInt(settings.CLAUDE_MEM_STALE_INIT_THRESHOLD_MS, 10) || 120000;
+
     const isProcessStale = (
-      _pid: number,
+      pid: number,
       sessionDbId: number,
       dbPath?: string,
     ): boolean => {
-      const occupantSession = this.sessionManager.getSession(
-        sessionDbId,
-        dbPath,
+      const occupantSession = this.sessionManager.getSession(sessionDbId, dbPath);
+      const trackedProcess = processRegistry.get(pid);
+      return checkProcessStaleness(
+        occupantSession,
+        trackedProcess,
+        staleResponseThresholdMs,
+        staleInitThresholdMs,
       );
-      // Session deleted/reaped — process is definitely orphaned
-      if (!occupantSession) return true;
-      // Generator finished but process didn't exit — zombie.
-      // generatorPromise is null only after generator exits (.finally sets it to null);
-      // processes can't be registered before startSession() runs (spawn happens inside query()).
-      if (!occupantSession.generatorPromise) return true;
-      return false;
     };
 
     await waitForSlot(maxConcurrent, undefined, isProcessStale);
@@ -258,6 +262,7 @@ export class SDKAgent {
       resetWatchdog();
       for await (const message of queryResult) {
         resetWatchdog();
+        session.lastResponseAt = Date.now();
         // Capture or update memory session ID from SDK message
         // IMPORTANT: The SDK may return a DIFFERENT session_id on resume than what we sent!
         // We must always sync the DB to match what the SDK actually uses.
