@@ -66,6 +66,12 @@ export interface ActiveSession {
   lastEnqueuedTool?: string;
   lastEnqueuedTarget?: string;
   backpressureCounter?: number;
+  // Generator Safety Net (Phase 2)
+  totalLifetimeCrashes: number;         // Per worker-instance lifetime crash counter (S1)
+  proactiveReset?: boolean;             // Layer C: planned restart, NOT a crash (C2)
+  consecutiveEmptyObservations: number; // S6: consecutive responses with zero observations
+  peakConsecutiveEmptyObs: number;      // S6: peak value for telemetry
+  lastStuckNotifiedAt?: number;         // S4: debounce for session_stuck SSE (10min window)
 }
 
 export interface PendingMessage {

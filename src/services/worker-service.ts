@@ -21,6 +21,13 @@ import { DbConnectionPool } from '../shared/project-db.js';
 import { DB_PATH, USER_SETTINGS_PATH } from '../shared/paths.js';
 import { listEnabledProjects } from '../shared/project-allowlist.js';
 import { shouldEnterCooldown } from './worker/http/routes/pool-cooldown-utils.js';
+import type { ActiveSession } from './worker-types.js';
+import {
+  decideGeneratorAction,
+  isDbIoError,
+  isProjectStillValid,
+  type GeneratorAction,
+} from './worker/generator-action.js';
 
 // Windows: avoid repeated spawn popups when startup fails (issue #921)
 const WINDOWS_SPAWN_COOLDOWN_MS = 2 * 60 * 1000;
@@ -224,6 +231,14 @@ export class WorkerService {
     });
 
     this.sessionManager.setOnStartGenerator((session, source) => {
+      if (!isProjectStillValid(session.dbPath)) {
+        logger.warn('SESSION', `Project invalid, skipping generator start from ${source}`, {
+          sessionDbId: session.sessionDbId,
+        });
+        this.sessionManager.removeSessionMemoryOnly(session.sessionDbId, session.dbPath);
+        this.sessionEventBroadcaster.broadcastSessionCompleted(session.sessionDbId, session.project);
+        return;
+      }
       this.startSessionProcessor(session, source);
     });
 
@@ -564,8 +579,42 @@ export class WorkerService {
           if (reaped > 0) {
             logger.info('SYSTEM', `Reaped ${reaped} stale sessions`);
           }
+          // S4: Notify stuck sessions via SSE (10min debounce per session)
+          const STUCK_NOTIFY_COOLDOWN_MS = 10 * 60 * 1000;
+          for (const session of this.sessionManager.getActiveSessions()) {
+            if (!session.generatorPromise && session.poolCooldownUntil === undefined) {
+              if (!isProjectStillValid(session.dbPath)) continue;
+              const pendingStore = this.sessionManager.getPendingMessageStore(session.dbPath);
+              const pendingCount = pendingStore.getPendingCount(session.sessionDbId);
+              const idleMs = Date.now() - session.lastGeneratorActivity;
+              if (pendingCount > 0 && idleMs > 5 * 60 * 1000) {
+                const lastNotified = session.lastStuckNotifiedAt ?? 0;
+                if (Date.now() - lastNotified > STUCK_NOTIFY_COOLDOWN_MS) {
+                  session.lastStuckNotifiedAt = Date.now();
+                  this.sessionEventBroadcaster.broadcastAnomaly({
+                    type: 'session_stuck',
+                    sessionDbId: session.sessionDbId,
+                    project: session.project,
+                    idleSeconds: Math.round(idleMs / 1000),
+                    pendingCount,
+                  });
+                }
+              }
+            }
+          }
           // Periodic DB ghost scan: clean ghost sessions + stuck processing messages
-          this.sessionManager.cleanupGhostSessionsInDb(this.getEnabledDbPaths());
+          const dbUnreachable = this.sessionManager.cleanupGhostSessionsInDb(this.getEnabledDbPaths());
+          for (const { sessionDbId, project, dbPath } of dbUnreachable) {
+            this.bypassLane.stopForSession(sessionDbId);
+            this.sessionEventBroadcaster.broadcastSessionCompleted(sessionDbId, project);
+            this.sessionEventBroadcaster.broadcastAnomaly({
+              type: 'db_unreachable',
+              sessionDbId,
+              project,
+              dbPath,
+              error: 'DB file missing during ghost cleanup',
+            });
+          }
         } catch (e) {
           logger.error('SYSTEM', 'Stale session reaper error', { error: e instanceof Error ? e.message : String(e) });
         } finally {
@@ -733,195 +782,225 @@ export class WorkerService {
             success: true,
             provider: providerName,
           };
-          session.consecutiveRestarts = 0;  // Reset on success (R1)
+          session.consecutiveRestarts = 0;
         }
 
-        // Create pendingStore early — needed by both unrecoverable-error and restart-limit paths
-        const { PendingMessageStore } = require('./sqlite/PendingMessageStore.js');
-        const pendingStore = new PendingMessageStore(this.dbManager.getSessionStore(session.dbPath).db, 3);
+        // Capture error BEFORE any DB access
+        const lastError = session.lastGeneratorError;
+        session.lastGeneratorError = undefined;
 
-        // Do NOT restart after unrecoverable errors - prevents infinite loops
-        if (hadUnrecoverableError) {
-          // Abandon ALL remaining messages — error will persist on retry
-          let abandonedCount = 0;
-          let retriedCount = 0;
-          try {
-            const result = pendingStore.markAllSessionMessagesAbandoned(session.sessionDbId);
-            abandonedCount = result.failed;
-            retriedCount = result.retried;
-          } catch (abandonErr) {
-            logger.error('SYSTEM', 'Failed to abandon messages after unrecoverable error', {
-              sessionId: session.sessionDbId
-            }, abandonErr as Error);
-          }
-          logger.warn('SYSTEM', `Skipping restart due to unrecoverable error, abandoned ${abandonedCount} messages (${retriedCount} retryable)`, {
-            sessionId: session.sessionDbId,
-            abandonedCount,
-            retriedCount
-          });
-          // Fix C: Remove dead session — prevents futile restart cycles on new hooks
-          try {
-            this.dbManager.getSessionStore(session.dbPath).markSessionFailed(session.sessionDbId);
-            this.sessionManager.removeSessionImmediate(session.sessionDbId, session.dbPath);
-            this.sessionEventBroadcaster.broadcastSessionCompleted(session.sessionDbId, session.project);
-            session.abortController.abort();
-            this.bypassLane.stopForSession(session.sessionDbId);
-          } catch (cleanupErr) {
-            logger.warn('SESSION', 'Failed to cleanup session after unrecoverable error', {
-              sessionDbId: session.sessionDbId
-            }, cleanupErr as Error);
-          }
-          this.broadcastProcessingStatus();
-          return;
+        // [P1-1 fix] DB-unreachable pre-check MUST run BEFORE getSessionStore/getPendingMessageStore.
+        let dbFileExists: boolean | undefined;
+        if (isDbIoError(lastError) && session.dbPath) {
+          dbFileExists = existsSync(session.dbPath);
         }
 
-        // Idle timeout means no new work arrived for 3 minutes - don't restart
-        // No need to reset stale processing messages here — claimNextMessage() self-heals
-        if (session.idleTimedOut) {
-          logger.info('SYSTEM', 'Generator exited due to idle timeout, not restarting', {
-            sessionId: session.sessionDbId
-          });
-          session.idleTimedOut = false; // Reset flag
-          session.lastExitWasIdleTimeout = true; // Persist for reaper: skip futile proactive summarize
-          this.bypassLane.stopForSession(session.sessionDbId);
-          this.broadcastProcessingStatus();
-          return;
+        // Only access DB if project is still valid
+        let pendingCount = 0;
+        let pendingStore: any = null;
+        if (dbFileExists !== false) {
+          const { PendingMessageStore } = await import('./sqlite/PendingMessageStore.js');
+          pendingStore = new PendingMessageStore(this.dbManager.getSessionStore(session.dbPath).db, 3);
+          pendingCount = pendingStore.getPendingCount(session.sessionDbId);
         }
 
-        // Prevent orphaned generator restart during session deletion (R2)
-        if (session.closing) {
-          logger.debug('SYSTEM', 'Session closing, skipping generator restart', {
-            sessionDbId: session.sessionDbId
-          });
-          this.bypassLane.stopForSession(session.sessionDbId);
-          this.broadcastProcessingStatus();
-          return;
-        }
+        const bpSettings = SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH);
+        const maxPoolRetries = parseInt(bpSettings.CLAUDE_MEM_MAX_POOL_RETRIES, 10) || 5;
+        const poolCooldownMs = parseInt(bpSettings.CLAUDE_MEM_POOL_COOLDOWN_MS, 10) || 120000;
 
-        // Context reset exhaustion — session is degraded beyond recovery.
-        // Check BEFORE pendingCount: abort may fire with zero pending (all confirmed),
-        // but the session must still be failed to prevent restart on next hook event.
-        const MAX_CONTEXT_RESETS = 3;
-        if ((session.contextResetCount ?? 0) >= MAX_CONTEXT_RESETS) {
-          const pendingCount = pendingStore.getPendingCount(session.sessionDbId);
-          logger.error('SESSION', `Context reset exhausted, failing session — ${session.contextResetCount} consecutive resets without recovery`, {
-            sessionDbId: session.sessionDbId,
-            contextResetCount: session.contextResetCount,
-            pendingCount,
-          });
-          try {
-            const abandoned = pendingStore.markAllSessionMessagesAbandoned(session.sessionDbId);
-            this.dbManager.getSessionStore(session.dbPath).markSessionFailed(session.sessionDbId);
-            this.sessionManager.removeSessionImmediate(session.sessionDbId, session.dbPath);
-            this.sessionEventBroadcaster.broadcastSessionCompleted(session.sessionDbId, session.project);
-            session.abortController.abort();
-            this.bypassLane.stopForSession(session.sessionDbId);
-            logger.error('SESSION', `Session failed and removed — ${abandoned.failed} messages abandoned`, {
-              sessionDbId: session.sessionDbId,
-            });
-          } catch (cleanupErr) {
-            logger.warn('SESSION', 'Failed to cleanup exhausted session', {
-              sessionDbId: session.sessionDbId
-            }, cleanupErr as Error);
-          }
-          this.broadcastProcessingStatus();
-          return;
-        }
+        // Centralized decision (S3)
+        const action = decideGeneratorAction({
+          totalLifetimeCrashes: session.totalLifetimeCrashes,
+          consecutiveRestarts: session.consecutiveRestarts,
+          contextResetCount: session.contextResetCount ?? 0,
+          pendingCount,
+          wasAborted: session.abortController.signal.aborted,
+          proactiveReset: !!session.proactiveReset,
+          isClosing: !!session.closing,
+          isIdleTimeout: !!session.idleTimedOut,
+          error: lastError,
+          dbFileExists,
+          poolTimeoutDetected: dbFileExists !== false ? shouldEnterCooldown(lastError, session, maxPoolRetries) : false,
+          maxConsecutiveRestarts: 3,
+          maxContextResets: 3,
+          maxLifetimeCrashes: 10,
+          maxPoolRetries,
+          poolCooldownMs,
+        });
 
-        // Check if there's pending work that needs processing with a fresh AbortController
-        const pendingCount = pendingStore.getPendingCount(session.sessionDbId);
+        // Override: hadUnrecoverableError from .catch() takes priority
+        const finalAction: GeneratorAction = hadUnrecoverableError
+          ? { type: 'abandon', reason: 'unrecoverable' }
+          : action;
 
-        if (pendingCount > 0) {
-          // Pool timeout check BEFORE incrementing consecutiveRestarts (symmetric with SessionRoutes)
-          const lastError = session.lastGeneratorError;
-          session.lastGeneratorError = undefined;
-          const bpSettings = SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH);
-          const maxPoolRetries = parseInt(bpSettings.CLAUDE_MEM_MAX_POOL_RETRIES, 10) || 5;
-          const poolCooldownMs = parseInt(bpSettings.CLAUDE_MEM_POOL_COOLDOWN_MS, 10) || 120000;
+        logger.debug('SYSTEM', `decideGeneratorAction result`, {
+          sessionDbId: session.sessionDbId,
+          actionType: finalAction.type,
+          actionReason: finalAction.type === 'abandon' ? finalAction.reason : undefined,
+          hadUnrecoverableError,
+        });
 
-          if (shouldEnterCooldown(lastError, session, maxPoolRetries)) {
-            session.totalPoolTimeouts++;
-            session.poolCooldownUntil = Date.now() + poolCooldownMs;
-
-            logger.warn('SESSION', 'Pool timeout — entering cooldown, not abandoning', {
-              sessionDbId: session.sessionDbId,
-              totalPoolTimeouts: session.totalPoolTimeouts,
-              cooldownMs: poolCooldownMs,
-              pendingCount
-            });
-
-            // GUARD: check generatorPromise to prevent double-start (symmetric with SessionRoutes)
-            setTimeout(() => {
-              const s = this.sessionManager.getSession(session.sessionDbId, session.dbPath);
-              if (s && s.poolCooldownUntil && Date.now() >= s.poolCooldownUntil) {
-                s.poolCooldownUntil = undefined;
-                s.consecutiveRestarts = 0;
-                if (!s.generatorPromise) {
-                  this.startSessionProcessor(s, 'pool-cooldown-retry');
-                }
-              }
-            }, poolCooldownMs);
-
-            this.broadcastProcessingStatus();
-            return;
-          }
-
-          // Non-pool error — NOW increment consecutiveRestarts
-          // Guard: prevent infinite restart loops (R1)
-          const MAX_CONSECUTIVE_RESTARTS = 3; // Must match SessionRoutes.MAX_CONSECUTIVE_RESTARTS
-          session.consecutiveRestarts += 1;
-          if (session.consecutiveRestarts > MAX_CONSECUTIVE_RESTARTS) {
-            // Abandon ALL remaining messages to prevent permanent queue stall
-            let abandonedCount = 0;
-            let retriedCount = 0;
-            try {
-              const result = pendingStore.markAllSessionMessagesAbandoned(session.sessionDbId);
-              abandonedCount = result.failed;
-              retriedCount = result.retried;
-            } catch (abandonErr) {
-              logger.error('SESSION', 'Failed to abandon messages after restart limit', {
-                sessionDbId: session.sessionDbId
-              }, abandonErr as Error);
-            }
-            logger.error('SESSION', `Max consecutive restarts exceeded, abandoned ${abandonedCount} messages (${retriedCount} retryable)`, {
-              sessionDbId: session.sessionDbId,
-              restarts: session.consecutiveRestarts,
-              pendingCount,
-              abandonedCount,
-              retriedCount
-            });
-            // Fix C: Remove dead session from memory — next hook auto-initializes fresh
-            try {
-              this.dbManager.getSessionStore(session.dbPath).markSessionFailed(session.sessionDbId);
-              this.sessionManager.removeSessionImmediate(session.sessionDbId, session.dbPath);
-              this.sessionEventBroadcaster.broadcastSessionCompleted(session.sessionDbId, session.project);
-              session.abortController.abort();
-              this.bypassLane.stopForSession(session.sessionDbId);
-            } catch (cleanupErr) {
-              logger.warn('SESSION', 'Failed to cleanup abandoned session', {
-                sessionDbId: session.sessionDbId
-              }, cleanupErr as Error);
-            }
-            this.broadcastProcessingStatus();
-            return;
-          }
-
-          logger.info('SYSTEM', 'Pending work remains after generator exit, restarting with fresh AbortController', {
-            sessionId: session.sessionDbId,
-            pendingCount
-          });
-          // Stop bypass consumer before replacing AbortController (H1 fix):
-          // bypass holds a combinedSignal referencing the old abortController.signal.
-          // Without stopping first, the new abortController.abort() won't reach it.
-          this.bypassLane.stopForSession(session.sessionDbId);
-          // Reset AbortController for restart
-          session.abortController = new AbortController();
-          // Restart processor (re-starts bypass consumer with fresh combinedSignal)
-          this.startSessionProcessor(session, 'pending-work-restart');
-        }
-
-        this.broadcastProcessingStatus();
+        // Execute action
+        this.executeGeneratorAction(finalAction, session, pendingStore, bpSettings);
       });
+  }
+
+  /**
+   * Execute a GeneratorAction — shared handler for centralized decision execution.
+   * Called from startSessionProcessor .finally() after decideGeneratorAction().
+   */
+  private executeGeneratorAction(
+    action: GeneratorAction,
+    session: ActiveSession,
+    pendingStore: any,
+    settings: any,
+  ): void {
+    const sessionDbId = session.sessionDbId;
+
+    switch (action.type) {
+      case 'abandon': {
+        if (action.reason !== 'db-unreachable') {
+          // pendingStore may be null if DB was unreachable but hadUnrecoverableError overrides
+          if (pendingStore) {
+            try {
+              const result = pendingStore.markAllSessionMessagesAbandoned(sessionDbId);
+              logger.warn('SYSTEM', `Abandoned ${result.failed} messages (${result.retried} retryable)`, {
+                sessionDbId, reason: action.reason,
+              });
+            } catch (e) {
+              logger.error('SYSTEM', 'Failed to abandon messages', { sessionDbId }, e as Error);
+            }
+          }
+          try {
+            this.dbManager.getSessionStore(session.dbPath).markSessionFailed(sessionDbId);
+            this.sessionManager.removeSessionImmediate(sessionDbId, session.dbPath);
+          } catch (e) {
+            logger.warn('SESSION', 'Failed to cleanup abandoned session', { sessionDbId }, e as Error);
+          }
+        } else {
+          // db-unreachable: pure memory cleanup — NO DB access
+          this.sessionManager.removeSessionMemoryOnly(sessionDbId, session.dbPath);
+          if (session.dbPath) {
+            try {
+              this.dbManager.getPool().evict(session.dbPath);
+            } catch {}
+          }
+        }
+        this.sessionEventBroadcaster.broadcastSessionCompleted(sessionDbId, session.project);
+        this.sessionEventBroadcaster.broadcastAnomaly({
+          type: action.reason === 'db-unreachable' ? 'db_unreachable' : 'session_abandoned',
+          sessionDbId,
+          project: session.project,
+          reason: action.reason,
+        });
+        session.abortController.abort();
+        this.bypassLane.stopForSession(sessionDbId);
+        this.lastAiInteraction = { timestamp: Date.now(), success: false, provider: 'claude' };
+        break;
+      }
+
+      case 'proactive-reset': {
+        session.proactiveReset = false; // Clear before any early return to prevent loop
+        this.bypassLane.stopForSession(sessionDbId);
+        session.abortController = new AbortController();
+        logger.info('SYSTEM', '[PROACTIVE_RESET] Restarting generator with fresh context', {
+          sessionDbId,
+        });
+        if (!isProjectStillValid(session.dbPath)) {
+          logger.warn('SESSION', 'Project invalid at proactive-reset time, abandoning', { sessionDbId });
+          this.sessionManager.removeSessionMemoryOnly(sessionDbId, session.dbPath);
+          this.sessionEventBroadcaster.broadcastSessionCompleted(sessionDbId, session.project);
+          break;
+        }
+        this.startSessionProcessor(session, 'proactive-reset');
+        break;
+      }
+
+      case 'pool-cooldown': {
+        session.totalPoolTimeouts++;
+        session.poolCooldownUntil = Date.now() + action.cooldownMs;
+        logger.warn('SESSION', 'Pool timeout — entering cooldown', {
+          sessionDbId,
+          totalPoolTimeouts: session.totalPoolTimeouts,
+          cooldownMs: action.cooldownMs,
+        });
+        setTimeout(() => {
+          const s = this.sessionManager.getSession(sessionDbId, session.dbPath);
+          if (s && s.poolCooldownUntil && Date.now() >= s.poolCooldownUntil) {
+            s.poolCooldownUntil = undefined;
+            s.consecutiveRestarts = 0;
+            if (!s.generatorPromise) {
+              if (!isProjectStillValid(s.dbPath)) {
+                logger.warn('SESSION', 'Project invalid at pool-cooldown-retry', { sessionDbId });
+                this.sessionManager.removeSessionMemoryOnly(sessionDbId, s.dbPath);
+                this.sessionEventBroadcaster.broadcastSessionCompleted(sessionDbId, s.project);
+                return;
+              }
+              this.startSessionProcessor(s, 'pool-cooldown-retry');
+            }
+          }
+        }, action.cooldownMs);
+        break;
+      }
+
+      case 'crash-recovery': {
+        session.consecutiveRestarts += 1;
+        session.totalLifetimeCrashes++;
+
+        if (session.totalLifetimeCrashes === 5) {
+          this.sessionEventBroadcaster.broadcastAnomaly({
+            type: 'crash_anomaly',
+            sessionDbId,
+            project: session.project,
+            totalCrashes: session.totalLifetimeCrashes,
+            consecutiveCrashes: session.consecutiveRestarts,
+          });
+        }
+
+        logger.info('SYSTEM', 'Restarting generator with pending work', {
+          sessionDbId,
+          consecutiveRestarts: session.consecutiveRestarts,
+          totalLifetimeCrashes: session.totalLifetimeCrashes,
+          backoffMs: action.backoffMs,
+        });
+        this.bypassLane.stopForSession(sessionDbId);
+        session.abortController = new AbortController();
+
+        setTimeout(() => {
+          if (!isProjectStillValid(session.dbPath)) {
+            logger.warn('SESSION', 'Project invalid at restart time, abandoning', { sessionDbId });
+            this.sessionManager.removeSessionMemoryOnly(sessionDbId, session.dbPath);
+            this.sessionEventBroadcaster.broadcastSessionCompleted(sessionDbId, session.project);
+            return;
+          }
+          const s = this.sessionManager.getSession(sessionDbId, session.dbPath);
+          if (s && !s.generatorPromise) {
+            this.startSessionProcessor(s, 'pending-work-restart');
+          }
+        }, action.backoffMs);
+        break;
+      }
+
+      case 'idle-cleanup': {
+        session.abortController.abort();
+        session.consecutiveRestarts = 0;
+        break;
+      }
+
+      case 'noop': {
+        if (session.idleTimedOut) {
+          session.idleTimedOut = false;
+          session.lastExitWasIdleTimeout = true;
+          this.bypassLane.stopForSession(sessionDbId);
+        }
+        if (session.closing) {
+          this.bypassLane.stopForSession(sessionDbId);
+        }
+        break;
+      }
+    }
+
+    this.broadcastProcessingStatus();
   }
 
   /**
@@ -1051,6 +1130,12 @@ export class WorkerService {
           continue;
         }
 
+        if (!isProjectStillValid(dbPath)) {
+          logger.warn('SESSION', 'Project invalid at startup-recovery, skipping', {
+            sessionDbId, dbPath,
+          });
+          continue;
+        }
         const session = this.sessionManager.initializeSession(sessionDbId, undefined, undefined, dbPath);
         logger.info('SYSTEM', `Starting processor for session ${sessionDbId}`, {
           project: session.project,

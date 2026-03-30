@@ -114,6 +114,9 @@ export class SettingsRoutes extends BaseRouteHandler {
       'CLAUDE_MEM_BACKPRESSURE_L1',
       'CLAUDE_MEM_BACKPRESSURE_L2',
       'CLAUDE_MEM_BACKPRESSURE_SAMPLE_RATE',
+      // SDK Token Optimization (Phase 2)
+      'CLAUDE_MEM_MAX_HISTORY_LENGTH',
+      'CLAUDE_MEM_MAX_HISTORY_TOKENS',
     ];
 
     for (const key of settingKeys) {
@@ -328,6 +331,20 @@ export class SettingsRoutes extends BaseRouteHandler {
       const val = parseInt(settings.CLAUDE_MEM_BACKPRESSURE_SAMPLE_RATE, 10);
       if (isNaN(val) || val < 2 || val > 10) {
         return { valid: false, error: 'CLAUDE_MEM_BACKPRESSURE_SAMPLE_RATE must be between 2 and 10' };
+      }
+    }
+
+    // Phase 2 Layer C validation
+    if (settings.CLAUDE_MEM_MAX_HISTORY_LENGTH) {
+      const val = parseInt(settings.CLAUDE_MEM_MAX_HISTORY_LENGTH, 10);
+      if (isNaN(val) || val < 10 || val > 500) {
+        return { valid: false, error: 'CLAUDE_MEM_MAX_HISTORY_LENGTH must be between 10 and 500' };
+      }
+    }
+    if (settings.CLAUDE_MEM_MAX_HISTORY_TOKENS) {
+      const val = parseInt(settings.CLAUDE_MEM_MAX_HISTORY_TOKENS, 10);
+      if (isNaN(val) || val < 10000 || val > 500000) {
+        return { valid: false, error: 'CLAUDE_MEM_MAX_HISTORY_TOKENS must be between 10000 and 500000' };
       }
     }
 

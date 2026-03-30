@@ -81,6 +81,9 @@ export interface SettingsDefaults {
   CLAUDE_MEM_BACKPRESSURE_L1: string;
   CLAUDE_MEM_BACKPRESSURE_L2: string;
   CLAUDE_MEM_BACKPRESSURE_SAMPLE_RATE: string;
+  // SDK Token Optimization (Phase 2 — Layer C)
+  CLAUDE_MEM_MAX_HISTORY_LENGTH: string;    // Max conversation history messages before proactive reset
+  CLAUDE_MEM_MAX_HISTORY_TOKENS: string;    // Max estimated tokens before proactive reset
 }
 
 export class SettingsDefaultsManager {
@@ -159,6 +162,9 @@ export class SettingsDefaultsManager {
     CLAUDE_MEM_BACKPRESSURE_L1: "20",
     CLAUDE_MEM_BACKPRESSURE_L2: "50",
     CLAUDE_MEM_BACKPRESSURE_SAMPLE_RATE: "3",
+    // SDK Token Optimization (Phase 2 — Layer C)
+    CLAUDE_MEM_MAX_HISTORY_LENGTH: "50",
+    CLAUDE_MEM_MAX_HISTORY_TOKENS: "100000",
   };
 
   /**

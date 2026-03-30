@@ -42,6 +42,7 @@ const EXCLUDED_PATTERNS = [
   /stale-detection\.ts$/,  // Pure function — stateless staleness check extracted for testability
   /pool-cooldown-utils\.ts$/,  // Pure predicates — isPoolTimeoutError, shouldEnterCooldown
   /backpressure\.ts$/,  // Pure functions — backpressure level calculation and filter logic
+  /generator-action\.ts$/,  // Pure functions — decision logic, no I/O
 ];
 
 // Files that should always use logger (core business logic)
