@@ -207,6 +207,10 @@ export class SessionManager {
       contextResetCount: 0,  // Consecutive forceInit triggers — capped to prevent infinite loop
       totalPoolTimeouts: 0,
       lastResponseAt: null,
+      // Generator Safety Net (Phase 2)
+      totalLifetimeCrashes: 0,
+      consecutiveEmptyObservations: 0,
+      peakConsecutiveEmptyObs: 0,
     };
 
     logger.debug('SESSION', 'Creating new session object (memorySessionId cleared to prevent stale resume)', {
