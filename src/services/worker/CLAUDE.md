@@ -35,4 +35,6 @@
 - **JSON/Truncation**: `buildObservationPrompt()` uses compact JSON, plain text rendering, `truncateField()` at `CLAUDE_MEM_OBS_MAX_FIELD_CHARS`.
 - **Telemetry**: `optimizationStats` on `ActiveSession` — `batchedObservations`, `batchPromptsSaved`, `totalPromptChars`, `truncatedFields` logged in `SDK_USAGE_SUMMARY`. Bypass lane logs `truncatedFields` per-message at INFO level.
 
+**Pool Starvation Defense** (3-layer): `stale-detection.ts` (Layer 1), `pool-cooldown-utils.ts` (Layer 2), `backpressure.ts` (Layer 3). Applied in `SessionRoutes` (cooldown entry + ensureGeneratorRunning bypass), `SessionManager.queueObservation()` (backpressure gate), `worker-service.ts` (cooldown retry timer). Settings: 7 new `CLAUDE_MEM_*` keys validated in `SettingsRoutes`.
+
 **Drain Window**: `deleteSession()` polls `hasPendingSummarize()` every 500ms (max 10s) before aborting, preventing summary loss on session close.
