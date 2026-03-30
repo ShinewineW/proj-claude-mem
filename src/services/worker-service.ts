@@ -18,8 +18,9 @@ import { logger } from '../utils/logger.js';
 import { ChromaMcpManager } from './sync/ChromaMcpManager.js';
 import { ChromaSync } from './sync/ChromaSync.js';
 import { DbConnectionPool } from '../shared/project-db.js';
-import { DB_PATH } from '../shared/paths.js';
+import { DB_PATH, USER_SETTINGS_PATH } from '../shared/paths.js';
 import { listEnabledProjects } from '../shared/project-allowlist.js';
+import { shouldEnterCooldown } from './worker/http/routes/pool-cooldown-utils.js';
 
 // Windows: avoid repeated spawn popups when startup fails (issue #921)
 const WINDOWS_SPAWN_COOLDOWN_MS = 2 * 60 * 1000;
@@ -636,6 +637,7 @@ export class WorkerService {
 
     session.generatorPromise = agent.startSession(session, this)
       .catch(async (error: unknown) => {
+        session.lastGeneratorError = error instanceof Error ? error : new Error(String(error));
         const errorMessage = (error as Error)?.message || '';
 
         // Detect unrecoverable errors that should NOT trigger restart
@@ -828,6 +830,41 @@ export class WorkerService {
         const pendingCount = pendingStore.getPendingCount(session.sessionDbId);
 
         if (pendingCount > 0) {
+          // Pool timeout check BEFORE incrementing consecutiveRestarts (symmetric with SessionRoutes)
+          const lastError = session.lastGeneratorError;
+          session.lastGeneratorError = undefined;
+          const bpSettings = SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH);
+          const maxPoolRetries = parseInt(bpSettings.CLAUDE_MEM_MAX_POOL_RETRIES, 10) || 5;
+          const poolCooldownMs = parseInt(bpSettings.CLAUDE_MEM_POOL_COOLDOWN_MS, 10) || 120000;
+
+          if (shouldEnterCooldown(lastError, session, maxPoolRetries)) {
+            session.totalPoolTimeouts++;
+            session.poolCooldownUntil = Date.now() + poolCooldownMs;
+
+            logger.warn('SESSION', 'Pool timeout — entering cooldown, not abandoning', {
+              sessionDbId: session.sessionDbId,
+              totalPoolTimeouts: session.totalPoolTimeouts,
+              cooldownMs: poolCooldownMs,
+              pendingCount
+            });
+
+            // GUARD: check generatorPromise to prevent double-start (symmetric with SessionRoutes)
+            setTimeout(() => {
+              const s = this.sessionManager.getSession(session.sessionDbId, session.dbPath);
+              if (s && s.poolCooldownUntil && Date.now() >= s.poolCooldownUntil) {
+                s.poolCooldownUntil = undefined;
+                s.consecutiveRestarts = 0;
+                if (!s.generatorPromise) {
+                  this.startSessionProcessor(s, 'pool-cooldown-retry');
+                }
+              }
+            }, poolCooldownMs);
+
+            this.broadcastProcessingStatus();
+            return;
+          }
+
+          // Non-pool error — NOW increment consecutiveRestarts
           // Guard: prevent infinite restart loops (R1)
           const MAX_CONSECUTIVE_RESTARTS = 3; // Must match SessionRoutes.MAX_CONSECUTIVE_RESTARTS
           session.consecutiveRestarts += 1;
