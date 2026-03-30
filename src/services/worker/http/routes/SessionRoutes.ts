@@ -297,15 +297,13 @@ export class SessionRoutes extends BaseRouteHandler {
                 });
 
                 // Schedule retry after cooldown.
-                // GUARD: check generatorPromise to prevent double-start.
+                // Delegate through ensureGeneratorRunning for spawnInProgress guard.
                 setTimeout(() => {
                   const s = this.sessionManager.getSession(sessionDbId, session.dbPath);
                   if (s && s.poolCooldownUntil && Date.now() >= s.poolCooldownUntil) {
                     s.poolCooldownUntil = undefined;
                     s.consecutiveRestarts = 0; // fresh budget for the retry
-                    if (!s.generatorPromise) {
-                      this.startGeneratorWithProvider(s, this.getSelectedProvider(), 'pool-cooldown-retry');
-                    }
+                    this.ensureGeneratorRunning(sessionDbId, 'pool-cooldown-retry', session.dbPath);
                   }
                 }, poolCooldownMs);
 
