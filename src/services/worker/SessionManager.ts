@@ -639,6 +639,25 @@ export class SessionManager {
         logger.warn('SESSION', 'Ghost cleanup failed for DB (skipping)', { dbPath }, error as Error);
       }
     }
+
+    // Check for sessions stuck in expired cooldown (e.g., worker restarted during cooldown)
+    for (const [, session] of this.sessions) {
+      if (session.poolCooldownUntil &&
+          Date.now() >= session.poolCooldownUntil &&
+          !session.generatorPromise) {
+        logger.info('SESSION', 'Clearing expired pool cooldown, attempting generator restart', {
+          sessionDbId: session.sessionDbId,
+          cooldownExpiredMs: Date.now() - session.poolCooldownUntil,
+        });
+        session.poolCooldownUntil = undefined;
+        session.consecutiveRestarts = 0;
+        const pendingStore = this.getPendingMessageStore(session.dbPath);
+        const pendingCount = pendingStore.getPendingCount(session.sessionDbId);
+        if (pendingCount > 0 && this.onStartGeneratorCallback) {
+          this.onStartGeneratorCallback(session, 'cooldown-expired-recovery');
+        }
+      }
+    }
   }
 
   /**
