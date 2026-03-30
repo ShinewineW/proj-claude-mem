@@ -555,9 +555,10 @@ export class SessionManager {
       // Skip sessions in pool cooldown — timer or ghost cleanup will restart them
       if (session.poolCooldownUntil && Date.now() < session.poolCooldownUntil) continue;
 
-      // Skip sessions with pending work (generator may be about to restart)
+      // D3 fix: skip sessions with pending work ONLY when generator is running (original logic).
+      // Sessions with pending work but no generator and no cooldown are abandoned — reap them.
       const pendingCount = this.getPendingStore(session.dbPath).getPendingCount(session.sessionDbId);
-      if (pendingCount > 0) continue;
+      if (pendingCount > 0 && session.generatorPromise) continue;
 
       // Sessions with proactive summarize already queued: reap immediately
       // (skip idle time check — the summarize was the final lifecycle step)

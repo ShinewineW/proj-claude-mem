@@ -39,6 +39,9 @@ const EXCLUDED_PATTERNS = [
   /cli\/handlers\/user-message\.ts$/,  // User message handler uses console.error for user-visible context
   /services\/transcripts\/cli\.ts$/,  // CLI transcript subcommands use console.log for user-visible interactive output
   /SessionCompletionHandler\.ts$/,  // Pure coordinator (2 delegating calls + 1 guard), no logging needed
+  /stale-detection\.ts$/,  // Pure function — stateless staleness check extracted for testability
+  /pool-cooldown-utils\.ts$/,  // Pure predicates — isPoolTimeoutError, shouldEnterCooldown
+  /backpressure\.ts$/,  // Pure functions — backpressure level calculation and filter logic
 ];
 
 // Files that should always use logger (core business logic)
