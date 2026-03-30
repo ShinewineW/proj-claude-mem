@@ -17,7 +17,7 @@
 |-----|---------|
 | `agents/` | `ResponseProcessor` (response parsing), `ObservationBroadcaster` (SSE), `FallbackErrorHandler` (provider error classification), `SessionCleanupHelper` (abandon/fail coordination), `types.ts` |
 | `http/routes/` | `SessionRoutes`, `SearchRoutes`, `DataRoutes`, `MemoryRoutes`, `SettingsRoutes`, `observation-filter.ts` (Layer A pattern filter) |
-| `search/` | strategies (Chroma/SQLite/Hybrid), filters, shared types (`SEARCH_CONSTANTS`) |
+| `search/` | shared types (`SEARCH_CONSTANTS`) |
 | `events/` | `SessionEventBroadcaster` |
 | `validation/` | `PrivacyCheckValidator` |
 
