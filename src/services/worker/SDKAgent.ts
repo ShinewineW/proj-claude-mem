@@ -49,6 +49,7 @@ import {
 } from "./SDKUsageTelemetry.js";
 import { checkProcessStaleness } from "./stale-detection.js";
 import { processRegistry } from "./ProcessRegistry.js";
+import { shouldProactiveReset } from "./generator-action.js";
 
 // Import Agent SDK (assumes it's installed)
 // @ts-ignore - Agent SDK types may not be available
@@ -112,7 +113,8 @@ export class SDKAgent {
     const shouldResume =
       hasRealMemorySessionId &&
       session.lastPromptNumber > 1 &&
-      !session.forceInit;
+      !session.forceInit &&
+      !session.proactiveReset;  // Layer C: proactive reset prevents resume
 
     // Clear forceInit after using it
     if (session.forceInit) {
@@ -121,6 +123,14 @@ export class SDKAgent {
         previousMemorySessionId: session.memorySessionId,
       });
       session.forceInit = false;
+    }
+
+    // Layer C: clear proactiveReset flag after use (same pattern as forceInit)
+    if (session.proactiveReset) {
+      logger.info("SDK", "[PROACTIVE_RESET] Starting fresh SDK session (Layer C)", {
+        sessionDbId: session.sessionDbId,
+      });
+      session.proactiveReset = false;
     }
 
     // Wait for agent pool slot (configurable via CLAUDE_MEM_MAX_CONCURRENT_AGENTS)
@@ -397,6 +407,28 @@ export class SDKAgent {
             "SDK",
             cwdTracker.lastCwd,
           );
+
+          // Layer C: Proactive history reset checkpoint
+          // Check AFTER response is fully processed (zero message loss)
+          if (shouldProactiveReset(
+            session.conversationHistory.length,
+            session.conversationHistory,
+            parseInt(settings.CLAUDE_MEM_MAX_HISTORY_LENGTH, 10) || 50,
+            parseInt(settings.CLAUDE_MEM_MAX_HISTORY_TOKENS, 10) || 100000,
+          )) {
+            logger.info('SDK', '[PROACTIVE_RESET] History threshold reached', {
+              sessionDbId: session.sessionDbId,
+              historyLength: session.conversationHistory.length,
+              estimatedTokens: session.conversationHistory.reduce(
+                (sum: number, msg: any) => sum + Math.ceil((msg.content?.length || 0) / 4), 0
+              ),
+            });
+            session.proactiveReset = true;
+            session.conversationHistory = [];
+            session.previousMemorySessionId = session.memorySessionId ?? undefined;
+            session.abortController.abort();
+            return;
+          }
         }
 
         // Log result messages
