@@ -201,7 +201,9 @@ export class SessionManager {
       dbPath: dbPath || undefined,  // Project-specific SQLite DB path
       processingMessageIds: [],  // CLAIM-CONFIRM: Track message IDs for confirmProcessed()
       lastGeneratorActivity: Date.now(),  // Initialize for stale detection (Issue #1099)
-      contextResetCount: 0  // Consecutive forceInit triggers — capped to prevent infinite loop
+      contextResetCount: 0,  // Consecutive forceInit triggers — capped to prevent infinite loop
+      totalPoolTimeouts: 0,
+      lastResponseAt: null,
     };
 
     logger.debug('SESSION', 'Creating new session object (memorySessionId cleared to prevent stale resume)', {

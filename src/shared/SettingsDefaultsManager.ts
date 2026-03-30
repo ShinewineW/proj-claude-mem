@@ -73,6 +73,14 @@ export interface SettingsDefaults {
   CLAUDE_MEM_SKIP_TOOL_PATTERNS: string; // Comma-separated tool:glob pairs for pattern-based observation filtering
   CLAUDE_MEM_BATCH_MAX_SIZE: string; // Max observations in a single batch prompt (1-20)
   CLAUDE_MEM_OBS_MAX_FIELD_CHARS: string; // Max chars per tool_input/tool_output field before truncation
+  // Pool Starvation Defense
+  CLAUDE_MEM_POOL_COOLDOWN_MS: string;
+  CLAUDE_MEM_MAX_POOL_RETRIES: string;
+  CLAUDE_MEM_STALE_RESPONSE_THRESHOLD_MS: string;
+  CLAUDE_MEM_STALE_INIT_THRESHOLD_MS: string;
+  CLAUDE_MEM_BACKPRESSURE_L1: string;
+  CLAUDE_MEM_BACKPRESSURE_L2: string;
+  CLAUDE_MEM_BACKPRESSURE_SAMPLE_RATE: string;
 }
 
 export class SettingsDefaultsManager {
@@ -143,6 +151,14 @@ export class SettingsDefaultsManager {
       "Read:*SKILL.md,Read:*/.claude/rules/*,Read:*settings.json,Read:*hooks.json,Glob:*",
     CLAUDE_MEM_BATCH_MAX_SIZE: "5",
     CLAUDE_MEM_OBS_MAX_FIELD_CHARS: "8000",
+    // Pool Starvation Defense
+    CLAUDE_MEM_POOL_COOLDOWN_MS: "120000",
+    CLAUDE_MEM_MAX_POOL_RETRIES: "5",
+    CLAUDE_MEM_STALE_RESPONSE_THRESHOLD_MS: "180000",
+    CLAUDE_MEM_STALE_INIT_THRESHOLD_MS: "120000",
+    CLAUDE_MEM_BACKPRESSURE_L1: "20",
+    CLAUDE_MEM_BACKPRESSURE_L2: "50",
+    CLAUDE_MEM_BACKPRESSURE_SAMPLE_RATE: "3",
   };
 
   /**

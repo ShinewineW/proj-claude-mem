@@ -106,6 +106,14 @@ export class SettingsRoutes extends BaseRouteHandler {
       'CLAUDE_MEM_SKIP_TOOL_PATTERNS',
       'CLAUDE_MEM_BATCH_MAX_SIZE',
       'CLAUDE_MEM_OBS_MAX_FIELD_CHARS',
+      // Pool Starvation Defense
+      'CLAUDE_MEM_POOL_COOLDOWN_MS',
+      'CLAUDE_MEM_MAX_POOL_RETRIES',
+      'CLAUDE_MEM_STALE_RESPONSE_THRESHOLD_MS',
+      'CLAUDE_MEM_STALE_INIT_THRESHOLD_MS',
+      'CLAUDE_MEM_BACKPRESSURE_L1',
+      'CLAUDE_MEM_BACKPRESSURE_L2',
+      'CLAUDE_MEM_BACKPRESSURE_SAMPLE_RATE',
     ];
 
     for (const key of settingKeys) {
