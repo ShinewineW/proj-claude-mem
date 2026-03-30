@@ -287,7 +287,7 @@ export class SessionManager {
     }
 
     // Layer 3: Queue-depth backpressure (must be after initializeSession so session exists)
-    const pendingStore = this.getPendingStore(dbPath);
+    const pendingStore = this.getPendingStore(session.dbPath);
     const bpPendingCount = pendingStore.getPendingCount(sessionDbId);
     const bpSettings = SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH);
     const bpL1 = parseInt(bpSettings.CLAUDE_MEM_BACKPRESSURE_L1, 10) || 20;
@@ -317,7 +317,6 @@ export class SessionManager {
     };
 
     try {
-      const pendingStore = this.getPendingStore(session.dbPath);
       const messageId = pendingStore.enqueue(sessionDbId, session.contentSessionId, message);
       const queueDepth = pendingStore.getPendingCount(sessionDbId);
       const toolSummary = logger.formatTool(data.tool_name, data.tool_input);
