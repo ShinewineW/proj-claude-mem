@@ -333,10 +333,13 @@ export class SessionRoutes extends BaseRouteHandler {
     switch (action.type) {
       case 'abandon': {
         if (action.reason !== 'db-unreachable') {
-          try {
-            pendingStore.markAllSessionMessagesAbandoned(sessionDbId);
-          } catch (e) {
-            logger.error('SESSION', 'Failed to abandon messages', { sessionDbId }, e as Error);
+          // pendingStore may be null if DB was unreachable but action overridden
+          if (pendingStore) {
+            try {
+              pendingStore.markAllSessionMessagesAbandoned(sessionDbId);
+            } catch (e) {
+              logger.error('SESSION', 'Failed to abandon messages', { sessionDbId }, e as Error);
+            }
           }
           try {
             this.dbManager.getSessionStore(session.dbPath).markSessionFailed(sessionDbId);

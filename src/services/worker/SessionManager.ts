@@ -596,6 +596,7 @@ export class SessionManager {
       if (session.generatorPromise) continue;
 
       // S1 reaper auxiliary: sessions with high crash count in active crash-restart cycle
+      // Intentionally lower than decideGeneratorAction P7 (>=10) — proactive backstop
       if (session.totalLifetimeCrashes > 5 &&
           (Date.now() - session.lastGeneratorActivity) < 5 * 60 * 1000) {
         logger.warn('SESSION', `Reaping crash-looping session (${session.totalLifetimeCrashes} lifetime crashes)`, {

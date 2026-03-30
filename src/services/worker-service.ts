@@ -860,13 +860,16 @@ export class WorkerService {
     switch (action.type) {
       case 'abandon': {
         if (action.reason !== 'db-unreachable') {
-          try {
-            const result = pendingStore.markAllSessionMessagesAbandoned(sessionDbId);
-            logger.warn('SYSTEM', `Abandoned ${result.failed} messages (${result.retried} retryable)`, {
-              sessionDbId, reason: action.reason,
-            });
-          } catch (e) {
-            logger.error('SYSTEM', 'Failed to abandon messages', { sessionDbId }, e as Error);
+          // pendingStore may be null if DB was unreachable but hadUnrecoverableError overrides
+          if (pendingStore) {
+            try {
+              const result = pendingStore.markAllSessionMessagesAbandoned(sessionDbId);
+              logger.warn('SYSTEM', `Abandoned ${result.failed} messages (${result.retried} retryable)`, {
+                sessionDbId, reason: action.reason,
+              });
+            } catch (e) {
+              logger.error('SYSTEM', 'Failed to abandon messages', { sessionDbId }, e as Error);
+            }
           }
           try {
             this.dbManager.getSessionStore(session.dbPath).markSessionFailed(sessionDbId);
