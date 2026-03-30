@@ -17,6 +17,9 @@ import { PendingMessageStore } from '../sqlite/PendingMessageStore.js';
 import { SessionQueueProcessor } from '../queue/SessionQueueProcessor.js';
 import { getProcessBySession, ensureProcessExit } from './ProcessRegistry.js';
 import { logSDKUsageSummary } from './SDKUsageTelemetry.js';
+import { getBackpressureLevel, applyBackpressure } from './backpressure.js';
+import { SettingsDefaultsManager } from '../../shared/SettingsDefaultsManager.js';
+import { USER_SETTINGS_PATH } from '../../shared/paths.js';
 
 export class SessionManager {
   private dbManager: DatabaseManager;
@@ -201,7 +204,9 @@ export class SessionManager {
       dbPath: dbPath || undefined,  // Project-specific SQLite DB path
       processingMessageIds: [],  // CLAIM-CONFIRM: Track message IDs for confirmProcessed()
       lastGeneratorActivity: Date.now(),  // Initialize for stale detection (Issue #1099)
-      contextResetCount: 0  // Consecutive forceInit triggers — capped to prevent infinite loop
+      contextResetCount: 0,  // Consecutive forceInit triggers — capped to prevent infinite loop
+      totalPoolTimeouts: 0,
+      lastResponseAt: null,
     };
 
     logger.debug('SESSION', 'Creating new session object (memorySessionId cleared to prevent stale resume)', {
@@ -261,13 +266,11 @@ export class SessionManager {
   }
 
   /**
-   * Queue an observation for processing (zero-latency notification)
-   * Auto-initializes session if not in memory but exists in database
-   *
-   * CRITICAL: Persists to database FIRST before adding to in-memory queue.
-   * This ensures observations survive worker crashes.
+   * Queue an observation for processing. Persist to database FIRST (crash-safe).
+   * Layer 3 backpressure: may intentionally drop low-value observations under high queue depth.
+   * @returns true if enqueued, false if dropped by backpressure
    */
-  queueObservation(sessionDbId: number, data: ObservationData, dbPath?: string): void {
+  queueObservation(sessionDbId: number, data: ObservationData, dbPath?: string): boolean {
     // Auto-initialize from database if needed (handles worker restarts)
     const key = this.sessionKey(sessionDbId, dbPath);
     let session = this.sessions.get(key);
@@ -275,10 +278,32 @@ export class SessionManager {
       session = this.initializeSession(sessionDbId, undefined, undefined, dbPath);
     }
 
-    // New hook message arrived — CC is alive, clear idle timeout flag
+    // New hook message arrived — CC is alive, clear idle timeout flag.
+    // Must run BEFORE backpressure: even if observation is dropped, the session
+    // should not be reaped as idle.
     if (session.lastExitWasIdleTimeout) {
       logger.debug('SESSION', 'Clearing lastExitWasIdleTimeout — CC alive', { sessionDbId: session.sessionDbId });
       session.lastExitWasIdleTimeout = false;
+    }
+
+    // Layer 3: Queue-depth backpressure (must be after initializeSession so session exists)
+    const pendingStore = this.getPendingStore(session.dbPath);
+    const bpPendingCount = pendingStore.getPendingCount(sessionDbId);
+    const bpSettings = SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH);
+    const bpL1 = parseInt(bpSettings.CLAUDE_MEM_BACKPRESSURE_L1, 10) || 20;
+    const bpL2 = parseInt(bpSettings.CLAUDE_MEM_BACKPRESSURE_L2, 10) || 50;
+    const bpSampleRate = parseInt(bpSettings.CLAUDE_MEM_BACKPRESSURE_SAMPLE_RATE, 10) || 3;
+    const bpLevel = getBackpressureLevel(bpPendingCount, bpL1, bpL2);
+
+    if (bpLevel > 0) {
+      const shouldSkip = applyBackpressure(bpLevel, data.tool_name ?? '', data.tool_input ?? '', session as Record<string, unknown>, bpSampleRate);
+      if (shouldSkip) {
+        logger.info('QUEUE', 'Backpressure skip', {
+          level: bpLevel, pendingCount: bpPendingCount,
+          toolName: data.tool_name, sessionDbId
+        });
+        return false;
+      }
     }
 
     // CRITICAL: Persist to database FIRST
@@ -292,7 +317,6 @@ export class SessionManager {
     };
 
     try {
-      const pendingStore = this.getPendingStore(session.dbPath);
       const messageId = pendingStore.enqueue(sessionDbId, session.contentSessionId, message);
       const queueDepth = pendingStore.getPendingCount(sessionDbId);
       const toolSummary = logger.formatTool(data.tool_name, data.tool_input);
@@ -310,6 +334,7 @@ export class SessionManager {
     // Notify generator immediately (zero latency)
     const emitter = this.sessionQueues.get(key);
     emitter?.emit('message');
+    return true;
   }
 
   /**
@@ -527,9 +552,12 @@ export class SessionManager {
       // Skip sessions with active generators
       if (session.generatorPromise) continue;
 
-      // Skip sessions with pending work
+      // Skip sessions in pool cooldown — timer or ghost cleanup will restart them
+      if (session.poolCooldownUntil && Date.now() < session.poolCooldownUntil) continue;
+
+      // Skip sessions with pending work (generator may be about to restart)
       const pendingCount = this.getPendingStore(session.dbPath).getPendingCount(session.sessionDbId);
-      if (pendingCount > 0 && session.generatorPromise) continue;
+      if (pendingCount > 0) continue;
 
       // Sessions with proactive summarize already queued: reap immediately
       // (skip idle time check — the summarize was the final lifecycle step)
@@ -635,6 +663,25 @@ export class SessionManager {
         }
       } catch (error) {
         logger.warn('SESSION', 'Ghost cleanup failed for DB (skipping)', { dbPath }, error as Error);
+      }
+    }
+
+    // Check for sessions stuck in expired cooldown (e.g., worker restarted during cooldown)
+    for (const [, session] of this.sessions) {
+      if (session.poolCooldownUntil &&
+          Date.now() >= session.poolCooldownUntil &&
+          !session.generatorPromise) {
+        logger.info('SESSION', 'Clearing expired pool cooldown, attempting generator restart', {
+          sessionDbId: session.sessionDbId,
+          cooldownExpiredMs: Date.now() - session.poolCooldownUntil,
+        });
+        session.poolCooldownUntil = undefined;
+        session.consecutiveRestarts = 0;
+        const pendingStore = this.getPendingMessageStore(session.dbPath);
+        const pendingCount = pendingStore.getPendingCount(session.sessionDbId);
+        if (pendingCount > 0 && this.onStartGeneratorCallback) {
+          this.onStartGeneratorCallback(session, 'cooldown-expired-recovery');
+        }
       }
     }
   }

@@ -31,7 +31,7 @@ interface TrackedProcess {
 }
 
 // PID Registry - tracks spawned Claude subprocesses
-const processRegistry = new Map<number, TrackedProcess>();
+export const processRegistry = new Map<number, TrackedProcess>();
 
 /**
  * Register a spawned process in the registry

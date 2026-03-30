@@ -106,6 +106,14 @@ export class SettingsRoutes extends BaseRouteHandler {
       'CLAUDE_MEM_SKIP_TOOL_PATTERNS',
       'CLAUDE_MEM_BATCH_MAX_SIZE',
       'CLAUDE_MEM_OBS_MAX_FIELD_CHARS',
+      // Pool Starvation Defense
+      'CLAUDE_MEM_POOL_COOLDOWN_MS',
+      'CLAUDE_MEM_MAX_POOL_RETRIES',
+      'CLAUDE_MEM_STALE_RESPONSE_THRESHOLD_MS',
+      'CLAUDE_MEM_STALE_INIT_THRESHOLD_MS',
+      'CLAUDE_MEM_BACKPRESSURE_L1',
+      'CLAUDE_MEM_BACKPRESSURE_L2',
+      'CLAUDE_MEM_BACKPRESSURE_SAMPLE_RATE',
     ];
 
     for (const key of settingKeys) {
@@ -276,6 +284,50 @@ export class SettingsRoutes extends BaseRouteHandler {
       const maxChars = parseInt(settings.CLAUDE_MEM_OBS_MAX_FIELD_CHARS, 10);
       if (isNaN(maxChars) || maxChars < 500 || maxChars > 100000) {
         return { valid: false, error: 'CLAUDE_MEM_OBS_MAX_FIELD_CHARS must be between 500 and 100000' };
+      }
+    }
+
+    // Validate Pool Starvation Defense settings
+    if (settings.CLAUDE_MEM_POOL_COOLDOWN_MS) {
+      const val = parseInt(settings.CLAUDE_MEM_POOL_COOLDOWN_MS, 10);
+      if (isNaN(val) || val < 10000 || val > 600000) {
+        return { valid: false, error: 'CLAUDE_MEM_POOL_COOLDOWN_MS must be between 10000 and 600000' };
+      }
+    }
+    if (settings.CLAUDE_MEM_MAX_POOL_RETRIES) {
+      const val = parseInt(settings.CLAUDE_MEM_MAX_POOL_RETRIES, 10);
+      if (isNaN(val) || val < 1 || val > 20) {
+        return { valid: false, error: 'CLAUDE_MEM_MAX_POOL_RETRIES must be between 1 and 20' };
+      }
+    }
+    if (settings.CLAUDE_MEM_STALE_RESPONSE_THRESHOLD_MS) {
+      const val = parseInt(settings.CLAUDE_MEM_STALE_RESPONSE_THRESHOLD_MS, 10);
+      if (isNaN(val) || val < 30000 || val > 600000) {
+        return { valid: false, error: 'CLAUDE_MEM_STALE_RESPONSE_THRESHOLD_MS must be between 30000 and 600000' };
+      }
+    }
+    if (settings.CLAUDE_MEM_STALE_INIT_THRESHOLD_MS) {
+      const val = parseInt(settings.CLAUDE_MEM_STALE_INIT_THRESHOLD_MS, 10);
+      if (isNaN(val) || val < 30000 || val > 600000) {
+        return { valid: false, error: 'CLAUDE_MEM_STALE_INIT_THRESHOLD_MS must be between 30000 and 600000' };
+      }
+    }
+    if (settings.CLAUDE_MEM_BACKPRESSURE_L1) {
+      const val = parseInt(settings.CLAUDE_MEM_BACKPRESSURE_L1, 10);
+      if (isNaN(val) || val < 5 || val > 200) {
+        return { valid: false, error: 'CLAUDE_MEM_BACKPRESSURE_L1 must be between 5 and 200' };
+      }
+    }
+    if (settings.CLAUDE_MEM_BACKPRESSURE_L2) {
+      const val = parseInt(settings.CLAUDE_MEM_BACKPRESSURE_L2, 10);
+      if (isNaN(val) || val < 10 || val > 500) {
+        return { valid: false, error: 'CLAUDE_MEM_BACKPRESSURE_L2 must be between 10 and 500' };
+      }
+    }
+    if (settings.CLAUDE_MEM_BACKPRESSURE_SAMPLE_RATE) {
+      const val = parseInt(settings.CLAUDE_MEM_BACKPRESSURE_SAMPLE_RATE, 10);
+      if (isNaN(val) || val < 2 || val > 10) {
+        return { valid: false, error: 'CLAUDE_MEM_BACKPRESSURE_SAMPLE_RATE must be between 2 and 10' };
       }
     }
 

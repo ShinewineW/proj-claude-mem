@@ -24,6 +24,7 @@ import { USER_SETTINGS_PATH } from '../../../../shared/paths.js';
 import { getProcessBySession, ensureProcessExit } from '../../ProcessRegistry.js';
 import { getProjectName } from '../../../../utils/project-name.js';
 import type { BypassLane } from '../../BypassLane.js';
+import { shouldEnterCooldown } from './pool-cooldown-utils.js';
 
 let cachedPatterns: { key: string; patterns: ToolPattern[] } | null = null;
 
@@ -84,6 +85,21 @@ export class SessionRoutes extends BaseRouteHandler {
     }
 
     const selectedProvider = this.getSelectedProvider();
+
+    // Pool cooldown guard — don't start generator during cooldown period.
+    // Exception: 'init' (new user prompt) breaks cooldown — environment may have changed.
+    if (session.poolCooldownUntil && Date.now() < session.poolCooldownUntil) {
+      if (source !== 'init') {
+        logger.debug('SESSION', 'In pool cooldown, skipping generator start', {
+          sessionDbId, source,
+          cooldownRemainingMs: session.poolCooldownUntil - Date.now()
+        });
+        return;
+      }
+      // New prompt breaks cooldown
+      session.poolCooldownUntil = undefined;
+      session.consecutiveRestarts = 0;
+    }
 
     // Start generator if not running
     if (!session.generatorPromise) {
@@ -169,7 +185,9 @@ export class SessionRoutes extends BaseRouteHandler {
       .catch(error => {
         // Only log non-abort errors
         if (session.abortController.signal.aborted) return;
-        
+
+        session.lastGeneratorError = error instanceof Error ? error : new Error(String(error));
+
         logger.error('SESSION', `Generator failed`, {
           sessionId: session.sessionDbId,
           provider: 'claude',
@@ -258,6 +276,42 @@ export class SessionRoutes extends BaseRouteHandler {
                 return;
               }
 
+              // Pool timeout check BEFORE incrementing consecutiveRestarts.
+              // Pool timeout is transient — it must not consume the restart budget
+              // reserved for non-pool errors (FK constraint, unrecoverable, etc.).
+              const lastError = session.lastGeneratorError;
+              session.lastGeneratorError = undefined;
+              const settings = SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH);
+              const maxPoolRetries = parseInt(settings.CLAUDE_MEM_MAX_POOL_RETRIES, 10) || 5;
+              const poolCooldownMs = parseInt(settings.CLAUDE_MEM_POOL_COOLDOWN_MS, 10) || 120000;
+
+              if (shouldEnterCooldown(lastError, session, maxPoolRetries)) {
+                session.totalPoolTimeouts++;
+                session.poolCooldownUntil = Date.now() + poolCooldownMs;
+
+                logger.warn('SESSION', 'Pool timeout — entering cooldown, not abandoning', {
+                  sessionDbId,
+                  totalPoolTimeouts: session.totalPoolTimeouts,
+                  cooldownMs: poolCooldownMs,
+                  pendingCount
+                });
+
+                // Schedule retry after cooldown.
+                // Delegate through ensureGeneratorRunning for spawnInProgress guard.
+                setTimeout(() => {
+                  const s = this.sessionManager.getSession(sessionDbId, session.dbPath);
+                  if (s && s.poolCooldownUntil && Date.now() >= s.poolCooldownUntil) {
+                    s.poolCooldownUntil = undefined;
+                    s.consecutiveRestarts = 0; // fresh budget for the retry
+                    this.ensureGeneratorRunning(sessionDbId, 'pool-cooldown-retry', session.dbPath);
+                  }
+                }, poolCooldownMs);
+
+                this.workerService.broadcastProcessingStatus();
+                return;
+              }
+
+              // Non-pool error — NOW increment consecutiveRestarts
               session.consecutiveRestarts = (session.consecutiveRestarts || 0) + 1;
 
               if (session.consecutiveRestarts > SessionRoutes.MAX_CONSECUTIVE_RESTARTS) {
@@ -439,13 +493,18 @@ export class SessionRoutes extends BaseRouteHandler {
 
     const { tool_name, tool_input, tool_response, prompt_number, cwd, dbPath } = req.body;
 
-    this.sessionManager.queueObservation(sessionDbId, {
+    const enqueued = this.sessionManager.queueObservation(sessionDbId, {
       tool_name,
       tool_input,
       tool_response,
       prompt_number,
       cwd
     }, dbPath);
+
+    if (!enqueued) {
+      res.json({ status: 'skipped', reason: 'backpressure' });
+      return;
+    }
 
     // CRITICAL: Ensure SDK agent is running to consume the queue
     this.ensureGeneratorRunning(sessionDbId, 'observation', dbPath);
@@ -609,7 +668,7 @@ export class SessionRoutes extends BaseRouteHandler {
     const cleanedToolResponse = cleanToolField(tool_response);
 
     // Queue observation
-    this.sessionManager.queueObservation(sessionDbId, {
+    const enqueued = this.sessionManager.queueObservation(sessionDbId, {
       tool_name,
       tool_input: cleanedToolInput,
       tool_response: cleanedToolResponse,
@@ -622,6 +681,11 @@ export class SessionRoutes extends BaseRouteHandler {
         return '';
       })()
     }, dbPath);
+
+    if (!enqueued) {
+      res.json({ status: 'skipped', reason: 'backpressure' });
+      return;
+    }
 
     // Ensure SDK agent is running
     this.ensureGeneratorRunning(sessionDbId, 'observation', dbPath);

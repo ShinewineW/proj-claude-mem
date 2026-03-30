@@ -56,6 +56,16 @@ export interface ActiveSession {
     totalPromptChars: number; // total chars sent in observation prompts
     truncatedFields: number; // fields truncated by truncateField()
   };
+  // Pool starvation defense (Layer 2)
+  lastGeneratorError?: Error;
+  poolCooldownUntil?: number;
+  totalPoolTimeouts: number;
+  // Stale detection (Layer 1)
+  lastResponseAt: number | null;
+  // Backpressure (Layer 3)
+  lastEnqueuedTool?: string;
+  lastEnqueuedTarget?: string;
+  backpressureCounter?: number;
 }
 
 export interface PendingMessage {
