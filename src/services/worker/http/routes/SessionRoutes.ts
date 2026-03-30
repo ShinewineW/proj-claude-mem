@@ -177,6 +177,8 @@ export class SessionRoutes extends BaseRouteHandler {
     // Track which provider is running and mark activity for stale detection (#1099)
     session.currentProvider = 'claude';
     session.lastGeneratorActivity = Date.now();
+    // Reset so Layer 1 stale detection uses spawnedAt (Check 4), not stale lastResponseAt (Check 3)
+    session.lastResponseAt = null;
 
     // G1 fix: Start bypass lane consumer for this session (no-op if bypass disabled)
     this.bypassLane?.startForSession(session);

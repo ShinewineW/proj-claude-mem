@@ -631,6 +631,8 @@ export class WorkerService {
 
     // Track generator activity for stale detection (Issue #1099)
     session.lastGeneratorActivity = Date.now();
+    // Reset so Layer 1 stale detection uses spawnedAt (Check 4), not stale lastResponseAt (Check 3)
+    session.lastResponseAt = null;
 
     // Start bypass lane consumer for this session (no-op if bypass disabled)
     this.bypassLane.startForSession(session);
