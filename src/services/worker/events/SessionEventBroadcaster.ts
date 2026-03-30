@@ -95,4 +95,18 @@ export class SessionEventBroadcaster {
     // Update processing status (queue depth changed)
     this.workerService.broadcastProcessingStatus();
   }
+
+  /**
+   * Broadcast anomaly events to Viewer UI via SSE.
+   * Used for session abandons, DB unreachable, crash anomalies, stuck sessions.
+   */
+  broadcastAnomaly(event: {
+    type: 'session_abandoned' | 'session_stuck' | 'crash_anomaly' | 'db_unreachable';
+    sessionDbId?: number;
+    project?: string;
+    [key: string]: any;
+  }): void {
+    this.sseBroadcaster.broadcast(event);
+    logger.info('SSE', `Anomaly event: ${event.type}`, event);
+  }
 }

@@ -541,6 +541,37 @@ export class SessionManager {
     }
   }
 
+  /**
+   * Remove a session from memory ONLY — no database access.
+   * Used when DB is unreachable (deleted directory, disk I/O error).
+   * Does NOT call getSessionStore(), getStore(), or any DB method.
+   */
+  removeSessionMemoryOnly(sessionDbId: number, dbPath?: string): void {
+    const key = dbPath !== undefined
+      ? this.sessionKey(sessionDbId, dbPath)
+      : this.findSessionKey(sessionDbId);
+    if (!key) return;
+    const session = this.sessions.get(key);
+    if (!session) return;
+
+    logSDKUsageSummary({
+      session,
+      summaryType: 'session'
+    });
+
+    this.sessions.delete(key);
+    this.sessionQueues.delete(key);
+
+    logger.info('SESSION', 'Session removed (memory-only, db-unreachable)', {
+      sessionId: sessionDbId,
+      project: session.project
+    });
+
+    if (this.onSessionDeletedCallback) {
+      this.onSessionDeletedCallback();
+    }
+  }
+
   private static readonly MAX_SESSION_IDLE_MS = 15 * 60 * 1000; // 15 minutes
 
   /**

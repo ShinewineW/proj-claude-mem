@@ -161,6 +161,33 @@ export class DbConnectionPool {
     logger.info('POOL', 'Opened project DB', { dbPath: normalizedPath });
     return entry;
   }
+
+  /**
+   * Explicitly evict a connection from the pool.
+   * Used when a project DB is known to be unreachable (deleted directory).
+   * Closes store and search, removes from Map.
+   */
+  evict(dbPath: string): void {
+    const normalizedPath = resolve(dbPath);
+    const entry = this.connections.get(normalizedPath);
+    if (!entry) return;
+
+    try {
+      entry.store.close();
+    } catch (e) {
+      logger.debug('POOL', `Error closing store during evict for ${normalizedPath}`, {}, e as Error);
+    }
+    try {
+      entry.search.close();
+    } catch (e) {
+      logger.debug('POOL', `Error closing search during evict for ${normalizedPath}`, {}, e as Error);
+    }
+    this.connections.delete(normalizedPath);
+    if (this.lastActiveDbPath === normalizedPath) {
+      this.lastActiveDbPath = null;
+    }
+    logger.info('POOL', 'Evicted connection (db-unreachable)', { dbPath: normalizedPath });
+  }
 }
 
 /**
