@@ -371,6 +371,7 @@ export class SessionRoutes extends BaseRouteHandler {
       }
 
       case 'proactive-reset': {
+        session.proactiveReset = false; // Clear before any early return to prevent loop
         this.bypassLane?.stopForSession(sessionDbId);
         session.abortController = new AbortController();
         logger.info('SESSION', '[PROACTIVE_RESET] Restarting generator with fresh context', {

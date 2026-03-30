@@ -897,6 +897,7 @@ export class WorkerService {
       }
 
       case 'proactive-reset': {
+        session.proactiveReset = false; // Clear before any early return to prevent loop
         this.bypassLane.stopForSession(sessionDbId);
         session.abortController = new AbortController();
         logger.info('SYSTEM', '[PROACTIVE_RESET] Restarting generator with fresh context', {
