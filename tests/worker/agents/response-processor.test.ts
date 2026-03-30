@@ -25,6 +25,8 @@ mock.module('../../../src/services/domain/ModeManager.js', () => ({
         observation_types: [{ id: 'discovery' }, { id: 'bugfix' }, { id: 'refactor' }],
         observation_concepts: [],
       }),
+      getTypeIcon: (type: string) => ({ discovery: '🔵', bugfix: '🔴', feature: '🟣', change: '✅', refactor: '🔄', decision: '⚖️' }[type] || '📌'),
+      loadMode: () => {},
     }),
   },
 }));

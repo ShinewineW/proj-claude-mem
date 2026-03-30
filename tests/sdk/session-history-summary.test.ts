@@ -8,6 +8,8 @@ mock.module('../../src/services/domain/ModeManager.js', () => ({
         name: 'code',
         observation_types: [{ id: 'discovery' }, { id: 'bugfix' }],
       }),
+      getTypeIcon: (type: string) => ({ discovery: '🔵', bugfix: '🔴', feature: '🟣', change: '✅', refactor: '🔄', decision: '⚖️' }[type] || '📌'),
+      loadMode: () => {},
     }),
   },
 }));
