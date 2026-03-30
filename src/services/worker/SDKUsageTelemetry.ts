@@ -57,6 +57,7 @@ interface LogSDKUsageSummaryParams {
     | "memorySessionId"
     | "cumulativeSDKUsage"
     | "optimizationStats"
+    | "peakConsecutiveEmptyObs"
   >;
   logger?: LoggerLike;
   summaryType: "run" | "session";
@@ -242,5 +243,7 @@ export function logSDKUsageSummary({
           optTruncatedFields: session.optimizationStats.truncatedFields,
         }
       : {}),
+    // Phase 2 telemetry (S6)
+    peakConsecutiveEmptyObs: session.peakConsecutiveEmptyObs ?? 0,
   });
 }

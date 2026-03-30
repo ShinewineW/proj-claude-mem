@@ -67,6 +67,18 @@ export async function processAgentResponse(
 
   // Parse observations and summary
   const observations = parseObservations(text, session.contentSessionId);
+
+  // S6: Track consecutive empty observations for telemetry
+  if (observations.length > 0) {
+    session.consecutiveEmptyObservations = 0;
+  } else {
+    session.consecutiveEmptyObservations = (session.consecutiveEmptyObservations ?? 0) + 1;
+    session.peakConsecutiveEmptyObs = Math.max(
+      session.peakConsecutiveEmptyObs ?? 0,
+      session.consecutiveEmptyObservations,
+    );
+  }
+
   const summary = parseSummary(text, session.sessionDbId);
 
   // Convert nullable fields to empty strings for storeSummary (if summary exists)
