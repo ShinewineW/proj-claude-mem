@@ -677,14 +677,17 @@ export class SessionManager {
    * Ghost = session is 'active' in DB but absent from in-memory sessions Map.
    * Called from the 2-minute stale reaper interval (worker-service.ts).
    */
-  cleanupGhostSessionsInDb(dbPaths: Set<string>): DbUnreachableCleanup[] {
+  cleanupGhostSessionsInDb(
+    dbPaths: Set<string>,
+    existsFn: (path: string) => boolean = fs.existsSync,
+  ): DbUnreachableCleanup[] {
     const now = Date.now();
     const threshold = now - SessionManager.GHOST_SESSION_THRESHOLD_MS;
     const dbUnreachableCleanups: DbUnreachableCleanup[] = [];
 
     for (const dbPath of dbPaths) {
       // S5 PRE-CHECK: Verify DB file exists before accessing DbConnectionPool
-      if (!fs.existsSync(dbPath)) {
+      if (!existsFn(dbPath)) {
         const sessionsToRemove: { sessionDbId: number; project: string }[] = [];
         for (const [, session] of this.sessions) {
           if (session.dbPath === dbPath) {
@@ -744,7 +747,7 @@ export class SessionManager {
         // S5 CATCH: Check if error is DB unreachable
         if (error instanceof Error && (error.message.includes('disk I/O error')
             || error.message.includes('unable to open database file'))) {
-          if (!fs.existsSync(dbPath)) {
+          if (!existsFn(dbPath)) {
             const toRemoveCatch: { sessionDbId: number; project: string }[] = [];
             for (const [, session] of this.sessions) {
               if (session.dbPath === dbPath) toRemoveCatch.push({ sessionDbId: session.sessionDbId, project: session.project });

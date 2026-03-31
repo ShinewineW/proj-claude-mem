@@ -37,15 +37,8 @@ mock.module('../../src/services/worker/ProcessRegistry.js', () => ({
   unregisterProcess: () => {},
 }));
 
-// Mock fs.existsSync to return true for test DB paths (ghost cleanup pre-check)
-const originalFs = await import('fs');
-mock.module('fs', () => ({
-  ...originalFs,
-  existsSync: (path: string) => {
-    if (typeof path === 'string' && (path.includes('test-project') || path.includes('/tmp/'))) return true;
-    return originalFs.existsSync(path);
-  },
-}));
+// Ghost cleanup pre-check uses existsFn parameter injection (no process-level fs mock needed)
+const testExistsFn = () => true; // All test DB paths are in-memory, always "exist"
 
 import { DatabaseManager } from '../../src/services/worker/DatabaseManager.js';
 import { SessionManager } from '../../src/services/worker/SessionManager.js';
@@ -210,7 +203,7 @@ describe('D1+D2: cleanupGhostSessionsInDb', () => {
     insertSession(db, 'ghost-1', 'TestProject', oldEpoch);
     // Do NOT initialize in memory — this is a ghost
 
-    sessionManager.cleanupGhostSessionsInDb(new Set([dbPath]));
+    sessionManager.cleanupGhostSessionsInDb(new Set([dbPath]), testExistsFn);
 
     const row = db.prepare('SELECT status FROM sdk_sessions WHERE content_session_id = ?').get('ghost-1') as any;
     expect(row.status).toBe('failed');
@@ -221,7 +214,7 @@ describe('D1+D2: cleanupGhostSessionsInDb', () => {
     const sessionDbId = insertSession(db, 'in-memory-1', 'TestProject', oldEpoch);
     sessionManager.initializeSession(sessionDbId, 'prompt', 1, dbPath);
 
-    sessionManager.cleanupGhostSessionsInDb(new Set([dbPath]));
+    sessionManager.cleanupGhostSessionsInDb(new Set([dbPath]), testExistsFn);
 
     const row = db.prepare('SELECT status FROM sdk_sessions WHERE content_session_id = ?').get('in-memory-1') as any;
     expect(row.status).toBe('active');
@@ -231,7 +224,7 @@ describe('D1+D2: cleanupGhostSessionsInDb', () => {
     const recentEpoch = Date.now() - 10 * 60 * 1000; // 10 min ago
     insertSession(db, 'young-1', 'TestProject', recentEpoch);
 
-    sessionManager.cleanupGhostSessionsInDb(new Set([dbPath]));
+    sessionManager.cleanupGhostSessionsInDb(new Set([dbPath]), testExistsFn);
 
     const row = db.prepare('SELECT status FROM sdk_sessions WHERE content_session_id = ?').get('young-1') as any;
     expect(row.status).toBe('active');
@@ -243,7 +236,7 @@ describe('D1+D2: cleanupGhostSessionsInDb', () => {
     insertPendingMessage(db, sessionDbId, 'ghost-msgs', 'observation', 'pending');
     insertPendingMessage(db, sessionDbId, 'ghost-msgs', 'summarize', 'processing', Date.now() - 600000);
 
-    sessionManager.cleanupGhostSessionsInDb(new Set([dbPath]));
+    sessionManager.cleanupGhostSessionsInDb(new Set([dbPath]), testExistsFn);
 
     const msgs = db.prepare('SELECT status FROM pending_messages WHERE session_db_id = ?').all(sessionDbId) as any[];
     expect(msgs.every((m: any) => m.status === 'failed')).toBe(true);
@@ -255,7 +248,7 @@ describe('D1+D2: cleanupGhostSessionsInDb', () => {
     const oldProcessingEpoch = Date.now() - 10 * 60 * 1000; // 10 min ago
     insertPendingMessage(db, sessionDbId, 'completed-1', 'summarize', 'processing', oldProcessingEpoch);
 
-    sessionManager.cleanupGhostSessionsInDb(new Set([dbPath]));
+    sessionManager.cleanupGhostSessionsInDb(new Set([dbPath]), testExistsFn);
 
     const msg = db.prepare('SELECT status FROM pending_messages WHERE session_db_id = ?').get(sessionDbId) as any;
     expect(msg.status).toBe('pending');
