@@ -35,6 +35,12 @@
 - **JSON/Truncation**: `buildObservationPrompt()` uses compact JSON, plain text rendering, `truncateField()` at `CLAUDE_MEM_OBS_MAX_FIELD_CHARS`.
 - **Telemetry**: `optimizationStats` on `ActiveSession` — `batchedObservations`, `batchPromptsSaved`, `totalPromptChars`, `truncatedFields` logged in `SDK_USAGE_SUMMARY`. Bypass lane logs `truncatedFields` per-message at INFO level.
 
+**SDK Token Optimization (Phase 2)**: Generator safety nets + proactive history reset:
+- **Centralized Decision**: `generator-action.ts` — `decideGeneratorAction()` pure function with 12 priority-ordered branches. Both `SessionRoutes` and `WorkerService` delegate `.finally()` logic to this function via `executeAction()`/`executeGeneratorAction()`.
+- **Safety Nets**: S1 (`totalLifetimeCrashes` cap), S3 (centralized decision), S4 (`session_stuck` SSE), S5 (DB pre-check + `evict()`), S6 (`consecutiveEmptyObservations` telemetry).
+- **Layer C**: `shouldProactiveReset()` — dual trigger (message count + token estimate). Checkpoint in SDKAgent `for-await` loop. `proactiveReset` flag → abort → restart with fresh context (no crash counter).
+- **Settings**: `CLAUDE_MEM_MAX_HISTORY_LENGTH` (50), `CLAUDE_MEM_MAX_HISTORY_TOKENS` (100000).
+
 **Pool Starvation Defense** (3-layer): `stale-detection.ts` (Layer 1), `pool-cooldown-utils.ts` (Layer 2), `backpressure.ts` (Layer 3). Applied in `SessionRoutes` (cooldown entry + ensureGeneratorRunning bypass), `SessionManager.queueObservation()` (backpressure gate), `worker-service.ts` (cooldown retry timer). Settings: 7 new `CLAUDE_MEM_*` keys validated in `SettingsRoutes`.
 
 **Drain Window**: `deleteSession()` polls `hasPendingSummarize()` every 500ms (max 10s) before aborting, preventing summary loss on session close.
