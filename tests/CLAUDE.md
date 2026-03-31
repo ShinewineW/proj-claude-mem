@@ -15,6 +15,7 @@ new MigrationRunner(db).runAllMigrations();
 mock.module('../../src/shared/paths.js', () => ({ resolveProjectDbPath: () => '/test/mem.db' }));
 ```
 **Gotcha**: Pollutes all test files in same process. Only mock leaf deps (paths.ts, SettingsDefaultsManager), never mock handler modules.
+**Gotcha**: NEVER `mock.module('fs')` — it's a builtin module used by infrastructure tests (filesystem-hygiene etc.). Mocking it process-wide causes bun test to hang on full-suite runs. Use parameter injection instead (e.g., `cleanupGhostSessionsInDb(dbPaths, existsFn)`).
 **Gotcha**: SettingsDefaultsManager is mocked by 15+ test files. New tests that verify settings defaults must use file-based assertions (`readFileSync` on `.ts` source) instead of importing the module — it may return incomplete stubs in full-suite runs.
 
 **Logger suppression**: `spyOn(logger, 'info').mockImplementation(() => {})` in `beforeEach`, restore in `afterEach`.
@@ -41,7 +42,7 @@ AFTER=$(ls -d $TMPDIR/test-* $TMPDIR/claude-mem-* 2>/dev/null | wc -l)
 echo "Delta: $((AFTER - BEFORE))"  # Must be 0
 ```
 
-**Logger coverage gate**: Files under `src/services/worker/`, `src/services/sqlite/`, `src/hooks/`, `src/sdk/`, `src/servers/` must `import { logger }`. Enforced by `logger-usage-standards.test.ts` — new files without logger import fail full suite.
+**Logger coverage gate**: Files under `src/services/worker/`, `src/services/sqlite/`, `src/hooks/`, `src/sdk/`, `src/servers/` must `import { logger }`. Enforced by `logger-usage-standards.test.ts` — new files without logger import fail full suite. Current exclusions for pure function modules: `stale-detection.ts`, `pool-cooldown-utils.ts`, `backpressure.ts`, `generator-action.ts`.
 
 ## Structure
 
