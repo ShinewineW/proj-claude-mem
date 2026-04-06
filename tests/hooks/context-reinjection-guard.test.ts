@@ -31,6 +31,7 @@ mock.module('../../src/shared/worker-utils.js', () => ({
 
 mock.module('../../src/utils/project-name.js', () => ({
   getProjectName: () => 'test-project',
+  getProjectContext: () => ({ primary: 'test-project', parent: null, isWorktree: false, allProjects: ['test-project'] }),
 }));
 
 mock.module('../../src/utils/project-filter.js', () => ({

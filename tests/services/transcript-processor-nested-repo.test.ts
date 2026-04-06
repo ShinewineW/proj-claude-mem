@@ -56,6 +56,31 @@ mock.module('../../src/utils/project-name.js', () => ({
   getProjectContext: () => ({ project: 'my-workspace', allProjects: ['my-workspace'] }),
 }));
 
+// Mock project-allowlist to avoid real→mock swap crash in full-suite runs
+// (bun mock.module can fail when replacing a real ESM module with a mock between files)
+mock.module('../../src/shared/project-allowlist.js', () => ({
+  resolveProjectContext: (cwd: string) => ({
+    projectRoot: TEST_PROJECT,
+    dbPath: join(TEST_PROJECT, '.claude', 'mem.db'),
+    projectName: 'my-workspace',
+  }),
+  isProjectEnabled: () => true,
+  findContainingProject: () => TEST_PROJECT,
+  listEnabledProjects: () => ({ [TEST_PROJECT]: { enabledAt: '2026-01-01T00:00:00.000Z' } }),
+  resolveProjectByName: () => null,
+  resolveAllProjectDbPaths: () => [],
+  getEnabledProjectsPath: () => join(TEST_DATA_DIR, 'enabled-projects.json'),
+  enableProject: () => {},
+  disableProject: () => {},
+}));
+
+mock.module('../../src/shared/paths.js', () => ({
+  resolveProjectDbPath: () => join(TEST_PROJECT, '.claude', 'mem.db'),
+  resolveProjectRoot: () => TEST_PROJECT,
+  DATA_DIR: TEST_DATA_DIR,
+  USER_SETTINGS_PATH: join(TEST_DATA_DIR, 'settings.json'),
+}));
+
 mock.module('../../src/utils/agents-md-utils.js', () => ({
   writeAgentsMd: () => {},
 }));
@@ -78,12 +103,15 @@ mock.module('../../src/shared/hook-constants.js', () => ({
   getTimeout: (v: number) => v,
 }));
 
-// --- Import processor AFTER mocks ---
-import { TranscriptEventProcessor } from '../../src/services/transcripts/processor.js';
+// --- Import processor DYNAMICALLY inside test (not static) ---
+// Static import eagerly loads entire module graph; when the next test file
+// replaces mocks via mock.module, bun fails re-evaluating the static graph.
+// Dynamic import defers loading until after mocks are set up.
 
 describe('L6: transcript queueSummary with drifted cwd', () => {
   it('sends PARENT project dbPath, not nested repo dbPath, via fetch POST', async () => {
     fetchCalls = [];
+    const { TranscriptEventProcessor } = await import('../../src/services/transcripts/processor.js');
     const processor = new TranscriptEventProcessor();
 
     // Construct a session with DRIFTED cwd (inside nested git repo)
