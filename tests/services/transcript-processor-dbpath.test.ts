@@ -101,6 +101,12 @@ mock.module("../../src/shared/project-allowlist.js", () => ({
   }),
   isProjectEnabled: () => true,
   findContainingProject: () => "/test/project",
+  listEnabledProjects: () => ({}),
+  resolveProjectByName: () => null,
+  resolveAllProjectDbPaths: () => [],
+  getEnabledProjectsPath: () => '/tmp/test-enabled-projects.json',
+  enableProject: () => {},
+  disableProject: () => {},
 }));
 
 mock.module("../../src/utils/agents-md-utils.js", () => ({

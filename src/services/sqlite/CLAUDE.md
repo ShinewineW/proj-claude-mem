@@ -4,11 +4,11 @@
 
 | File | Purpose |
 |------|---------|
-| `SessionStore.ts` | Main CRUD for sessions, observations, summaries, prompts. Schema versions up to 25. |
+| `SessionStore.ts` | Main CRUD for sessions, observations, summaries, prompts. Schema versions up to 26. |
 | `PendingMessageStore.ts` | Persistent message queue with claim-confirm lifecycle (pending→processing→deleted). |
 | `SessionSearch.ts` | Filter-only structured search (vector search via ChromaDB, not local FTS). |
 | `Database.ts` | Entry point: `ClaudeMemDatabase` (recommended) wraps SessionStore + migrations. |
-| `migrations/runner.ts` | `MigrationRunner` — extracted from SessionStore, 19 migration methods (schema versions up to 26). |
+| `migrations/runner.ts` | `MigrationRunner` — extracted from SessionStore, 23 migrations (schema versions up to 26, + sentinel 9999). |
 | `Import.ts` | Bulk import: `importObservation()`, `importSessionSummary()` with content_hash dedup. |
 
 ## Key Tables

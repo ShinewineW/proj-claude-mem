@@ -339,11 +339,11 @@ export class DataRoutes extends BaseRouteHandler {
     // 2. Query each enabled project from allowlist
     try {
       const { listEnabledProjects } = require('../../../../shared/project-allowlist.js');
-      const { resolveProjectDbPath } = require('../../../../shared/paths.js');
       const enabled = listEnabledProjects();
       for (const projectRoot of Object.keys(enabled)) {
         try {
-          const projDbPath = resolveProjectDbPath(projectRoot);
+          // Allowlist entries are canonical roots — no heuristic re-resolution needed.
+          const projDbPath = path.join(projectRoot, '.claude', 'mem.db');
           const projDb = this.dbManager.getSessionStore(projDbPath).db;
 
           // Try observations first, fall back to sdk_sessions for projects with no observations yet
@@ -435,12 +435,11 @@ export class DataRoutes extends BaseRouteHandler {
 
     try {
     const { listEnabledProjects } = require('../../../../shared/project-allowlist.js');
-    const { resolveProjectDbPath } = require('../../../../shared/paths.js');
     const enabled = listEnabledProjects();
 
     for (const projectRoot of Object.keys(enabled)) {
       try {
-        const projDbPath = resolveProjectDbPath(projectRoot);
+        const projDbPath = path.join(projectRoot, '.claude', 'mem.db');
         const projDb = this.dbManager.getSessionStore(projDbPath).db;
 
         const recentObs = projDb.prepare(`
@@ -500,12 +499,11 @@ export class DataRoutes extends BaseRouteHandler {
 
     try {
       const { listEnabledProjects } = require('../../../../shared/project-allowlist.js');
-      const { resolveProjectDbPath } = require('../../../../shared/paths.js');
       const enabled = listEnabledProjects();
 
       for (const projectRoot of Object.keys(enabled)) {
         try {
-          const projDbPath = resolveProjectDbPath(projectRoot);
+          const projDbPath = path.join(projectRoot, '.claude', 'mem.db');
           const projDb = this.dbManager.getSessionStore(projDbPath).db;
 
           const obsTrend = projDb.prepare(`

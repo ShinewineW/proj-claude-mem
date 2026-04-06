@@ -8,14 +8,14 @@ Foundational modules for per-project isolation, configuration, and hook/worker c
 |------|---------|
 | `paths.ts` | `resolveProjectDbPath(cwd)`: env → worktree parent → git root → cwd → `<root>/.claude/mem.db` |
 | `project-db.ts` | `DbConnectionPool`: `Map<path, {store,search}>`, FIFO eviction at 10, auto `.gitignore` |
-| `project-allowlist.ts` | Opt-in allowlist + `resolveProjectContext()` (allowlist-first resolution), `findContainingProject()` (child-path matching). Lazy env var reading. |
+| `project-allowlist.ts` | Opt-in allowlist + `resolveProjectContext()` (Priority 1: allowlist child-path matching via `findContainingProject()`, Priority 2: git-root heuristic fallback). Lazy env var reading. **Pattern rule**: allowlist-sourced roots must use `path.join(root, '.claude', 'mem.db')`, never `resolveProjectDbPath()`. |
 | `chroma-utils.ts` | `getCollectionName(dbPath)`: deterministic `cm__<name>_<8char-hash>` |
 
 ## Configuration
 
 | File | Purpose |
 |------|---------|
-| `SettingsDefaultsManager.ts` | 45+ settings, priority: env vars > settings.json > defaults. Phase 1 SDK optimization: `SKIP_TOOL_PATTERNS`, `BATCH_MAX_SIZE`, `OBS_MAX_FIELD_CHARS` |
+| `SettingsDefaultsManager.ts` | 56 unique `CLAUDE_MEM_*` settings, priority: env vars > settings.json > defaults. Phase 1 SDK optimization: `SKIP_TOOL_PATTERNS`, `BATCH_MAX_SIZE`, `OBS_MAX_FIELD_CHARS` |
 | `EnvManager.ts` | Credential isolation in `~/.claude-mem/.env`. Blocklist approach strips project API keys. |
 
 ## Hook/Worker Communication

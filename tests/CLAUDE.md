@@ -48,10 +48,12 @@ echo "Delta: $((AFTER - BEFORE))"  # Must be 0
 
 Tests mirror source: `src/services/sqlite/` → `tests/services/sqlite/` or `tests/sqlite/`. Each file is self-contained (no shared conftest/fixtures).
 
+Key test directories: `tests/sqlite/` (DB), `tests/hooks/` (hook structure), `tests/shared/` (project isolation), `tests/worker/` (generator/pool/bypass), `tests/infrastructure/` (filesystem-hygiene, logger-usage-standards), `tests/services/` (routes, sync, transcripts).
+
 ## Run Commands
 
 ```bash
-/opt/homebrew/bin/bun test                    # All tests
+/opt/homebrew/bin/bun test                    # All tests (1596 pass, 3 fail pre-existing)
 /opt/homebrew/bin/bun test tests/sqlite/      # Database tests
 /opt/homebrew/bin/bun test tests/hooks/       # Hook structure tests
 ```

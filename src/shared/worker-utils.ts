@@ -205,6 +205,38 @@ async function tryStartWorker(): Promise<boolean> {
 }
 
 /**
+ * Force-restart the worker daemon.
+ * Sends shutdown to the running worker, waits for port to free, then starts fresh.
+ * Used when the worker is alive (health check passes) but functionally broken
+ * (e.g., context inject returns 500 due to stale Bun runtime after brew upgrade).
+ *
+ * Uses `worker-service.cjs restart` which handles: httpShutdown → SIGTERM → SIGKILL → spawn.
+ * Returns true if the restarted worker is healthy.
+ */
+export async function restartWorker(): Promise<boolean> {
+  try {
+    const workerScript = path.join(MARKETPLACE_ROOT, 'scripts', 'worker-service.cjs');
+    const bunRunner = path.join(MARKETPLACE_ROOT, 'scripts', 'bun-runner.js');
+
+    logger.info('SYSTEM', 'Force-restarting worker daemon');
+
+    execFileSync('node', [bunRunner, workerScript, 'restart'], {
+      timeout: 12_000,
+      stdio: 'ignore'
+    });
+
+    return await isWorkerHealthy();
+  } catch (error) {
+    const exitCode = (error as { status?: number })?.status;
+    logger.warn('SYSTEM', 'Worker restart failed', {
+      error: error instanceof Error ? error.message : String(error),
+      exitCode
+    });
+    return false;
+  }
+}
+
+/**
  * Ensure worker service is running
  * Quick health check first; if unhealthy, attempts auto-start once.
  * This prevents silent hook degradation when the worker crashes after SessionStart.

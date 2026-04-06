@@ -12,6 +12,7 @@
  * Design: Fail-fast with no fallbacks - if Chroma is unavailable, syncing fails.
  */
 
+import { join } from 'path';
 import { ChromaMcpManager } from './ChromaMcpManager.js';
 import { ParsedObservation, ParsedSummary } from '../../sdk/parser.js';
 import { SessionStore } from '../sqlite/SessionStore.js';
@@ -820,7 +821,6 @@ export class ChromaSync {
     // Dynamic imports avoid circular dependency: DatabaseManager → ChromaSync → DatabaseManager.
     // `import type` at top is compiled away; these runtime imports only execute here.
     const { listEnabledProjects } = await import('../../shared/project-allowlist.js');
-    const { resolveProjectDbPath } = await import('../../shared/paths.js');
 
     const enabledProjects = listEnabledProjects();
     const projectRoots = Object.keys(enabledProjects);
@@ -829,7 +829,8 @@ export class ChromaSync {
 
     for (const projectRoot of projectRoots) {
       try {
-        const dbPath = resolveProjectDbPath(projectRoot);
+        // Allowlist entries are canonical roots — no heuristic re-resolution needed.
+        const dbPath = join(projectRoot, '.claude', 'mem.db');
         const chromaSync = dbManager.getChromaSync(dbPath);
         if (!chromaSync) {
           logger.debug('CHROMA_SYNC', `Skipping backfill for ${projectRoot} (Chroma unavailable)`);
