@@ -119,16 +119,16 @@ describe('Plugin Distribution - hooks.json Integrity', () => {
     }
   });
 
-  it('Stop hook must remain a single merged command with ; separator (race condition fix)', () => {
+  it('Stop hook uses single composite stop event (P5)', () => {
     const hooksPath = path.join(projectRoot, 'plugin/hooks/hooks.json');
     const parsed = JSON.parse(readFileSync(hooksPath, 'utf-8'));
     const stopMatchers = parsed.hooks.Stop;
     expect(stopMatchers).toHaveLength(1);
     expect(stopMatchers[0].hooks).toHaveLength(1);
     const command = stopMatchers[0].hooks[0].command;
-    expect(command).toContain(' ; ');
-    expect(command).toContain('summarize');
-    expect(command).toContain('session-complete');
+    expect(command).toContain('hook-client.cjs');
+    expect(command).toContain('stop');
+    expect(command).not.toContain(' ; ');
   });
 });
 

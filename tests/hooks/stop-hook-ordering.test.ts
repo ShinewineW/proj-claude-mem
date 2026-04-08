@@ -16,28 +16,16 @@ describe('hooks.json Stop hook ordering', () => {
     const command = hooks.hooks.Stop[0].hooks[0].command;
     expect(command).toContain('_R="${CLAUDE_PLUGIN_ROOT}"');
     expect(command).toContain('[ -z "$_R" ] && _R="$HOME/.claude/plugins/cache/thedotmack/claude-mem/10.5.2"');
-    // _R prefix only appears once (persists across ; separator)
     const prefixCount = command.split('_R="${CLAUDE_PLUGIN_ROOT}"').length - 1;
     expect(prefixCount).toBe(1);
   });
 
-  it('Stop hook command runs summarize before session-complete', () => {
+  it('Stop hook uses single stop event', () => {
     const command = hooks.hooks.Stop[0].hooks[0].command;
-    const summarizeIdx = command.indexOf('summarize');
-    const completeIdx = command.indexOf('session-complete');
-    expect(summarizeIdx).toBeGreaterThan(-1);
-    expect(completeIdx).toBeGreaterThan(-1);
-    expect(summarizeIdx).toBeLessThan(completeIdx);
-  });
-
-  it('Stop hook uses semicolon separator (not &&)', () => {
-    const command = hooks.hooks.Stop[0].hooks[0].command;
-    expect(command).toContain(' ; ');
-    const betweenCommands = command.substring(
-      command.indexOf('summarize') + 'summarize'.length,
-      command.indexOf('session-complete')
-    );
-    expect(betweenCommands).not.toContain('&&');
+    expect(command).toContain('hook-client.cjs');
+    expect(command).toContain('stop');
+    expect(command).not.toContain('summarize');
+    expect(command).not.toContain('session-complete');
   });
 
   it('Stop hook timeout accommodates both commands', () => {
