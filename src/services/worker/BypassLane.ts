@@ -41,8 +41,8 @@ const FETCH_TIMEOUT_MS = 45_000;
 // Gemini free tier: 15 RPM = minimum 4s between requests
 const GEMINI_RATE_LIMIT_INTERVAL_MS = 4_000;
 // Sliding window defaults for bypass conversation history
-export const DEFAULT_MAX_CONTEXT_MESSAGES = 20;
-export const DEFAULT_MAX_ESTIMATED_TOKENS = 100_000;
+const DEFAULT_MAX_CONTEXT_MESSAGES = 20;
+const DEFAULT_MAX_ESTIMATED_TOKENS = 100_000;
 const CHARS_PER_TOKEN_ESTIMATE = 4;
 
 export type BypassState = "DISABLED" | "ACTIVE" | "TRIPPED";
