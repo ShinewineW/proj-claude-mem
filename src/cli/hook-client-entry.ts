@@ -34,10 +34,9 @@ async function main() {
 }
 
 // CJS main-module detection
-const _isMain = typeof require !== 'undefined' && typeof module !== 'undefined'
-  ? require.main === module || !module.parent
-  : false;
+const isMain = typeof require !== 'undefined' && typeof module !== 'undefined'
+  && (require.main === module || !module.parent);
 
-if (_isMain) {
+if (isMain) {
   main().catch(() => process.exit(0));
 }

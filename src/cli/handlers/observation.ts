@@ -49,6 +49,14 @@ export const observationHandler: EventHandler = {
     const toolStr = logger.formatTool(toolName, toolInput);
     logger.dataIn('HOOK', `PostToolUse: ${toolStr}`, { workerPort: port });
 
+    const writeFallback = (): void => {
+      writeFallbackEntry({
+        type: 'observation', sessionId, cwd, dbPath,
+        timestamp: Date.now(),
+        payload: { tool_name: toolName, tool_input: toolInput, tool_response: toolResponse }
+      });
+    };
+
     // Send to worker - worker handles privacy check and database operations
     try {
       const response = await fetchWithTimeout(
@@ -70,22 +78,14 @@ export const observationHandler: EventHandler = {
 
       if (!response.ok) {
         logger.warn('HOOK', 'Observation storage failed, writing fallback', { status: response.status, toolName });
-        writeFallbackEntry({
-          type: 'observation', sessionId, cwd, dbPath,
-          timestamp: Date.now(),
-          payload: { tool_name: toolName, tool_input: toolInput, tool_response: toolResponse }
-        });
+        writeFallback();
         return { continue: true, suppressOutput: true, exitCode: HOOK_EXIT_CODES.SUCCESS };
       }
 
       logger.debug('HOOK', 'Observation sent successfully', { toolName });
     } catch (error) {
       logger.warn('HOOK', 'Observation fetch error, writing fallback', { error: error instanceof Error ? error.message : String(error) });
-      writeFallbackEntry({
-        type: 'observation', sessionId, cwd, dbPath,
-        timestamp: Date.now(),
-        payload: { tool_name: toolName, tool_input: toolInput, tool_response: toolResponse }
-      });
+      writeFallback();
       return { continue: true, suppressOutput: true, exitCode: HOOK_EXIT_CODES.SUCCESS };
     }
 

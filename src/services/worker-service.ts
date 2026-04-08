@@ -468,16 +468,16 @@ export class WorkerService {
           const projectStore = this.dbManager.getSessionStore(projectDbPath);
           const projectPendingStore = new PendingMessageStore(projectStore.db, 3);
 
-          // Was Loop 1: Reset stale processing messages
+          // 1. Reset stale processing messages
           const projectResetCount = projectPendingStore.resetStaleProcessingMessages(0);
           if (projectResetCount > 0) {
             logger.info('SYSTEM', `Reset ${projectResetCount} stale processing messages in project DB`, { projectRoot });
           }
 
-          // Was Loop 2: Cleanup orphaned summarize messages
+          // 2. Cleanup orphaned summarize messages
           this.sessionManager.cleanupOrphanedMessages(projectDbPath);
 
-          // Was Loop 3: Cleanup dead letters + orphan messages
+          // 3. Cleanup dead letters + orphan messages
           const dead = projectPendingStore.cleanupDeadLetters();
           const orphans = projectPendingStore.cleanupOrphanMessages();
           if (dead + orphans > 0) {
