@@ -137,34 +137,42 @@ async function getWorkerVersion(): Promise<string> {
   return data.version;
 }
 
+// Throttle version checks to at most once per 60s (P2 §3.2.3)
+let lastVersionCheckAt = 0;
+const VERSION_CHECK_INTERVAL_MS = 60_000;
+
 /**
- * Check if worker version matches plugin version
- * Note: Auto-restart on version mismatch is now handled in worker-service.ts start command (issue #484)
- * This function logs for informational purposes only.
- * Skips comparison when either version is 'unknown' (fix #1042 — avoids restart loops).
+ * Check if worker version matches plugin version.
+ * Log-only on mismatch — does NOT trigger restart from the hook path.
+ *
+ * DESIGN (spec §3.2.3): The old worker is backward-compatible. Sending a
+ * restart from here would actively shut down a working worker, pushing
+ * PostToolUse into ECONNREFUSED → fallback queue. The hook path only logs.
+ *
+ * Restart happens via two best-effort paths:
+ * 1. build-and-sync (sync-to-cache.cjs POST)
+ * 2. Natural lifecycle: idle timeout, OOM, manual restart
+ *
+ * Throttled to once per 60s to reduce HTTP overhead.
  */
 async function checkWorkerVersion(): Promise<void> {
+  const now = Date.now();
+  if (now - lastVersionCheckAt < VERSION_CHECK_INTERVAL_MS) return;
+  lastVersionCheckAt = now;
+
   try {
     const pluginVersion = getPluginVersion();
-
-    // Skip version check if plugin version couldn't be read (shutdown race)
     if (pluginVersion === 'unknown') return;
 
     const workerVersion = await getWorkerVersion();
-
-    // Skip version check if worker version is 'unknown' (avoids restart loops)
     if (workerVersion === 'unknown') return;
 
     if (pluginVersion !== workerVersion) {
-      // Just log debug info - auto-restart handles the mismatch in worker-service.ts
-      logger.debug('SYSTEM', 'Version check', {
-        pluginVersion,
-        workerVersion,
-        note: 'Mismatch will be auto-restarted by worker-service start command'
+      logger.warn('HOOK', `Version mismatch: worker=${workerVersion}, plugin=${pluginVersion}`, {
+        note: 'Restart will happen via build-and-sync or natural lifecycle. Hook path does not restart.'
       });
     }
   } catch (error) {
-    // Version check is informational — don't fail the hook
     logger.debug('SYSTEM', 'Version check failed', {
       error: error instanceof Error ? error.message : String(error)
     });

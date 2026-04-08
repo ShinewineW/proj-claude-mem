@@ -5,7 +5,7 @@
  */
 
 import type { EventHandler, NormalizedHookInput, HookResult } from '../types.js';
-import { ensureWorkerRunning, getWorkerPort } from '../../shared/worker-utils.js';
+import { getWorkerPort, fetchWithTimeout } from '../../shared/worker-utils.js';
 import { logger } from '../../utils/logger.js';
 import { HOOK_EXIT_CODES } from '../../shared/hook-constants.js';
 import { isProjectExcluded } from '../../utils/project-filter.js';
@@ -42,16 +42,7 @@ export const observationHandler: EventHandler = {
       return { continue: true, suppressOutput: true };
     }
 
-    // 5. Worker readiness check (dbPath available for fallback)
-    const workerReady = await ensureWorkerRunning();
-    if (!workerReady) {
-      writeFallbackEntry({
-        type: 'observation', sessionId, cwd, dbPath,
-        timestamp: Date.now(),
-        payload: { tool_name: toolName, tool_input: toolInput, tool_response: toolResponse }
-      });
-      return { continue: true, suppressOutput: true, exitCode: HOOK_EXIT_CODES.SUCCESS };
-    }
+    // 5. No pre-flight health check — fetchWithTimeout catch handles worker-down (P2)
 
     // 6. Main path: log + POST to worker
     const port = getWorkerPort();
@@ -60,19 +51,22 @@ export const observationHandler: EventHandler = {
 
     // Send to worker - worker handles privacy check and database operations
     try {
-      const response = await fetch(`http://127.0.0.1:${port}/api/sessions/observations`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contentSessionId: sessionId,
-          tool_name: toolName,
-          tool_input: toolInput,
-          tool_response: toolResponse,
-          cwd,
-          dbPath
-        })
-        // Note: Removed signal to avoid Windows Bun cleanup issue (libuv assertion)
-      });
+      const response = await fetchWithTimeout(
+        `http://127.0.0.1:${port}/api/sessions/observations`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contentSessionId: sessionId,
+            tool_name: toolName,
+            tool_input: toolInput,
+            tool_response: toolResponse,
+            cwd,
+            dbPath
+          })
+        },
+        10_000
+      );
 
       if (!response.ok) {
         logger.warn('HOOK', 'Observation storage failed, writing fallback', { status: response.status, toolName });
