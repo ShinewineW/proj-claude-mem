@@ -1545,6 +1545,9 @@ async function main() {
       break;
     }
 
+    // @deprecated — P0: hook-client.cjs is now the primary hook entry point.
+    // This branch is retained for manual debugging: `bun worker-service.cjs hook claude-code observation`
+    // hooks.json no longer routes through this path.
     case 'hook': {
       // Auto-start worker if not running
       const workerReady = await ensureWorkerStarted(port);
