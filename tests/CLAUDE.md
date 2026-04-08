@@ -42,6 +42,10 @@ AFTER=$(ls -d $TMPDIR/test-* $TMPDIR/claude-mem-* 2>/dev/null | wc -l)
 echo "Delta: $((AFTER - BEFORE))"  # Must be 0
 ```
 
+**String-pinned regression guards** [WARNING]: 部分测试（如 `tests/cli/handlers/task2-fallback-regression.test.ts`、`tests/shared/bypass-settings-deadcode.test.ts`）用 `readFileSync` + 字面量 count/regex 固定载荷代码的**字符串形态**防回归（例：`writeFallbackEntry(` 出现次数必须 ≥3，或某 const 不得被 `export`）。对目标源文件做 helper 提取 / dedupe 会破坏这些 guard — 修改前 grep `task2-fallback-regression|deadcode` 检查 pin，否则 Stage 5/5.5 cleanup 会引入误失败。
+
+**Audit test location**: `tests/audit/` 保留 file-to-prod Stage 3 产出的 property-based tests 作为长期回归覆盖（命名约定 `phaseN-<topic>.test.ts`）。
+
 **Logger coverage gate**: Files under `src/services/worker/`, `src/services/sqlite/`, `src/hooks/`, `src/sdk/`, `src/servers/` must `import { logger }`. Enforced by `logger-usage-standards.test.ts` — new files without logger import fail full suite. Current exclusions for pure function modules: `stale-detection.ts`, `pool-cooldown-utils.ts`, `backpressure.ts`, `generator-action.ts`.
 
 ## Structure
@@ -53,7 +57,7 @@ Key test directories: `tests/sqlite/` (DB), `tests/hooks/` (hook structure), `te
 ## Run Commands
 
 ```bash
-/opt/homebrew/bin/bun test                    # All tests (1599 pass, 0 fail)
+/opt/homebrew/bin/bun test                    # All tests (1634 pass, 0 fail)
 /opt/homebrew/bin/bun test tests/sqlite/      # Database tests
 /opt/homebrew/bin/bun test tests/hooks/       # Hook structure tests
 ```
