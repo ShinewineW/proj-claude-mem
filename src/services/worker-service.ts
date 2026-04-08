@@ -413,8 +413,7 @@ export class WorkerService {
 
       // Load mode configuration
       const { ModeManager } = await import('./domain/ModeManager.js');
-      const { SettingsDefaultsManager } = await import('../shared/SettingsDefaultsManager.js');
-      const { USER_SETTINGS_PATH } = await import('../shared/paths.js');
+      // SettingsDefaultsManager and USER_SETTINGS_PATH: use static imports (lines 15, 21)
 
       const settings = SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH);
 
@@ -447,56 +446,46 @@ export class WorkerService {
         logger.info('SYSTEM', `Reset ${resetCount} stale processing messages to pending`);
       }
 
-      // Reset stale processing messages in all enabled project DBs
+      // Per-project cleanup: single pass over all enabled projects (P6 optimization: 3 loops → 1)
       const enabledProjects = listEnabledProjects();
-      for (const projectRoot of Object.keys(enabledProjects)) {
-        try {
-          const projectDbPath = path.join(projectRoot, '.claude', 'mem.db');
-          const projectStore = this.dbManager.getSessionStore(projectDbPath);
-          const projectPendingStore = new PendingMessageStore(projectStore.db, 3);
-          const projectResetCount = projectPendingStore.resetStaleProcessingMessages(0);
-          if (projectResetCount > 0) {
-            logger.info('SYSTEM', `Reset ${projectResetCount} stale processing messages in project DB`, { projectRoot });
-          }
-        } catch (error) {
-          logger.warn('SYSTEM', `Failed to reset stale messages for project, skipping`, { projectRoot }, error as Error);
-        }
-      }
 
-      // Clean up orphaned summarize messages from previous Worker crashes
-      // (session no longer active + message older than 5 minutes)
+      // Global DB cleanup first
       this.sessionManager.cleanupOrphanedMessages();
-      for (const projectRoot of Object.keys(enabledProjects)) {
-        try {
-          const projectDbPath = path.join(projectRoot, '.claude', 'mem.db');
-          this.sessionManager.cleanupOrphanedMessages(projectDbPath);
-        } catch (error) {
-          logger.warn('SYSTEM', 'Failed to cleanup orphaned messages for project', { projectRoot }, error as Error);
-        }
-      }
-
-      // Fix A: Clean up dead letters and orphan messages
       try {
         const globalDead = pendingStore.cleanupDeadLetters();
         const globalOrphans = pendingStore.cleanupOrphanMessages();
         if (globalDead + globalOrphans > 0) {
           logger.info('SYSTEM', 'Cleaned up dead letters', { deadLetters: globalDead, orphans: globalOrphans });
         }
-        for (const projectRoot of Object.keys(enabledProjects)) {
-          try {
-            const projectDbPath = path.join(projectRoot, '.claude', 'mem.db');
-            const projPendingStore = new PendingMessageStore(this.dbManager.getSessionStore(projectDbPath).db, 3);
-            const projDead = projPendingStore.cleanupDeadLetters();
-            const projOrphans = projPendingStore.cleanupOrphanMessages();
-            if (projDead + projOrphans > 0) {
-              logger.info('SYSTEM', 'Cleaned up dead letters in project DB', { projectRoot, deadLetters: projDead, orphans: projOrphans });
-            }
-          } catch (error) {
-            logger.warn('SYSTEM', 'Failed to cleanup dead letters for project', { projectRoot }, error as Error);
-          }
-        }
       } catch (cleanupError) {
         logger.warn('SYSTEM', 'Dead letter cleanup failed (non-fatal)', {}, cleanupError as Error);
+      }
+
+      // Single pass: per-project stale reset + orphan cleanup + dead letter cleanup
+      for (const projectRoot of Object.keys(enabledProjects)) {
+        try {
+          const projectDbPath = path.join(projectRoot, '.claude', 'mem.db');
+          const projectStore = this.dbManager.getSessionStore(projectDbPath);
+          const projectPendingStore = new PendingMessageStore(projectStore.db, 3);
+
+          // 1. Reset stale processing messages
+          const projectResetCount = projectPendingStore.resetStaleProcessingMessages(0);
+          if (projectResetCount > 0) {
+            logger.info('SYSTEM', `Reset ${projectResetCount} stale processing messages in project DB`, { projectRoot });
+          }
+
+          // 2. Cleanup orphaned summarize messages
+          this.sessionManager.cleanupOrphanedMessages(projectDbPath);
+
+          // 3. Cleanup dead letters + orphan messages
+          const dead = projectPendingStore.cleanupDeadLetters();
+          const orphans = projectPendingStore.cleanupOrphanMessages();
+          if (dead + orphans > 0) {
+            logger.info('SYSTEM', 'Cleaned up dead letters in project DB', { projectRoot, deadLetters: dead, orphans: orphans });
+          }
+        } catch (error) {
+          logger.warn('SYSTEM', `Failed to cleanup project, skipping`, { projectRoot }, error as Error);
+        }
       }
 
       // Replay fallback observations from hook failures
@@ -1545,6 +1534,9 @@ async function main() {
       break;
     }
 
+    // @deprecated — P0: hook-client.cjs is now the primary hook entry point.
+    // This branch is retained for manual debugging: `bun worker-service.cjs hook claude-code observation`
+    // hooks.json no longer routes through this path.
     case 'hook': {
       // Auto-start worker if not running
       const workerReady = await ensureWorkerStarted(port);

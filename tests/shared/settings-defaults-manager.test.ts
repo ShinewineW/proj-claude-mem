@@ -29,12 +29,62 @@ describe('SettingsDefaultsManager', () => {
   });
 
   afterEach(() => {
+    // Clear TTL cache to prevent cross-test contamination (P3)
+    SettingsDefaultsManager.invalidateCache();
     // Clean up temp directory
     try {
       rmSync(tempDir, { recursive: true, force: true });
     } catch {
       // Ignore cleanup errors
     }
+  });
+
+  describe('loadFromFile TTL cache', () => {
+    afterEach(() => {
+      SettingsDefaultsManager.invalidateCache();
+    });
+
+    it('returns cached result within TTL window', () => {
+      const cachePath = join(tempDir, 'settings-cache-test.json');
+      writeFileSync(cachePath, JSON.stringify({ CLAUDE_MEM_WORKER_PORT: '9999' }));
+
+      const result1 = SettingsDefaultsManager.loadFromFile(cachePath);
+      expect(result1.CLAUDE_MEM_WORKER_PORT).toBe('9999');
+
+      writeFileSync(cachePath, JSON.stringify({ CLAUDE_MEM_WORKER_PORT: '8888' }));
+      const result2 = SettingsDefaultsManager.loadFromFile(cachePath);
+      expect(result2.CLAUDE_MEM_WORKER_PORT).toBe('9999');
+    });
+
+    it('invalidateCache forces re-read on next call', () => {
+      const invPath = join(tempDir, 'settings-invalidate-test.json');
+      writeFileSync(invPath, JSON.stringify({ CLAUDE_MEM_WORKER_PORT: '9999' }));
+
+      SettingsDefaultsManager.loadFromFile(invPath);
+
+      writeFileSync(invPath, JSON.stringify({ CLAUDE_MEM_WORKER_PORT: '8888' }));
+      SettingsDefaultsManager.invalidateCache(invPath);
+
+      const result = SettingsDefaultsManager.loadFromFile(invPath);
+      expect(result.CLAUDE_MEM_WORKER_PORT).toBe('8888');
+    });
+
+    it('invalidateCache without args clears all entries', () => {
+      const path1 = join(tempDir, 'settings-clear1.json');
+      const path2 = join(tempDir, 'settings-clear2.json');
+      writeFileSync(path1, JSON.stringify({ CLAUDE_MEM_WORKER_PORT: '1111' }));
+      writeFileSync(path2, JSON.stringify({ CLAUDE_MEM_WORKER_PORT: '2222' }));
+
+      SettingsDefaultsManager.loadFromFile(path1);
+      SettingsDefaultsManager.loadFromFile(path2);
+
+      writeFileSync(path1, JSON.stringify({ CLAUDE_MEM_WORKER_PORT: '3333' }));
+      writeFileSync(path2, JSON.stringify({ CLAUDE_MEM_WORKER_PORT: '4444' }));
+      SettingsDefaultsManager.invalidateCache();
+
+      expect(SettingsDefaultsManager.loadFromFile(path1).CLAUDE_MEM_WORKER_PORT).toBe('3333');
+      expect(SettingsDefaultsManager.loadFromFile(path2).CLAUDE_MEM_WORKER_PORT).toBe('4444');
+    });
   });
 
   describe('loadFromFile', () => {

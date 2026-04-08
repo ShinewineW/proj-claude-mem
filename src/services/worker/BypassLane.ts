@@ -84,10 +84,6 @@ export class BypassLane {
   private activeConsumers = new Map<number, AbortController>();
   private config: BypassConfig | null = null;
   private lastGeminiRequestTime = 0;
-  private cachedSettings: {
-    data: ReturnType<typeof SettingsDefaultsManager.loadFromFile>;
-    ts: number;
-  } | null = null;
   private lastFailureReason: string | null = null;
   // In-memory counters — reset on worker restart. Operational diagnostics only.
   private counters = {
@@ -114,22 +110,9 @@ export class BypassLane {
     this.dbManager = dbManager;
   }
 
-  /** Cached settings read — avoids sync filesystem I/O on every loop iteration. */
-  private getSettings(): ReturnType<
-    typeof SettingsDefaultsManager.loadFromFile
-  > {
-    const now = Date.now();
-    if (this.cachedSettings && now - this.cachedSettings.ts < 5000) {
-      return this.cachedSettings.data;
-    }
-    const data = SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH);
-    this.cachedSettings = { data, ts: now };
-    return data;
-  }
-
   /** Read settings and determine bypass config. Returns null if bypass not applicable. */
   private resolveConfig(): BypassConfig | null {
-    const settings = this.getSettings();
+    const settings = SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH);
 
     const provider = settings.CLAUDE_MEM_PROVIDER;
     if (provider === "claude" || !provider) return null;
@@ -443,13 +426,13 @@ export class BypassLane {
   ): ConversationMessage[] {
     if (history.length === 0) return [];
 
-    const settings = this.getSettings();
-    const maxMessages =
-      parseInt(settings.CLAUDE_MEM_BYPASS_MAX_CONTEXT_MESSAGES) ||
-      DEFAULT_MAX_CONTEXT_MESSAGES;
-    const maxTokens =
-      parseInt(settings.CLAUDE_MEM_BYPASS_MAX_TOKENS) ||
-      DEFAULT_MAX_ESTIMATED_TOKENS;
+    // BypassLane history budget is fixed at module-level constants.
+    // CLAUDE_MEM_BYPASS_MAX_* env vars were never wired through SettingsDefaultsManager
+    // (not in DEFAULTS → applyEnvOverrides skips them). Removed 2026-04-08 to eliminate
+    // misleading dead code. If you need tunable limits, file a feature ticket and add
+    // the keys to SettingsDefaults properly with validation + viewer UI.
+    const maxMessages = DEFAULT_MAX_CONTEXT_MESSAGES;
+    const maxTokens = DEFAULT_MAX_ESTIMATED_TOKENS;
 
     // Quick exit: within both limits (return copy to avoid shared reference mutation)
     const totalTokens = history.reduce(
@@ -549,7 +532,7 @@ export class BypassLane {
 
         // F5 fix: Rate limiting for Gemini free tier (15 RPM = 4s interval)
         if (this.config?.provider === "gemini") {
-          const settings = this.getSettings();
+          const settings = SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH);
           if (settings.CLAUDE_MEM_GEMINI_RATE_LIMITING_ENABLED === "true") {
             const now = Date.now();
             const elapsed = now - this.lastGeminiRequestTime;
@@ -598,7 +581,7 @@ export class BypassLane {
 
     // tool_input/tool_response are already JSON strings from PendingMessageStore.enqueue(),
     // and buildObservationPrompt internally JSON.parses them — pass through directly.
-    const bypassSettings = this.getSettings();
+    const bypassSettings = SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH);
     const obsMaxFieldChars =
       parseInt(bypassSettings.CLAUDE_MEM_OBS_MAX_FIELD_CHARS, 10) || 8000;
     const { prompt: obsPrompt, truncatedFields } = buildObservationPrompt(

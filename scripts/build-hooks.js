@@ -125,6 +125,36 @@ async function buildHooks() {
     const workerStats = fs.statSync(`${hooksDir}/${WORKER_SERVICE.name}.cjs`);
     console.log(`✓ worker-service built (${(workerStats.size / 1024).toFixed(2)} KB)`);
 
+    // Build hook-client (lightweight hook-only entry point, P0)
+    console.log(`\n🔧 Building hook-client...`);
+    await build({
+      entryPoints: ['src/cli/hook-client-entry.ts'],
+      bundle: true,
+      platform: 'node',
+      target: 'node18',  // Controls output JS syntax; runtime is Bun (via bun-runner.js)
+      format: 'cjs',
+      outfile: `${hooksDir}/hook-client.cjs`,
+      minify: true,
+      logLevel: 'error',
+      external: [],  // No externals needed — all deps are Node.js built-ins
+      define: {
+        '__DEFAULT_PACKAGE_VERSION__': `"${version}"`
+      },
+      banner: {
+        js: '#!/usr/bin/env bun'
+      }
+    });
+
+    // Make hook-client executable
+    fs.chmodSync(`${hooksDir}/hook-client.cjs`, 0o755);
+    const hookClientStats = fs.statSync(`${hooksDir}/hook-client.cjs`);
+    console.log(`✓ hook-client built (${(hookClientStats.size / 1024).toFixed(2)} KB)`);
+
+    // Verify hook-client bundle size is under 100KB (P0 budget)
+    if (hookClientStats.size > 100 * 1024) {
+      console.warn(`⚠️  hook-client.cjs is ${(hookClientStats.size / 1024).toFixed(0)} KB — exceeds 100KB budget!`);
+    }
+
     // Build MCP server
     console.log(`\n🔧 Building MCP server...`);
     await build({
@@ -200,6 +230,7 @@ async function buildHooks() {
     console.log('\n✅ Worker service, MCP server, and context generator built successfully!');
     console.log(`   Output: ${hooksDir}/`);
     console.log(`   - Worker: worker-service.cjs`);
+    console.log(`   - Hook Client: hook-client.cjs`);
     console.log(`   - MCP Server: mcp-server.cjs`);
     console.log(`   - Context Generator: context-generator.cjs`);
 

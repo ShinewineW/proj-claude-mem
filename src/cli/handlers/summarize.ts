@@ -21,7 +21,20 @@ export const summarizeHandler: EventHandler = {
     // Ensure worker is running before any other logic
     const workerReady = await ensureWorkerRunning();
     if (!workerReady) {
-      // Worker not available - skip summary gracefully
+      // Worker not available — parse transcript NOW, then write to fallback queue.
+      // extractLastMessage returns '' on missing/unreadable transcript (never throws).
+      // Without parsing here, replay would get null and produce an empty summary.
+      const ctx = input._projectContext ?? resolveProjectContext(input.cwd);
+      if (ctx) {
+        const lastAssistantMessage = input.transcriptPath
+          ? extractLastMessage(input.transcriptPath, 'assistant', true)
+          : '';
+        writeFallbackEntry({
+          type: 'summarize', sessionId: input.sessionId, cwd: input.cwd, dbPath: ctx.dbPath,
+          timestamp: Date.now(),
+          payload: { last_assistant_message: lastAssistantMessage }
+        });
+      }
       return { continue: true, suppressOutput: true, exitCode: HOOK_EXIT_CODES.SUCCESS };
     }
 

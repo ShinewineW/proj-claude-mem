@@ -30,8 +30,6 @@ mock.module('../../src/shared/SettingsDefaultsManager.js', () => ({
       CLAUDE_MEM_OPENROUTER_API_KEY: 'test-key',
       CLAUDE_MEM_OPENROUTER_MODEL: 'stepfun/step-3.5-flash:free',
       CLAUDE_MEM_BYPASS_COOLDOWN_MS: '5000',
-      CLAUDE_MEM_BYPASS_MAX_CONTEXT_MESSAGES: '20',
-      CLAUDE_MEM_BYPASS_MAX_TOKENS: '100000',
       CLAUDE_MEM_GEMINI_RATE_LIMITING_ENABLED: 'false',
       CLAUDE_MEM_CHROMA_ENABLED: 'false',
     }),

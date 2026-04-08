@@ -226,7 +226,31 @@ export class SettingsDefaultsManager {
    *   2. Settings file (~/.claude-mem/settings.json)
    *   3. Default values (lowest priority)
    */
+  // --- TTL cache (P3 optimization) ---
+  private static cache: Map<string, { data: SettingsDefaults; ts: number }> = new Map();
+  private static readonly CACHE_TTL_MS = 5000;
+
+  /**
+   * Invalidate the settings file cache.
+   * Call after writing settings.json to ensure next read reflects changes.
+   * @param settingsPath - specific path to invalidate, or omit to clear all
+   */
+  static invalidateCache(settingsPath?: string): void {
+    if (settingsPath) {
+      this.cache.delete(settingsPath);
+    } else {
+      this.cache.clear();
+    }
+  }
+
   static loadFromFile(settingsPath: string): SettingsDefaults {
+    // TTL cache: avoid repeated readFileSync + JSON.parse on hot paths
+    const now = Date.now();
+    const cached = this.cache.get(settingsPath);
+    if (cached && now - cached.ts < this.CACHE_TTL_MS) {
+      return cached.data;
+    }
+
     try {
       if (!existsSync(settingsPath)) {
         const defaults = this.getAllDefaults();
@@ -253,7 +277,9 @@ export class SettingsDefaultsManager {
           );
         }
         // Still apply env var overrides even when file doesn't exist
-        return this.applyEnvOverrides(defaults);
+        const result = this.applyEnvOverrides(defaults);
+        this.cache.set(settingsPath, { data: result, ts: Date.now() });
+        return result;
       }
 
       const settingsData = readFileSync(settingsPath, "utf-8");
@@ -297,7 +323,9 @@ export class SettingsDefaultsManager {
       }
 
       // Apply environment variable overrides (highest priority)
-      return this.applyEnvOverrides(result);
+      const finalResult = this.applyEnvOverrides(result);
+      this.cache.set(settingsPath, { data: finalResult, ts: Date.now() });
+      return finalResult;
     } catch (error) {
       console.warn(
         "[SETTINGS] Failed to load settings, using defaults:",
@@ -305,7 +333,9 @@ export class SettingsDefaultsManager {
         error,
       );
       // Still apply env var overrides even on error
-      return this.applyEnvOverrides(this.getAllDefaults());
+      const fallbackResult = this.applyEnvOverrides(this.getAllDefaults());
+      this.cache.set(settingsPath, { data: fallbackResult, ts: Date.now() });
+      return fallbackResult;
     }
   }
 }
