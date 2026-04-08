@@ -130,6 +130,8 @@ export class SettingsRoutes extends BaseRouteHandler {
 
     // Clear port cache to force re-reading from updated settings
     clearPortCache();
+    // Clear settings TTL cache so next loadFromFile() re-reads from disk
+    SettingsDefaultsManager.invalidateCache(settingsPath);
 
     logger.info('WORKER', 'Settings updated');
     res.json({ success: true, message: 'Settings updated successfully' });
