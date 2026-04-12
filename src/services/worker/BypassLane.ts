@@ -137,7 +137,7 @@ export class BypassLane {
         "";
       if (!apiKey) return null;
       const model =
-        settings.CLAUDE_MEM_OPENROUTER_MODEL || "stepfun/step-3.5-flash:free";
+        settings.CLAUDE_MEM_OPENROUTER_MODEL || "minimax/minimax-m2.5:free";
       return { provider: "openrouter", apiKey, model, cooldownMs };
     }
 
@@ -747,7 +747,6 @@ export class BypassLane {
           ],
           temperature: 0.3,
           max_tokens: 8192,
-          reasoning: { effort: "low" }, // Observation extraction is structured; minimize reasoning overhead
         }),
         signal,
       });
