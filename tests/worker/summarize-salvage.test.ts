@@ -124,6 +124,43 @@ describe('summarize-salvage', () => {
       const row = store.db.prepare('SELECT * FROM session_summaries WHERE id = ?').get(result.summaryId);
       expect((row as any).request).toBe('Session observations (1 items)');
     });
+
+    it('skipped when latest obs is older than latest summary (nothing new to summarize)', () => {
+      const sessionDbId = seedSession('m-stale', 'earlier prompt');
+      addObservation('m-stale', 'discovery', 'old obs');
+      // Plant a summary AFTER the obs — simulates what happens right after a
+      // successful salvage, when proactive idle-reap fires again with no new obs.
+      const firstSalvage = attemptEmptyTranscriptSalvage(store, sessionDbId, '', 1);
+      expect(firstSalvage.status).toBe('salvaged');
+
+      // Second attempt with no new obs should skip, not create another summary.
+      const result = attemptEmptyTranscriptSalvage(store, sessionDbId, '', 1);
+      expect(result.status).toBe('skipped');
+
+      const rows = store.db
+        .prepare('SELECT COUNT(*) as c FROM session_summaries WHERE memory_session_id = ?')
+        .get('m-stale') as { c: number };
+      expect(rows.c).toBe(1); // still just the one salvaged summary
+    });
+
+    it('salvaged again when a new obs arrives after the last summary', () => {
+      const sessionDbId = seedSession('m-fresh', 'prompt');
+      addObservation('m-fresh', 'discovery', 'old obs');
+      const first = attemptEmptyTranscriptSalvage(store, sessionDbId, '', 1);
+      expect(first.status).toBe('salvaged');
+
+      // Simulate a new observation arriving (strictly newer epoch than summary)
+      // by direct insert with a bumped timestamp.
+      store.db
+        .prepare(`INSERT INTO observations
+          (memory_session_id, project, type, title, facts, created_at, created_at_epoch)
+          VALUES (?, ?, ?, ?, ?, datetime('now'), ?)`)
+        .run('m-fresh', 'test-project', 'change', 'new obs', '[]', Date.now() + 60_000);
+
+      const second = attemptEmptyTranscriptSalvage(store, sessionDbId, '', 2);
+      expect(second.status).toBe('salvaged');
+      expect(second.summaryId).not.toBe(first.summaryId);
+    });
   });
 
   describe('synthesizeSummaryFromRecentObservations', () => {

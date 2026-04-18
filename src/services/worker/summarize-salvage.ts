@@ -128,6 +128,30 @@ export function attemptEmptyTranscriptSalvage(
     return { status: 'fallthrough', obsCount: 0 };
   }
 
+  // Guard against over-firing on proactive idle-reap cycles: if this session
+  // already has a summary whose timestamp is >= the latest observation's
+  // timestamp, there is literally nothing new to summarize — skip.
+  const staleness = store.db.prepare(`
+    SELECT
+      (SELECT MAX(created_at_epoch) FROM observations WHERE memory_session_id = ?) AS last_obs,
+      (SELECT MAX(created_at_epoch) FROM session_summaries WHERE memory_session_id = ?) AS last_sum
+  `).get(sessionRow.memory_session_id, sessionRow.memory_session_id) as {
+    last_obs: number | null;
+    last_sum: number | null;
+  };
+  if (staleness.last_sum !== null && (staleness.last_obs ?? 0) <= staleness.last_sum) {
+    logger.info(
+      'SESSION',
+      'Skipping summarize — no observations newer than last summary',
+      {
+        sessionId: sessionDbId,
+        lastObsEpoch: staleness.last_obs,
+        lastSumEpoch: staleness.last_sum,
+      },
+    );
+    return { status: 'skipped', obsCount: 0 };
+  }
+
   const synthesized = synthesizeSummaryFromRecentObservations(
     store,
     sessionRow.memory_session_id,
