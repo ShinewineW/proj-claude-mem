@@ -335,6 +335,39 @@ export class SessionStore {
   }
 
   /**
+   * Get recent observations for a session with narrative/facts/title content.
+   * Used for pre-queue summary salvage when transcript lacks assistant text.
+   * Returns most-recent-first, limited to preserve summary compactness.
+   */
+  getRecentObservationsForSession(
+    memorySessionId: string,
+    limit: number = 20,
+  ): Array<{
+    id: number;
+    type: string;
+    title: string | null;
+    narrative: string | null;
+    facts: string | null;
+    prompt_number: number | null;
+  }> {
+    const stmt = this.db.prepare(`
+      SELECT id, type, title, narrative, facts, prompt_number
+      FROM observations
+      WHERE memory_session_id = ?
+      ORDER BY created_at_epoch DESC
+      LIMIT ?
+    `);
+    return stmt.all(memorySessionId, limit) as Array<{
+      id: number;
+      type: string;
+      title: string | null;
+      narrative: string | null;
+      facts: string | null;
+      prompt_number: number | null;
+    }>;
+  }
+
+  /**
    * Get a single observation by ID
    */
   getObservationById(id: number): ObservationRecord | null {

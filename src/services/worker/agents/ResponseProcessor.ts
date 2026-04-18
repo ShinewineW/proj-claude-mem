@@ -25,6 +25,7 @@ import type { SessionManager } from '../SessionManager.js';
 import type { WorkerRef, StorageResult } from './types.js';
 import { broadcastObservation, broadcastSummary } from './ObservationBroadcaster.js';
 import { cleanupProcessedMessages } from './SessionCleanupHelper.js';
+import { synthesizeSummaryFromRecentObservations } from '../summarize-salvage.js';
 
 /**
  * Process agent response text (parse XML, save to database, sync to Chroma, broadcast SSE)
@@ -66,7 +67,22 @@ export async function processAgentResponse(
   }
 
   // Parse observations and summary
-  const observations = parseObservations(text, session.contentSessionId);
+  // Keep unfiltered for context overflow detection, filter ghosts for storage/salvage
+  const allObservations = parseObservations(text, session.contentSessionId);
+  // Filter ghost observations — only remove obs with ZERO content in ALL fields.
+  // A true ghost is a context overflow artifact: just <observation><type>X</type></observation>
+  // with nothing else. Observations with any content (files, concepts, subtitle, etc.) are kept.
+  // Respects upstream policy: "ALWAYS save observations - never skip" (parser.ts:53)
+  const observations = allObservations
+    .filter(obs =>
+      obs.title !== null ||
+      obs.narrative !== null ||
+      obs.subtitle !== null ||
+      obs.facts.length > 0 ||
+      obs.concepts.length > 0 ||
+      obs.files_read.length > 0 ||
+      obs.files_modified.length > 0
+    );
 
   // S6: Track consecutive empty observations for telemetry
   if (observations.length > 0) {
@@ -82,7 +98,76 @@ export async function processAgentResponse(
   const summary = parseSummary(text, session.sessionDbId);
 
   // Convert nullable fields to empty strings for storeSummary (if summary exists)
-  const summaryForStore = normalizeSummaryForStorage(summary);
+  let summaryForStore = normalizeSummaryForStorage(summary);
+
+  // Salvage: When summary parse fails for a summarize response, synthesize from
+  // whatever we got. Three failure modes under high concurrency:
+  //   1. AI returns <observation> instead of <summary> (prompt conditioning leakage, upstream #1312)
+  //   2. AI returns plain text without any XML tags (context overflow / format confusion)
+  //   3. AI returns nothing parseable AND no observations (model hiccup / empty prompt)
+  //      — fall back to DB-stored observations from the same memory_session_id.
+  // All three must be handled to avoid silent summary loss.
+  if (!summaryForStore && session.currentSDKMessageKind === 'summarize') {
+    if (observations.length > 0) {
+      // Case 1: AI returned <observation> instead of <summary>
+      const primary = observations[0];
+      summaryForStore = {
+        request: primary.title || `Session observations (${observations.length} items)`,
+        investigated: primary.narrative || primary.facts?.join('; ') || '',
+        learned: primary.facts?.join('; ') || '',
+        completed: primary.type === 'feature' || primary.type === 'bugfix' ? (primary.title || '') : '',
+        next_steps: '',
+        notes: `[Salvaged from ${observations.length} observation(s)]`,
+      };
+      logger.warn('PARSER', `SALVAGED summary from ${observations.length} observation(s) — AI returned <observation> instead of <summary>`, {
+        sessionId: session.sessionDbId,
+        agentName,
+        titles: observations.map(o => o.title).filter(Boolean).slice(0, 3),
+      });
+    } else if (text && text.trim().length > 0) {
+      // Case 2: AI returned plain text without XML tags — extract from raw response
+      const truncatedText = text.length > 2000 ? text.substring(0, 2000) + '...' : text;
+      summaryForStore = {
+        request: `Session summary (${session.project || 'unknown'})`,
+        investigated: '',
+        learned: truncatedText,
+        completed: '',
+        next_steps: '',
+        notes: '[Salvaged from raw text — AI did not use XML format]',
+      };
+      logger.warn('PARSER', `SALVAGED summary from raw text (${text.length} chars) — AI returned no XML tags`, {
+        sessionId: session.sessionDbId,
+        agentName,
+        textPreview: text.substring(0, 100),
+      });
+    } else if (session.memorySessionId) {
+      // Case 3: Empty response AND no observations parsed — reach into the DB
+      // for recent observations of this memory session. Same shape as the
+      // pre-queue salvage so the viewer treats it uniformly.
+      try {
+        const fallbackStore = dbManager.getSessionStore(session.dbPath);
+        const synthesized = synthesizeSummaryFromRecentObservations(
+          fallbackStore,
+          session.memorySessionId,
+          null,
+          'empty response, no observations in this batch',
+        );
+        if (synthesized) {
+          summaryForStore = synthesized.summary;
+          logger.warn('PARSER', `SALVAGED summary from ${synthesized.obsCount} DB observation(s) — empty SDK response`, {
+            sessionId: session.sessionDbId,
+            agentName,
+            titleSample: synthesized.titleSample,
+          });
+        }
+      } catch (salvageErr) {
+        logger.warn('PARSER', 'DB-fallback salvage failed', {
+          sessionId: session.sessionDbId,
+          agentName,
+        }, salvageErr as Error);
+      }
+    }
+  }
 
   // Get session store for atomic transaction (use per-session dbPath if available)
   const sessionStore = dbManager.getSessionStore(session.dbPath);
@@ -152,13 +237,15 @@ export async function processAgentResponse(
   });
 
   // ── Empty Observation Detection (context overflow recovery) ──
-  // Detect context overflow: stored observation with title=null AND narrative=null.
+  // Detect context overflow: observation with title=null AND narrative=null.
+  // Uses allObservations (pre-filter) because ghost filter removes the empty obs
+  // that are the signal for context overflow. Detection must run on raw parse output.
   // Runs regardless of messageType — messageTypeTracker can be stale when observation
   // and summarize messages are batched (tracker overwrites to 'summarize' before
   // observation responses arrive, causing Check 1 to be skipped entirely).
   // Production evidence: bdo_lua_program session-7, obs #190-193 all bypassed detection.
   {
-    const emptyObs = observations.find(obs => obs.title === null && obs.narrative === null);
+    const emptyObs = allObservations.find(obs => obs.title === null && obs.narrative === null);
 
     if (emptyObs) {
       // Circuit breaker: cap forceInit at 3 consecutive resets to prevent infinite loop.
@@ -394,15 +481,16 @@ async function syncAndBroadcastSummary(
   });
 
   // Broadcast to SSE clients (for web UI)
+  // Use summaryForStore (not raw summary) — salvage paths have summary=null but summaryForStore populated
   broadcastSummary(worker, {
     id: result.summaryId,
     session_id: session.contentSessionId,
-    request: summary!.request,
-    investigated: summary!.investigated,
-    learned: summary!.learned,
-    completed: summary!.completed,
-    next_steps: summary!.next_steps,
-    notes: summary!.notes,
+    request: summaryForStore.request,
+    investigated: summaryForStore.investigated,
+    learned: summaryForStore.learned,
+    completed: summaryForStore.completed,
+    next_steps: summaryForStore.next_steps,
+    notes: summaryForStore.notes,
     project: session.project,
     prompt_number: session.lastPromptNumber,
     created_at_epoch: result.createdAtEpoch

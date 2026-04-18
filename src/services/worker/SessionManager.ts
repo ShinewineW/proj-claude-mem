@@ -21,6 +21,11 @@ import { logSDKUsageSummary } from './SDKUsageTelemetry.js';
 import { getBackpressureLevel, applyBackpressure } from './backpressure.js';
 import { SettingsDefaultsManager } from '../../shared/SettingsDefaultsManager.js';
 import { USER_SETTINGS_PATH } from '../../shared/paths.js';
+import {
+  attemptEmptyTranscriptSalvage,
+  type SalvageBroadcastPayload,
+  type SalvageResult,
+} from './summarize-salvage.js';
 
 /** Info about sessions removed due to DB unreachable, for caller to handle SSE + bypass */
 export interface DbUnreachableCleanup {
@@ -35,6 +40,7 @@ export class SessionManager {
   private sessionQueues: Map<string, EventEmitter> = new Map();
   private onSessionDeletedCallback?: () => void;
   private onStartGeneratorCallback?: (session: ActiveSession, source: string) => void;
+  private onSalvagedSummaryCallback?: (payload: SalvageBroadcastPayload) => void;
 
   constructor(dbManager: DatabaseManager) {
     this.dbManager = dbManager;
@@ -93,6 +99,15 @@ export class SessionManager {
 
   setOnStartGenerator(callback: (session: ActiveSession, source: string) => void): void {
     this.onStartGeneratorCallback = callback;
+  }
+
+  /**
+   * Install SSE broadcast callback for salvaged summaries. Wired in by
+   * WorkerService so that pre-queue salvage fired from replay/proactive paths
+   * surfaces to the viewer the same way the HTTP route does.
+   */
+  setOnSalvagedSummary(callback: (payload: SalvageBroadcastPayload) => void): void {
+    this.onSalvagedSummaryCallback = callback;
   }
 
   /**
@@ -356,7 +371,11 @@ export class SessionManager {
    * CRITICAL: Persists to database FIRST before adding to in-memory queue.
    * This ensures summarize requests survive worker crashes.
    */
-  queueSummarize(sessionDbId: number, lastAssistantMessage?: string, dbPath?: string): void {
+  queueSummarize(
+    sessionDbId: number,
+    lastAssistantMessage?: string,
+    dbPath?: string,
+  ): SalvageResult | { status: 'queued'; obsCount: 0 } {
     // Auto-initialize from database if needed (handles worker restarts)
     const key = this.sessionKey(sessionDbId, dbPath);
     let session = this.sessions.get(key);
@@ -368,6 +387,21 @@ export class SessionManager {
     if (session.lastExitWasIdleTimeout) {
       logger.debug('SESSION', 'Clearing lastExitWasIdleTimeout — summarize received', { sessionDbId: session.sessionDbId });
       session.lastExitWasIdleTimeout = false;
+    }
+
+    // Pre-queue salvage: catches proactive (`undefined` lastAssistantMessage) and
+    // fallback replay paths that previously went straight to the SDK with an
+    // empty prompt and got SIGTERM'd in the 10s drain window.
+    const store = this.dbManager.getSessionStore(session.dbPath);
+    const salvage = attemptEmptyTranscriptSalvage(
+      store,
+      sessionDbId,
+      lastAssistantMessage,
+      session.lastPromptNumber ?? null,
+      this.onSalvagedSummaryCallback,
+    );
+    if (salvage.status === 'salvaged' || salvage.status === 'skipped') {
+      return salvage;
     }
 
     // CRITICAL: Persist to database FIRST
@@ -392,6 +426,7 @@ export class SessionManager {
 
     const emitter = this.sessionQueues.get(key);
     emitter?.emit('message');
+    return { status: 'queued', obsCount: 0 };
   }
 
   /**
@@ -645,14 +680,23 @@ export class SessionManager {
     // Phase 1: Queue proactive summarizes (will be reaped on next cycle)
     for (const session of toSummarize) {
       try {
-        this.queueSummarize(session.sessionDbId, undefined, session.dbPath);
+        const result = this.queueSummarize(session.sessionDbId, undefined, session.dbPath);
         session.proactiveSummarizeQueued = true;
         logger.info('SESSION', `Queued proactive summarize for idle session ${session.sessionDbId}`, {
           sessionDbId: session.sessionDbId,
-          idleMs: now - session.lastGeneratorActivity
+          idleMs: now - session.lastGeneratorActivity,
+          salvageStatus: result.status,
+          salvageObsCount: result.obsCount,
         });
-        if (this.onStartGeneratorCallback) {
+        // Only start the generator when we actually enqueued SDK work. Salvaged
+        // / skipped paths mean summary is already resolved — spinning up Claude
+        // would just hit the drain window on next reap cycle.
+        if (result.status === 'queued' && this.onStartGeneratorCallback) {
           this.onStartGeneratorCallback(session, 'proactive-summarize');
+        } else {
+          // Salvaged or skipped — reap the session immediately on this cycle,
+          // no need to wait another MAX_SESSION_IDLE_MS window.
+          toReap.push({ key: this.sessionKey(session.sessionDbId, session.dbPath), sessionDbId: session.sessionDbId, dbPath: session.dbPath });
         }
       } catch (error) {
         // Summarize queue failed — reap immediately instead of leaving in limbo

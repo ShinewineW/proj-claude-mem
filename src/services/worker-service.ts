@@ -242,6 +242,16 @@ export class WorkerService {
       this.startSessionProcessor(session, source);
     });
 
+    // Surface salvaged summaries (pre-queue synthesis from DB observations)
+    // to SSE subscribers. Fires from replay/proactive/idle-reap paths that
+    // don't go through the HTTP route's explicit broadcast.
+    this.sessionManager.setOnSalvagedSummary((payload) => {
+      this.sseBroadcaster.broadcast({
+        type: 'new_summary',
+        summary: payload,
+      });
+    });
+
 
     // Initialize MCP client
     // Empty capabilities object: this client only calls tools, doesn't expose any
@@ -1255,6 +1265,15 @@ export class WorkerService {
       dbManager: this.dbManager,
       chromaMcpManager: this.chromaMcpManager || undefined
     });
+  }
+
+  /**
+   * Expose SSE broadcaster so WorkerService satisfies the WorkerRef shape
+   * used by ObservationBroadcaster / ResponseProcessor utilities without
+   * requiring consumers to reach into a private field.
+   */
+  get sse(): { broadcast(event: any): void } {
+    return this.sseBroadcaster;
   }
 
   /**

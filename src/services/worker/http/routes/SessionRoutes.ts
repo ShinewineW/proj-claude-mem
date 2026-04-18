@@ -33,6 +33,10 @@ import {
   isProjectStillValid,
   type GeneratorAction,
 } from '../../generator-action.js';
+import {
+  attemptEmptyTranscriptSalvage,
+  type SalvageBroadcastPayload,
+} from '../../summarize-salvage.js';
 
 let cachedPatterns: { key: string; patterns: ToolPattern[] } | null = null;
 
@@ -816,6 +820,22 @@ export class SessionRoutes extends BaseRouteHandler {
       return;
     }
 
+    // Pre-queue salvage: when Claude Code's transcript contains no assistant text
+    // (e.g. the turn ended with only tool_use messages), sending an empty prompt
+    // to the SDK produces no usable summary. Synthesize from recent observations
+    // directly so 0-obs-0-sum sessions don't accumulate. See session-209 incident.
+    const salvaged = attemptEmptyTranscriptSalvage(
+      store,
+      sessionDbId,
+      last_assistant_message,
+      promptNumber,
+      (payload) => this.broadcastSalvagedSummary(payload),
+    );
+    if (salvaged.status !== 'fallthrough') {
+      res.json(salvaged);
+      return;
+    }
+
     // Queue summarize
     this.sessionManager.queueSummarize(sessionDbId, last_assistant_message, dbPath);
 
@@ -827,6 +847,13 @@ export class SessionRoutes extends BaseRouteHandler {
 
     res.json({ status: 'queued' });
   });
+
+  private broadcastSalvagedSummary(payload: SalvageBroadcastPayload): void {
+    this.workerService.sse.broadcast({
+      type: 'new_summary',
+      summary: payload,
+    });
+  }
 
   /**
    * Complete session by contentSessionId (session-complete hook uses this)
@@ -936,7 +963,7 @@ export class SessionRoutes extends BaseRouteHandler {
     // Step 3: Strip privacy tags from prompt
     const cleanedPrompt = stripMemoryTagsFromPrompt(prompt);
 
-    // Step 4: Check if prompt is entirely private
+    // Step 4: Check if prompt is entirely private or system noise
     if (!cleanedPrompt || cleanedPrompt.trim() === '') {
       logger.debug('HOOK', 'Session init - prompt entirely private', {
         sessionId: sessionDbId,
@@ -949,6 +976,29 @@ export class SessionRoutes extends BaseRouteHandler {
         promptNumber,
         skipped: true,
         reason: 'private'
+      });
+      return;
+    }
+
+    // Step 4b: Skip system-injected noise prompts
+    // - Monitor event / Monitor permission denied: platform task notifications
+    // - <Role_Definition>: skill system prompts echoed back as user input
+    if (
+      cleanedPrompt.includes('Monitor event') ||
+      cleanedPrompt.includes('Permission to use Monitor has been denied') ||
+      cleanedPrompt.startsWith('<Role_Definition>')
+    ) {
+      logger.debug('HOOK', 'Session init - skipping system noise prompt', {
+        sessionId: sessionDbId,
+        promptNumber,
+        reason: cleanedPrompt.startsWith('<Role_Definition>') ? 'skill_system_prompt' : 'monitor_noise'
+      });
+
+      res.json({
+        sessionDbId,
+        promptNumber,
+        skipped: true,
+        reason: 'system_noise'
       });
       return;
     }

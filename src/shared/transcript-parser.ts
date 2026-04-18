@@ -34,7 +34,6 @@ export function extractLastMessage(
   }
 
   const lines = content.split('\n');
-  let foundMatchingRole = false;
 
   for (let i = lines.length - 1; i >= 0; i--) {
     let line: any;
@@ -43,39 +42,36 @@ export function extractLastMessage(
     } catch {
       continue; // skip malformed lines (truncated writes, whitespace)
     }
-    if (line.type === role) {
-      foundMatchingRole = true;
+    if (line.type !== role) continue;
+    if (!line.message?.content) continue;
 
-      if (line.message?.content) {
-        let text = '';
-        const msgContent = line.message.content;
+    let text = '';
+    const msgContent = line.message.content;
 
-        if (typeof msgContent === 'string') {
-          text = msgContent;
-        } else if (Array.isArray(msgContent)) {
-          text = msgContent
-            .filter((c: any) => c.type === 'text')
-            .map((c: any) => c.text)
-            .join('\n');
-        } else {
-          // Unknown content format - throw error
-          throw new Error(`Unknown message content format in transcript. Type: ${typeof msgContent}`);
-        }
-
-        if (stripSystemReminders) {
-          text = text.replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, '');
-          text = text.replace(/\n{3,}/g, '\n\n').trim();
-        }
-
-        // Return text even if empty - caller decides if that's an error
-        return text;
-      }
+    if (typeof msgContent === 'string') {
+      text = msgContent;
+    } else if (Array.isArray(msgContent)) {
+      text = msgContent
+        .filter((c: any) => c.type === 'text')
+        .map((c: any) => c.text)
+        .join('\n');
+    } else {
+      // Unknown content format - throw error
+      throw new Error(`Unknown message content format in transcript. Type: ${typeof msgContent}`);
     }
-  }
 
-  // If we searched the whole transcript and didn't find any message of this role
-  if (!foundMatchingRole) {
-    return '';
+    if (stripSystemReminders) {
+      text = text.replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, '');
+      text = text.replace(/\n{3,}/g, '\n\n').trim();
+    }
+
+    // Skip messages with no text content (e.g. pure tool_use assistant messages).
+    // Modern Claude Code sessions often end with long runs of tool-only messages —
+    // returning '' from the latest one makes summarize lose all context even when
+    // earlier assistant text exists in the same turn.
+    if (text === '') continue;
+
+    return text;
   }
 
   return '';
