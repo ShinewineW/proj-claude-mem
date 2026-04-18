@@ -25,7 +25,6 @@ import type { SessionManager } from '../SessionManager.js';
 import type { WorkerRef, StorageResult } from './types.js';
 import { broadcastObservation, broadcastSummary } from './ObservationBroadcaster.js';
 import { cleanupProcessedMessages } from './SessionCleanupHelper.js';
-import { synthesizeSummaryFromRecentObservations } from '../summarize-salvage.js';
 
 /**
  * Process agent response text (parse XML, save to database, sync to Chroma, broadcast SSE)
@@ -101,12 +100,17 @@ export async function processAgentResponse(
   let summaryForStore = normalizeSummaryForStorage(summary);
 
   // Salvage: When summary parse fails for a summarize response, synthesize from
-  // whatever we got. Three failure modes under high concurrency:
+  // whatever the model actually emitted. Two failure modes:
   //   1. AI returns <observation> instead of <summary> (prompt conditioning leakage, upstream #1312)
-  //   2. AI returns plain text without any XML tags (context overflow / format confusion)
-  //   3. AI returns nothing parseable AND no observations (model hiccup / empty prompt)
-  //      — fall back to DB-stored observations from the same memory_session_id.
-  // All three must be handled to avoid silent summary loss.
+  //   2. AI returns plain text without any XML tags (format confusion)
+  //
+  // A third branch used to fire when response was entirely empty (DB-fallback
+  // from recent observations), but it misfired on the FIRST streaming message
+  // Claude SDK emits — an empty thinking/tool-use placeholder — before the
+  // real summary response arrived. That short-circuit confirmed the message,
+  // triggered drain-complete, and SIGTERM'd Claude before it could answer.
+  // True empty-response cases (Claude hung / context overflow) are handled by
+  // the 60s drain window + 5min watchdog + pre-queue salvage on the next turn.
   if (!summaryForStore && session.currentSDKMessageKind === 'summarize') {
     if (observations.length > 0) {
       // Case 1: AI returned <observation> instead of <summary>
@@ -140,32 +144,6 @@ export async function processAgentResponse(
         agentName,
         textPreview: text.substring(0, 100),
       });
-    } else if (session.memorySessionId) {
-      // Case 3: Empty response AND no observations parsed — reach into the DB
-      // for recent observations of this memory session. Same shape as the
-      // pre-queue salvage so the viewer treats it uniformly.
-      try {
-        const fallbackStore = dbManager.getSessionStore(session.dbPath);
-        const synthesized = synthesizeSummaryFromRecentObservations(
-          fallbackStore,
-          session.memorySessionId,
-          null,
-          'empty response, no observations in this batch',
-        );
-        if (synthesized) {
-          summaryForStore = synthesized.summary;
-          logger.warn('PARSER', `SALVAGED summary from ${synthesized.obsCount} DB observation(s) — empty SDK response`, {
-            sessionId: session.sessionDbId,
-            agentName,
-            titleSample: synthesized.titleSample,
-          });
-        }
-      } catch (salvageErr) {
-        logger.warn('PARSER', 'DB-fallback salvage failed', {
-          sessionId: session.sessionDbId,
-          agentName,
-        }, salvageErr as Error);
-      }
     }
   }
 
