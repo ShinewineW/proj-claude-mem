@@ -33,4 +33,10 @@ describe("Settings defaults — audit fixes (2026-03-28)", () => {
       expect(skipTools).toContain(tool);
     }
   });
+
+  test("SKIP_TOOLS includes Monitor (system noise filtering)", () => {
+    const skipTools = getDefault("CLAUDE_MEM_SKIP_TOOLS");
+    expect(skipTools).toBeDefined();
+    expect(skipTools).toContain("Monitor");
+  });
 });

@@ -257,6 +257,35 @@ finish`;
     });
   });
 
+  describe('task-notification tag stripping', () => {
+    it('should strip <task-notification> tags', () => {
+      const input = 'before <task-notification>Agent completed task X</task-notification> after';
+      const result = stripMemoryTagsFromPrompt(input);
+      expect(result).toBe('before  after');
+    });
+
+    it('should strip multiline <task-notification> tags', () => {
+      const input = 'start\n<task-notification>\nTask completed\nOutput: success\n</task-notification>\nend';
+      const result = stripMemoryTagsFromPrompt(input);
+      expect(result).toBe('start\n\nend');
+    });
+
+    it('should return empty for prompt that is entirely task-notification', () => {
+      const input = '<task-notification>Background task finished</task-notification>';
+      const result = stripMemoryTagsFromPrompt(input);
+      expect(result).toBe('');
+    });
+
+    it('should strip task-notification from JSON content', () => {
+      const jsonContent = JSON.stringify({
+        data: '<task-notification>noise</task-notification> real data'
+      });
+      const result = stripMemoryTagsFromJson(jsonContent);
+      const parsed = JSON.parse(result);
+      expect(parsed.data).toBe(' real data');
+    });
+  });
+
   describe('system_instruction tag stripping', () => {
     it('should strip <system_instruction> tags (underscore variant)', () => {
       const input = 'before <system_instruction>conductor injected content</system_instruction> after';

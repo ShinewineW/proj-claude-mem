@@ -29,7 +29,8 @@ function countTags(content: string): number {
   const contextCount = (content.match(/<claude-mem-context>/g) || []).length;
   const sysInstructionCount = (content.match(/<system_instruction>/g) || []).length;
   const sysInstructionHyphenCount = (content.match(/<system-instruction>/g) || []).length;
-  return privateCount + contextCount + sysInstructionCount + sysInstructionHyphenCount;
+  const taskNotificationCount = (content.match(/<task-notification>/g) || []).length;
+  return privateCount + contextCount + sysInstructionCount + sysInstructionHyphenCount + taskNotificationCount;
 }
 
 /**
@@ -53,6 +54,7 @@ function stripTagsInternal(content: string): string {
     .replace(/<private>[\s\S]*?<\/private>/g, '')
     .replace(/<system_instruction>[\s\S]*?<\/system_instruction>/g, '')
     .replace(/<system-instruction>[\s\S]*?<\/system-instruction>/g, '')
+    .replace(/<task-notification>[\s\S]*?<\/task-notification>/g, '')
     .trim();
 }
 
