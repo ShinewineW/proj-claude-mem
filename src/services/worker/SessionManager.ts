@@ -449,10 +449,14 @@ export class SessionManager {
     // during the drain window (R2). Since we're about to delete, restarts are futile.
     session.closing = true;
 
-    // NEW: Wait for pending summarize messages before aborting
-    // This prevents summary loss when session-complete arrives before
-    // the SDKAgent finishes processing the summarize message.
-    const DRAIN_MAX_WAIT_MS = 10_000;
+    // Wait for pending summarize messages before aborting.
+    // Prevents summary loss when session-complete arrives before SDKAgent
+    // finishes. 60s ceiling: direct-probe measurements showed Claude produces
+    // a well-formed <summary> in 15–32s with rich context; the previous 10s
+    // ceiling SIGTERM'd 74% of SIGTERMs at the drain wall and pushed every
+    // production summary onto salvage fallback. Watchdog (5min) still catches
+    // true hangs. See attn_sink/0sum-investigation/NOTES.md.
+    const DRAIN_MAX_WAIT_MS = 60_000;
     const DRAIN_POLL_INTERVAL_MS = 500;
     try {
       const pendingStore = this.getPendingStore(session.dbPath);

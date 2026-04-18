@@ -46,3 +46,4 @@ plugin/scripts/*.cjs
 # claude-mem project memory
 .claude/mem.db*
 .worktrees/
+attn_sink/
