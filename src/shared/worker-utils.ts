@@ -109,7 +109,7 @@ async function isWorkerHealthy(): Promise<boolean> {
  */
 function getPluginVersion(): string {
   try {
-    const packageJsonPath = path.join(MARKETPLACE_ROOT, 'package.json');
+    const packageJsonPath = path.join(MARKETPLACE_ROOT, 'plugin', 'package.json');
     const packageJson = JSON.parse(readFileSync(packageJsonPath, 'utf-8'));
     return packageJson.version;
   } catch (error: unknown) {
@@ -187,8 +187,8 @@ async function checkWorkerVersion(): Promise<void> {
  */
 async function tryStartWorker(): Promise<boolean> {
   try {
-    const workerScript = path.join(MARKETPLACE_ROOT, 'scripts', 'worker-service.cjs');
-    const bunRunner = path.join(MARKETPLACE_ROOT, 'scripts', 'bun-runner.js');
+    const workerScript = path.join(MARKETPLACE_ROOT, 'plugin', 'scripts', 'worker-service.cjs');
+    const bunRunner = path.join(MARKETPLACE_ROOT, 'plugin', 'scripts', 'bun-runner.js');
 
     logger.info('SYSTEM', 'Worker not healthy — attempting auto-start');
 
@@ -223,8 +223,8 @@ async function tryStartWorker(): Promise<boolean> {
  */
 export async function restartWorker(): Promise<boolean> {
   try {
-    const workerScript = path.join(MARKETPLACE_ROOT, 'scripts', 'worker-service.cjs');
-    const bunRunner = path.join(MARKETPLACE_ROOT, 'scripts', 'bun-runner.js');
+    const workerScript = path.join(MARKETPLACE_ROOT, 'plugin', 'scripts', 'worker-service.cjs');
+    const bunRunner = path.join(MARKETPLACE_ROOT, 'plugin', 'scripts', 'bun-runner.js');
 
     logger.info('SYSTEM', 'Force-restarting worker daemon');
 

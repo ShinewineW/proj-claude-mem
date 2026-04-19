@@ -120,7 +120,7 @@ export async function httpShutdown(port: number): Promise<boolean> {
  */
 export function getInstalledPluginVersion(): string {
   try {
-    const packageJsonPath = path.join(MARKETPLACE_ROOT, 'package.json');
+    const packageJsonPath = path.join(MARKETPLACE_ROOT, 'plugin', 'package.json');
     const packageJson = JSON.parse(readFileSync(packageJsonPath, 'utf-8'));
     return packageJson.version;
   } catch (error: unknown) {

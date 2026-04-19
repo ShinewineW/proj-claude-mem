@@ -171,30 +171,88 @@ try {
 
   console.log('\x1b[32m%s\x1b[0m', 'Sync complete!');
 
-  // ── Step 5: Trigger worker restart ──────────────────────────────────────
-  console.log('\nTriggering worker restart...');
+  // ── Step 5: Restart worker and verify it comes back ─────────────────────
+  // The /api/admin/restart endpoint just shuts the worker down; revival
+  // previously relied on the next hook firing tryStartWorker(). We now
+  // actively start and health-poll so `build-and-sync` is a complete cycle.
+  console.log('\nRestarting worker...');
   const http = require('http');
-  const req = http.request({
-    hostname: '127.0.0.1',
-    port: 37777,
-    path: '/api/admin/restart',
-    method: 'POST',
-    timeout: 3000,
-  }, (res) => {
-    if (res.statusCode === 200) {
-      console.log('\x1b[32m%s\x1b[0m', 'Worker restart triggered');
+  const { execFileSync } = require('child_process');
+
+  function triggerShutdown() {
+    return new Promise((resolve) => {
+      const req = http.request({
+        hostname: '127.0.0.1',
+        port: 37777,
+        path: '/api/admin/restart',
+        method: 'POST',
+        timeout: 3000,
+      }, (res) => resolve(res.statusCode === 200));
+      req.on('error', () => resolve(false));
+      req.on('timeout', () => { req.destroy(); resolve(false); });
+      req.end();
+    });
+  }
+
+  function healthOk() {
+    return new Promise((resolve) => {
+      const req = http.request({
+        hostname: '127.0.0.1', port: 37777, path: '/api/health',
+        method: 'GET', timeout: 1500,
+      }, (res) => resolve(res.statusCode === 200));
+      req.on('error', () => resolve(false));
+      req.on('timeout', () => { req.destroy(); resolve(false); });
+      req.end();
+    });
+  }
+
+  (async () => {
+    const shutdownOk = await triggerShutdown();
+    if (shutdownOk) {
+      console.log('  · shutdown signal sent');
     } else {
-      console.log('\x1b[33m%s\x1b[0m', `Worker restart returned status ${res.statusCode}`);
+      console.log('  · worker not running (will spawn fresh)');
     }
-  });
-  req.on('error', () => {
-    console.log('\x1b[33m%s\x1b[0m', 'Worker not running, will start on next hook');
-  });
-  req.on('timeout', () => {
-    req.destroy();
-    console.log('\x1b[33m%s\x1b[0m', 'Worker restart timed out (hung worker?)');
-  });
-  req.end();
+
+    // Wait for port to free after shutdown
+    await new Promise(r => setTimeout(r, 1500));
+
+    const bunRunner = path.join(MARKETPLACE_PLUGIN_PATH, 'scripts', 'bun-runner.js');
+    const workerScript = path.join(MARKETPLACE_PLUGIN_PATH, 'scripts', 'worker-service.cjs');
+
+    // Up to 2 spawn attempts; `start` can race with a shutting-down daemon.
+    let lastErr = null;
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      if (await healthOk()) break;
+      try {
+        execFileSync('node', [bunRunner, workerScript, 'start'], {
+          timeout: 15_000, stdio: 'pipe',
+        });
+        lastErr = null;
+        break;
+      } catch (err) {
+        lastErr = err;
+        const stderr = err.stderr ? err.stderr.toString().trim() : '';
+        console.log('\x1b[33m%s\x1b[0m',
+          `Spawn attempt ${attempt} failed (exit=${err.status})${stderr ? ': ' + stderr.split('\n').slice(-2).join(' | ') : ''}`);
+        await new Promise(r => setTimeout(r, 1500));
+      }
+    }
+
+    const deadline = Date.now() + 10_000;
+    while (Date.now() < deadline) {
+      if (await healthOk()) {
+        console.log('\x1b[32m%s\x1b[0m', 'Worker is healthy');
+        return;
+      }
+      await new Promise(r => setTimeout(r, 500));
+    }
+    if (lastErr) {
+      console.log('\x1b[31m%s\x1b[0m', `Worker not healthy after spawn attempts: ${lastErr.message}`);
+    } else {
+      console.log('\x1b[33m%s\x1b[0m', 'Worker spawned but /api/health did not respond in 10s');
+    }
+  })();
 
 } catch (error) {
   console.error('\x1b[31m%s\x1b[0m', 'Sync failed:', error.message);
