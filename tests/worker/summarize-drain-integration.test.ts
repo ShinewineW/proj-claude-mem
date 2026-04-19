@@ -13,7 +13,8 @@
  * summarize, and MUST time out after the ceiling if it never completes.
  */
 
-import { describe, it, expect, beforeEach, afterEach, mock } from 'bun:test';
+import { describe, it, expect, beforeEach, afterEach, mock, spyOn } from 'bun:test';
+import { logger } from '../../src/utils/logger.js';
 
 mock.module('../../src/services/domain/ModeManager.js', () => ({
   ModeManager: {
@@ -45,8 +46,17 @@ describe('summarize drain-window integration', () => {
   let store: SessionStore;
   let pendingStore: PendingMessageStore;
   let sessionManager: SessionManager;
+  let spies: Array<ReturnType<typeof spyOn>>;
 
   beforeEach(() => {
+    // Silence logger — these tests use a real SessionManager which emits
+    // info/warn into the shared production log unless suppressed.
+    spies = [
+      spyOn(logger, 'info').mockImplementation(() => {}),
+      spyOn(logger, 'warn').mockImplementation(() => {}),
+      spyOn(logger, 'error').mockImplementation(() => {}),
+      spyOn(logger, 'debug').mockImplementation(() => {}),
+    ];
     store = new SessionStore(':memory:');
     pendingStore = new PendingMessageStore(store.db);
     sessionManager = new SessionManager(makeStubDbManager(store, pendingStore));
@@ -54,6 +64,7 @@ describe('summarize drain-window integration', () => {
 
   afterEach(() => {
     store.close();
+    for (const s of spies) s.mockRestore();
   });
 
   function seed(content: string, memory: string): number {

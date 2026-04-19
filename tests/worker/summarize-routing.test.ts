@@ -12,7 +12,8 @@
  *     can wait on them.
  */
 
-import { describe, it, expect, beforeEach, afterEach, mock } from 'bun:test';
+import { describe, it, expect, beforeEach, afterEach, mock, spyOn } from 'bun:test';
+import { logger } from '../../src/utils/logger.js';
 
 mock.module('../../src/services/domain/ModeManager.js', () => ({
   ModeManager: {
@@ -36,6 +37,7 @@ describe('SessionManager summarize routing (fresh-query path)', () => {
   let pendingStore: PendingMessageStore;
   let dbManager: DatabaseManager;
   let sessionManager: SessionManager;
+  let spies: Array<ReturnType<typeof spyOn>>;
 
   // Stub DatabaseManager to always return our in-memory stores.
   function makeStubDbManager(s: SessionStore, p: PendingMessageStore): DatabaseManager {
@@ -48,6 +50,15 @@ describe('SessionManager summarize routing (fresh-query path)', () => {
   }
 
   beforeEach(() => {
+    // Silence logger so the intentional "handler threw {boom}" and other
+    // expected log noise from these tests don't pollute the shared
+    // production log file at ~/.claude-mem/logs/.
+    spies = [
+      spyOn(logger, 'info').mockImplementation(() => {}),
+      spyOn(logger, 'warn').mockImplementation(() => {}),
+      spyOn(logger, 'error').mockImplementation(() => {}),
+      spyOn(logger, 'debug').mockImplementation(() => {}),
+    ];
     store = new SessionStore(':memory:');
     pendingStore = new PendingMessageStore(store.db);
     dbManager = makeStubDbManager(store, pendingStore);
@@ -56,6 +67,7 @@ describe('SessionManager summarize routing (fresh-query path)', () => {
 
   afterEach(() => {
     store.close();
+    for (const s of spies) s.mockRestore();
   });
 
   function seedSession(
