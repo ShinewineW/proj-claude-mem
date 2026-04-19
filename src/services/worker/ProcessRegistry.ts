@@ -19,6 +19,7 @@
 import { spawn, exec, ChildProcess } from 'child_process';
 import { promisify } from 'util';
 import { logger } from '../../utils/logger.js';
+import { filterEmptyFlagPairs } from './spawn-args-filter.js';
 
 const execAsync = promisify(exec);
 
@@ -364,15 +365,14 @@ export function createPidCapturingSpawn(sessionDbId: number, dbPath?: string) {
     // On Windows, use cmd.exe wrapper for .cmd files to properly handle paths with spaces
     const useCmdWrapper = process.platform === 'win32' && spawnOptions.command.endsWith('.cmd');
 
-    // Strip empty-string args (ported from upstream 3d92684, v12.1.6).
-    // Bun's spawn() silently drops empty strings from argv, which makes a
-    // subsequent flag get consumed as the dropped flag's value. The Agent
-    // SDK emits `["--setting-sources", ""]` whenever settingSources defaults
-    // to [] (since []).join(",") === ""). Without this filter, on Claude
-    // Code 2.1.109+ the SDK subprocess crashes with:
+    // Pair-aware filter: when the SDK emits `["--setting-sources", ""]`
+    // (happens when settingSources defaults to []), dropping only the
+    // empty string leaves the --setting-sources flag orphaned — CLI argparse
+    // then consumes the NEXT flag (--permission-mode) as its value and
+    // Claude exits with code 1 at startup:
     //   Error processing --setting-sources: Invalid setting source: --permission-mode
-    // causing 100% observation/summary failure.
-    const args = spawnOptions.args.filter(arg => arg !== '');
+    // See tests/worker/spawn-args-filter.test.ts for the specific scenario.
+    const args = filterEmptyFlagPairs(spawnOptions.args);
 
     const child = useCmdWrapper
       ? spawn('cmd.exe', ['/d', '/c', spawnOptions.command, ...args], {
