@@ -14,6 +14,8 @@ Claude-mem is a Claude Code plugin providing persistent memory across sessions. 
 
 **Bypass Lane** (`src/services/worker/BypassLane.ts`) - Parallel REST consumer for observations (Gemini/OpenRouter), main channel always Claude SDK
 
+**Fresh Summarize Path** (`src/services/worker/fresh-summarize.ts`, `fresh-summarize-store.ts`, `summarize-salvage.ts`, `SDKAgent.runFreshSummarize`) - Summaries run on a fresh `query()` subprocess (no resume, no observer priming) to bypass the observer-session role conditioning that empirically produced 0% valid `<summary>` XML in production. Pre-queue salvage runs first; on fallthrough dispatches to `onRunFreshSummarizeCallback`. Atomic store re-reads `memory_session_id` inside a transaction to avoid FK race. Accept-loss-on-failure policy — pre-queue salvage catches the next trigger. Full architecture → workspace `.claude/rules/architecture-details.md` § "Fresh SDK Query Summarize".
+
 **Database** (`src/services/sqlite/`) - Per-project SQLite3 at `<repo>/.claude/mem.db`, managed by `DbConnectionPool` (`src/shared/project-db.ts`). Falls back to global `~/.claude-mem/claude-mem.db` when no project context is available.
 
 **Project Resolution** (`src/shared/project-allowlist.ts: resolveProjectContext()`) - Allowlist child-path matching (Priority 1) → git-root heuristic fallback (Priority 2). Hook guard injects `_projectContext` for all handlers.
@@ -40,7 +42,7 @@ Claude-mem is a Claude Code plugin providing persistent memory across sessions. 
 
 ```bash
 /opt/homebrew/bin/bun run build-and-sync   # Build, deploy to cache + marketplace discovery, restart worker
-/opt/homebrew/bin/bun test                  # Run all tests (1634 pass, 0 fail, 0 skip)
+/opt/homebrew/bin/bun test                  # Run all tests (1743 pass, 0 fail, 0 skip)
 ```
 
 ## Configuration
