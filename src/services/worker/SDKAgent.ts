@@ -41,6 +41,7 @@ import {
   runFreshSummarizeQuery,
   type FreshSummarizeDeps,
 } from "./fresh-summarize.js";
+import { storeFreshSummaryForSession } from "./fresh-summarize-store.js";
 import {
   createPidCapturingSpawn,
   getProcessBySession,
@@ -823,14 +824,17 @@ export class SDKAgent {
       notes: result.summary.notes,
     };
 
-    let stored: { id: number; createdAtEpoch: number };
+    // Atomic store: re-fetches the CURRENT memory_session_id inside a
+    // transaction to avoid the FK race where the observer path updated
+    // sdk_sessions.memory_session_id while our fresh query was running.
+    // See src/services/worker/fresh-summarize-store.ts for the full story.
+    let stored: { id: number; createdAtEpoch: number; memorySessionId: string } | null;
     try {
-      stored = sessionStore.storeSummary(
-        sessionRow.memory_session_id,
-        sessionRow.project,
+      stored = storeFreshSummaryForSession(
+        sessionStore,
+        sessionDbId,
         summaryPayload,
-        session?.lastPromptNumber ?? undefined,
-        0,
+        { promptNumber: session?.lastPromptNumber, discoveryTokens: 0 },
       );
     } catch (err) {
       logger.error(
@@ -838,6 +842,15 @@ export class SDKAgent {
         "Fresh summarize storeSummary failed",
         { sessionDbId },
         err as Error,
+      );
+      return;
+    }
+
+    if (!stored) {
+      logger.warn(
+        "SDK",
+        "Fresh summarize: session row missing or memory_session_id null at store time — skipping",
+        { sessionDbId },
       );
       return;
     }

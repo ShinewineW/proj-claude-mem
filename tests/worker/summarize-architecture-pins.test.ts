@@ -40,6 +40,16 @@ describe('fresh-summarize architectural pins', () => {
       expect(src).toMatch(/async runFreshSummarize\(/);
     });
 
+    it('stores the summary via the atomic helper (FK-race safe)', () => {
+      // runFreshSummarize MUST NOT call sessionStore.storeSummary directly
+      // with a cached memory_session_id — see fresh-summarize-store.ts for
+      // why this regresses to a FOREIGN KEY constraint failure. The
+      // atomic helper re-fetches inside a transaction.
+      expect(src).toContain('storeFreshSummaryForSession');
+      // And the cached value must not sneak back in:
+      expect(src).not.toContain('sessionStore.storeSummary(');
+    });
+
     it('drops legacy summarize messages with a warning (defense in depth)', () => {
       // During crash-recovery replay a worker may find pre-refactor summarize
       // rows in pending_messages. They must be logged+dropped, not silently
