@@ -149,6 +149,91 @@ describe('SessionManager summarize routing (fresh-query path)', () => {
     expect(called).toBe(false);
   });
 
+  it('proactive reaper path — runFreshSummarize NOT called when salvage reports "skipped"', async () => {
+    // Full end-to-end of the 10d60372 fix: reapStaleSessions-style call
+    // (lastAssistantMessage=undefined) against a session whose last summary
+    // is newer than its last observation must return skipped and MUST NOT
+    // fire the fresh-query callback. Without this guard, the reaper would
+    // spawn a fresh SDK query every ~22min even when there's nothing new —
+    // session 178 observed 12 duplicate salvaged summaries in 7h15m that way.
+    const sessionDbId = seedSession('c-reaper', 'm-reaper');
+    addObservation('m-reaper', 'work at T0');
+
+    // Insert a summary — SessionStore.storeSummary stamps a fresh epoch via
+    // Date.now(), so the summary's epoch will be >= the observation's.
+    // (Both epochs come from the same process clock within the test's lifetime.)
+    await new Promise(r => setTimeout(r, 5)); // tiny delay to ensure monotonic clocks
+    store.storeSummary(
+      'm-reaper',
+      'test-project',
+      {
+        request: 'initial turn',
+        investigated: 'looked at things',
+        learned: 'stuff',
+        completed: '',
+        next_steps: '',
+        notes: null,
+      },
+      1,
+      0,
+    );
+
+    let freshCalled = false;
+    sessionManager.setOnRunFreshSummarize(async () => { freshCalled = true; });
+
+    // Proactive reaper call signature: lastAssistantMessage is undefined.
+    const result = sessionManager.queueSummarize(sessionDbId, undefined);
+
+    expect(result.status).toBe('skipped');
+    await new Promise(r => setTimeout(r, 15));
+    expect(freshCalled).toBe(false);
+
+    // No duplicate summary created — the DB still has exactly 1 summary.
+    const count = store.db
+      .prepare(`SELECT COUNT(*) AS c FROM session_summaries WHERE memory_session_id = ?`)
+      .get('m-reaper') as { c: number };
+    expect(count.c).toBe(1);
+  });
+
+  it('proactive reaper path — FIRES runFreshSummarize when a new obs arrived after the last summary', async () => {
+    // Complement to the skipped test: if there IS new work, the reaper
+    // should still hand off to the fresh-query path. This confirms the
+    // salvage "skipped" gate does not swallow legitimate summary triggers.
+    const sessionDbId = seedSession('c-reaper-go', 'm-reaper-go');
+
+    // Seed old obs, old summary, then a NEW obs.
+    addObservation('m-reaper-go', 'old work');
+    store.storeSummary(
+      'm-reaper-go',
+      'test-project',
+      {
+        request: 'first turn',
+        investigated: '',
+        learned: '',
+        completed: '',
+        next_steps: '',
+        notes: null,
+      },
+      1,
+      0,
+    );
+    await new Promise(r => setTimeout(r, 5));
+    addObservation('m-reaper-go', 'new work AFTER the summary');
+
+    let freshCalled = false;
+    sessionManager.setOnRunFreshSummarize(async () => { freshCalled = true; });
+
+    // Reaper path — undefined lastAssistantMessage. Salvage synthesizes (not
+    // skipped) because there are now-newer observations than the summary.
+    const result = sessionManager.queueSummarize(sessionDbId, undefined);
+
+    // Salvage handles it by synthesizing from new obs; fresh query is NOT
+    // called either (status=salvaged short-circuits the callback).
+    expect(result.status).toBe('salvaged');
+    await new Promise(r => setTimeout(r, 15));
+    expect(freshCalled).toBe(false);
+  });
+
   it('tracks in-flight fresh summaries for drain-window via hasPendingSummarize', async () => {
     const sessionDbId = seedSession('c-4', 'm-4');
     addObservation('m-4', 'some obs');
