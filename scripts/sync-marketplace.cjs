@@ -193,30 +193,12 @@ try {
 
   console.log('\x1b[32m%s\x1b[0m', 'Sync complete!');
 
-  // Trigger worker restart after file sync
-  console.log('\n🔄 Triggering worker restart...');
-  const http = require('http');
-  const req = http.request({
-    hostname: '127.0.0.1',
-    port: 37777,
-    path: '/api/admin/restart',
-    method: 'POST',
-    timeout: 2000
-  }, (res) => {
-    if (res.statusCode === 200) {
-      console.log('\x1b[32m%s\x1b[0m', '✓ Worker restart triggered');
-    } else {
-      console.log('\x1b[33m%s\x1b[0m', `ℹ Worker restart returned status ${res.statusCode}`);
-    }
-  });
-  req.on('error', () => {
-    console.log('\x1b[33m%s\x1b[0m', 'ℹ Worker not running, will start on next hook');
-  });
-  req.on('timeout', () => {
-    req.destroy();
-    console.log('\x1b[33m%s\x1b[0m', 'ℹ Worker restart timed out');
-  });
-  req.end();
+  // Restart worker end-to-end (shutdown → spawn → poll /api/health).
+  // Old version only fired /api/admin/restart and printed "triggered" —
+  // the worker could stay dead and nothing noticed.
+  console.log('\n🔄 Restarting worker...');
+  const { restartWorker } = require('./lib/worker-restart.cjs');
+  restartWorker();
 
 } catch (error) {
   console.error('\x1b[31m%s\x1b[0m', 'Sync failed:', error.message);

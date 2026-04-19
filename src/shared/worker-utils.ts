@@ -193,20 +193,23 @@ async function tryStartWorker(): Promise<boolean> {
     logger.info('SYSTEM', 'Worker not healthy — attempting auto-start');
 
     // Spawn worker start synchronously with a short timeout.
-    // The start command itself spawns the daemon and waits for health.
-    // Timeout 12s: stays within Claude Code's ~15s hook timeout budget.
+    // Capture stderr so diagnostic output (ENOENT, wrong path, etc.) surfaces
+    // in the log instead of being silently dropped — the previous 'ignore'
+    // stdio hid a MARKETPLACE_ROOT path bug for weeks.
     execFileSync('node', [bunRunner, workerScript, 'start'], {
       timeout: 12_000,
-      stdio: 'ignore'
+      stdio: 'pipe'
     });
 
     // Verify the worker is now healthy
     return await isWorkerHealthy();
   } catch (error) {
-    const exitCode = (error as { status?: number })?.status;
+    const err = error as { status?: number; stderr?: Buffer | string; message?: string };
+    const stderr = err.stderr ? err.stderr.toString().trim() : '';
     logger.warn('SYSTEM', 'Worker auto-start failed', {
-      error: error instanceof Error ? error.message : String(error),
-      exitCode
+      error: err.message ?? String(error),
+      exitCode: err.status,
+      stderrTail: stderr ? stderr.split('\n').slice(-3).join(' | ') : undefined,
     });
     return false;
   }
@@ -230,15 +233,17 @@ export async function restartWorker(): Promise<boolean> {
 
     execFileSync('node', [bunRunner, workerScript, 'restart'], {
       timeout: 12_000,
-      stdio: 'ignore'
+      stdio: 'pipe'
     });
 
     return await isWorkerHealthy();
   } catch (error) {
-    const exitCode = (error as { status?: number })?.status;
+    const err = error as { status?: number; stderr?: Buffer | string; message?: string };
+    const stderr = err.stderr ? err.stderr.toString().trim() : '';
     logger.warn('SYSTEM', 'Worker restart failed', {
-      error: error instanceof Error ? error.message : String(error),
-      exitCode
+      error: err.message ?? String(error),
+      exitCode: err.status,
+      stderrTail: stderr ? stderr.split('\n').slice(-3).join(' | ') : undefined,
     });
     return false;
   }
