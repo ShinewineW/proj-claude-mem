@@ -21,6 +21,7 @@
 import { buildFreshSummaryPrompt } from '../../sdk/prompts.js';
 import { parseSummary, type ParsedSummary } from '../../sdk/parser.js';
 import { logger } from '../../utils/logger.js';
+import type { ModeConfig } from '../domain/types.js';
 
 export interface FreshSummarizeObservation {
   type: string;
@@ -62,6 +63,13 @@ export interface FreshSummarizeInput {
   memorySessionId: string;
   userPrompt: string;
   lastAssistantMessage: string | null | undefined;
+  /**
+   * Active mode — threaded through to buildFreshSummaryPrompt so the summary
+   * schema uses mode.prompts.xml_summary_*_placeholder instructions (rich,
+   * multilingual) instead of the hardcoded fallback. SDKAgent populates this
+   * from ModeManager.getInstance().getActiveMode().
+   */
+  mode?: ModeConfig;
 }
 
 export type FreshSummarizeStatus =
@@ -100,6 +108,7 @@ export async function runFreshSummarizeQuery(
     userPrompt: input.userPrompt,
     lastAssistantMessage: input.lastAssistantMessage,
     observations,
+    mode: input.mode,
   });
 
   // The SDK expects `prompt` to be an async iterable of user messages.

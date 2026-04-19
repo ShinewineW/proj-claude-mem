@@ -319,6 +319,14 @@ export interface FreshSummaryInput {
     facts: string[];
   }>;
   maxFieldChars?: number;
+  /**
+   * Active mode — when provided, the summary schema uses the mode's
+   * xml_summary_*_placeholder strings (rich, multilingual) and includes its
+   * summary_instruction. When absent, the hardcoded fallback instructions are
+   * used (kept for callers that can't load a mode, e.g. test doubles or
+   * worker-restart replay before ModeManager is ready).
+   */
+  mode?: ModeConfig;
 }
 
 function escapeXml(s: string): string {
@@ -347,6 +355,35 @@ function escapeXml(s: string): string {
  * Ordering: observations render in the order given. DB callers should pass
  * them in chronological order (oldest first) if chronology matters.
  */
+// Hardcoded schema used when no mode is supplied — preserves self-contained
+// behavior for test doubles and any path where ModeManager is unavailable.
+const FALLBACK_SUMMARY_SCHEMA = `<summary>
+  <request>short original request phrase</request>
+  <investigated>bullets or sentences of what was investigated</investigated>
+  <learned>bullets of key facts discovered</learned>
+  <completed>bullets of what was completed (features, fixes)</completed>
+  <next_steps>bullets of what comes next, or leave empty</next_steps>
+  <notes>optional short note, or leave empty</notes>
+</summary>`;
+
+/**
+ * Build the <summary> XML schema block from mode.prompts.xml_summary_*_placeholder
+ * strings. Only the six summary fields are borrowed — observer-role language,
+ * continuation greetings, and the "memory agent for a DIFFERENT session"
+ * footer are intentionally NOT pulled in; those were the source of the 0%-
+ * valid-XML regression that the 2026-04-19 fresh-query refactor was fixing.
+ */
+function buildSchemaFromMode(prompts: ModeConfig['prompts']): string {
+  return `<summary>
+  <request>${prompts.xml_summary_request_placeholder}</request>
+  <investigated>${prompts.xml_summary_investigated_placeholder}</investigated>
+  <learned>${prompts.xml_summary_learned_placeholder}</learned>
+  <completed>${prompts.xml_summary_completed_placeholder}</completed>
+  <next_steps>${prompts.xml_summary_next_steps_placeholder}</next_steps>
+  <notes>${prompts.xml_summary_notes_placeholder}</notes>
+</summary>`;
+}
+
 export function buildFreshSummaryPrompt(input: FreshSummaryInput): string {
   const maxChars = input.maxFieldChars ?? 2000;
   const N = input.observations.length;
@@ -372,6 +409,17 @@ export function buildFreshSummaryPrompt(input: FreshSummaryInput): string {
     ? `  <last_assistant_message>${escapeXml(truncateField(lastMsgRaw, maxChars).text)}</last_assistant_message>`
     : '';
 
+  const schema = input.mode?.prompts
+    ? buildSchemaFromMode(input.mode.prompts)
+    : FALLBACK_SUMMARY_SCHEMA;
+
+  // Mode-supplied summary_instruction shapes the content fields (request is
+  // a title, not a paraphrase). Must appear BEFORE the schema or the model
+  // treats it as trailing noise.
+  const instructionBlock = input.mode?.prompts?.summary_instruction
+    ? `${input.mode.prompts.summary_instruction}\n\n`
+    : '';
+
   return `You are a session summarizer. Produce exactly one <summary> XML block based on the data below. Do not output observation tags. Do not output any tag other than <summary>. Do not output prose. Do not explain — output only the XML.
 
 <session>
@@ -383,16 +431,9 @@ ${lastAssistantBlock}
 ${observationBlocks}
 </observations>
 
-Output exactly one <summary> block using this schema:
+${instructionBlock}Output exactly one <summary> block using this schema:
 
-<summary>
-  <request>short original request phrase</request>
-  <investigated>bullets or sentences of what was investigated</investigated>
-  <learned>bullets of key facts discovered</learned>
-  <completed>bullets of what was completed (features, fixes)</completed>
-  <next_steps>bullets of what comes next, or leave empty</next_steps>
-  <notes>optional short note, or leave empty</notes>
-</summary>`;
+${schema}`;
 }
 
 /**

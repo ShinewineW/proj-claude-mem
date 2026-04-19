@@ -791,10 +791,24 @@ export class SDKAgent {
       spawnClaudeCodeProcess: createPidCapturingSpawn(sessionDbId, dbPath),
     };
 
+    // Prefer the in-memory session's userPrompt (SessionManager.initializeSession
+    // sets this to the CURRENT-turn prompt) over sessionRow.user_prompt (which is
+    // INSERTed once at session creation and never UPDATEd — always the first
+    // prompt of the session). Without this, every summary in a multi-turn
+    // session gets the same "title" = the first prompt. Fallback to the DB value
+    // covers worker-restart replay where the session isn't in memory.
+    //
+    // Mode is loaded here and threaded through so the summary schema uses
+    // mode.prompts.xml_summary_*_placeholder — rich, multilingual instructions
+    // that restore the "model-organized work-subject title" behavior lost in
+    // the 2026-04-19 fresh-query refactor. See fixed-bugs.md § "Summary
+    // schema instructions regression".
+    const activeMode = ModeManager.getInstance().getActiveMode();
     const result = await runFreshSummarizeQuery(deps, {
       memorySessionId: sessionRow.memory_session_id,
-      userPrompt: sessionRow.user_prompt ?? "",
+      userPrompt: session?.userPrompt ?? sessionRow.user_prompt ?? "",
       lastAssistantMessage,
+      mode: activeMode,
     });
 
     if (result.status !== "success" || !result.summary) {

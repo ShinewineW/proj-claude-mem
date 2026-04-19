@@ -18,15 +18,77 @@
 import { describe, it, expect, beforeEach, afterEach, mock, spyOn } from 'bun:test';
 import { logger } from '../../src/utils/logger.js';
 
+// ModeManager mock returns a mode with SENTINEL placeholders so tests can
+// assert that SDKAgent.runFreshSummarize threads the mode through to
+// buildFreshSummaryPrompt. If the wiring is missing, these sentinels will be
+// absent from capturedPrompts.
+const MODE_REQUEST_SENTINEL = '[SDKAGENT_INTEGRATION_REQUEST_PLACEHOLDER]';
+const MODE_SUMMARY_INSTR_SENTINEL = 'SDKAGENT_INTEGRATION_SUMMARY_INSTRUCTION';
 mock.module('../../src/services/domain/ModeManager.js', () => ({
   ModeManager: {
     getInstance: () => ({
       getActiveMode: () => ({
         name: 'code',
+        description: 'test',
+        version: '1.0.0',
         observation_types: [{ id: 'discovery' }, { id: 'feature' }],
+        observation_concepts: [],
+        prompts: {
+          system_identity: '',
+          spatial_awareness: '',
+          observer_role: '',
+          recording_focus: '',
+          skip_guidance: '',
+          type_guidance: '',
+          concept_guidance: '',
+          field_guidance: '',
+          output_format_header: '',
+          format_examples: '',
+          footer: '',
+          xml_title_placeholder: '',
+          xml_subtitle_placeholder: '',
+          xml_fact_placeholder: '',
+          xml_narrative_placeholder: '',
+          xml_concept_placeholder: '',
+          xml_file_placeholder: '',
+          xml_summary_request_placeholder: MODE_REQUEST_SENTINEL,
+          xml_summary_investigated_placeholder: '[SDKAGENT_INTEGRATION_INVESTIGATED_PLACEHOLDER]',
+          xml_summary_learned_placeholder: '[SDKAGENT_INTEGRATION_LEARNED_PLACEHOLDER]',
+          xml_summary_completed_placeholder: '[SDKAGENT_INTEGRATION_COMPLETED_PLACEHOLDER]',
+          xml_summary_next_steps_placeholder: '[SDKAGENT_INTEGRATION_NEXT_STEPS_PLACEHOLDER]',
+          xml_summary_notes_placeholder: '[SDKAGENT_INTEGRATION_NOTES_PLACEHOLDER]',
+          header_memory_start: '',
+          header_memory_continued: '',
+          header_summary_checkpoint: '',
+          continuation_greeting: '',
+          continuation_instruction: '',
+          summary_instruction: MODE_SUMMARY_INSTR_SENTINEL,
+          summary_context_label: '',
+          summary_format_instruction: '',
+          summary_footer: '',
+        },
       }),
       loadMode: () => {},
     }),
+  },
+}));
+
+// Capture prompt text passed into the Agent SDK's query() — this is the
+// boundary where we can observe which userPrompt SDKAgent.runFreshSummarize
+// actually passed through buildFreshSummaryPrompt. The mock yields nothing,
+// so runFreshSummarizeQuery resolves with status='no_text' without network.
+// SDKAgent is the only src runtime user of this module (worker-types imports
+// types only), so the pollution scope is SDKAgent-exercising tests.
+const capturedPrompts: string[] = [];
+mock.module('@anthropic-ai/claude-agent-sdk', () => ({
+  query: ({ prompt }: { prompt: AsyncIterable<unknown> }) => {
+    return (async function* () {
+      for await (const msg of prompt) {
+        const m = msg as { message?: { content?: unknown } } | null;
+        const content = m?.message?.content;
+        if (typeof content === 'string') capturedPrompts.push(content);
+      }
+    })();
   },
 }));
 
@@ -68,6 +130,7 @@ describe('SDKAgent.runFreshSummarize — early-return orchestration', () => {
     dbManager = makeStubDbManager(store, pendingStore);
     sessionManager = new SessionManager(dbManager);
     sdkAgent = new SDKAgent(dbManager, sessionManager);
+    capturedPrompts.length = 0;
   });
 
   afterEach(() => {
@@ -122,5 +185,141 @@ describe('SDKAgent.runFreshSummarize — early-return orchestration', () => {
 
     const result = await sdkAgent.runFreshSummarize(sessionDbId, 'text', undefined);
     expect(result).toBeUndefined();
+  });
+
+  // Regression: prior to this fix, runFreshSummarize passed sessionRow.user_prompt
+  // (the row is INSERTed once at session creation and never UPDATEd per turn) as
+  // the summary's <user_request>. Every summary produced in a multi-turn session
+  // therefore had the same "title" — the session's first prompt. Evidence:
+  // ClaudeMem-ProjIso mem.db session 160 had 7 summaries (prompt_number 3-9) all
+  // displaying "检查远端的更新，远端应该更新了很多内容" as their request, despite
+  // each turn being about unrelated work. See fixed-bugs.md § "Summary request
+  // field derived from stale session-row user_prompt".
+  it('uses in-memory session.userPrompt (current turn) instead of stale sessionRow.user_prompt', async () => {
+    const sessionDbId = store.createSDKSession(
+      'cs-turn',
+      'test-project',
+      'FIRST prompt that created the session',
+    );
+    store.ensureMemorySessionIdRegistered(sessionDbId, 'mem-turn');
+
+    // Seed one observation so runFreshSummarize doesn't early-return on
+    // missing memory_session_id and so the prompt has a concrete <observations>
+    // block to render.
+    store.storeObservation(
+      'mem-turn',
+      'test-project',
+      {
+        type: 'discovery',
+        title: 'noop',
+        subtitle: null,
+        narrative: 'noop narrative',
+        text: null,
+        facts: [],
+        concepts: [],
+        files_read: [],
+        files_modified: [],
+      },
+      null,
+      0,
+    );
+
+    // Place an in-memory session with a DIFFERENT (current-turn) userPrompt —
+    // this is what SessionManager.initializeSession does on each new prompt
+    // cycle (see SessionManager.ts line ~202: session.userPrompt = currentUserPrompt).
+    sessionManager.initializeSession(
+      sessionDbId,
+      'CURRENT-TURN prompt that is totally different',
+      7,
+      undefined,
+    );
+
+    await sdkAgent.runFreshSummarize(sessionDbId, 'assistant reply text', undefined);
+
+    // Exactly one prompt is yielded per fresh summarize (single-turn query).
+    expect(capturedPrompts).toHaveLength(1);
+    const prompt = capturedPrompts[0]!;
+
+    // The fix: the prompt's <user_request> block must reflect the current turn,
+    // not the session's first prompt stored in sdk_sessions.user_prompt.
+    expect(prompt).toContain('CURRENT-TURN prompt that is totally different');
+    expect(prompt).not.toContain('FIRST prompt that created the session');
+  });
+
+  // Mode threading: SDKAgent.runFreshSummarize must load the active mode via
+  // ModeManager and pass it through to runFreshSummarizeQuery so the fresh
+  // prompt uses mode.prompts.xml_summary_*_placeholder. Without this wire,
+  // the prompt falls back to the hardcoded "short original request phrase"
+  // instructions and the model echoes the user prompt instead of
+  // synthesizing a work-subject title (Apr-8-era behavior lost in the
+  // 2026-04-19 fresh-query refactor).
+  it('threads mode.prompts.xml_summary_*_placeholder through to the built prompt', async () => {
+    const sessionDbId = store.createSDKSession('cs-mode', 'test-project', 'session-first-prompt');
+    store.ensureMemorySessionIdRegistered(sessionDbId, 'mem-mode');
+    store.storeObservation(
+      'mem-mode',
+      'test-project',
+      {
+        type: 'discovery',
+        title: 'noop',
+        subtitle: null,
+        narrative: 'noop',
+        text: null,
+        facts: [],
+        concepts: [],
+        files_read: [],
+        files_modified: [],
+      },
+      null,
+      0,
+    );
+    sessionManager.initializeSession(sessionDbId, 'current-turn prompt', 2, undefined);
+
+    await sdkAgent.runFreshSummarize(sessionDbId, 'assistant reply', undefined);
+
+    expect(capturedPrompts).toHaveLength(1);
+    const prompt = capturedPrompts[0]!;
+    // Mode sentinels must appear — proves SDKAgent pulled mode and passed it.
+    expect(prompt).toContain(MODE_REQUEST_SENTINEL);
+    expect(prompt).toContain(MODE_SUMMARY_INSTR_SENTINEL);
+    // Hardcoded fallback strings must be gone.
+    expect(prompt).not.toContain('short original request phrase');
+  });
+
+  // Fallback pin: when the in-memory session was evicted (worker restart → pending
+  // replay), runFreshSummarize should still produce a prompt rather than an empty
+  // <user_request>. The stale DB value is worse than useless for display, but at
+  // least it's non-empty context for the model to ground off of.
+  it('falls back to sessionRow.user_prompt when no in-memory session exists', async () => {
+    const sessionDbId = store.createSDKSession(
+      'cs-nomem',
+      'test-project',
+      'DB-only prompt (session was evicted from memory)',
+    );
+    store.ensureMemorySessionIdRegistered(sessionDbId, 'mem-nomem');
+    store.storeObservation(
+      'mem-nomem',
+      'test-project',
+      {
+        type: 'discovery',
+        title: 'noop',
+        subtitle: null,
+        narrative: 'noop',
+        text: null,
+        facts: [],
+        concepts: [],
+        files_read: [],
+        files_modified: [],
+      },
+      null,
+      0,
+    );
+    // Intentionally do NOT call sessionManager.initializeSession — the session
+    // exists in DB but not in the in-memory map.
+
+    await sdkAgent.runFreshSummarize(sessionDbId, 'assistant reply', undefined);
+
+    expect(capturedPrompts).toHaveLength(1);
+    expect(capturedPrompts[0]!).toContain('DB-only prompt (session was evicted from memory)');
   });
 });
