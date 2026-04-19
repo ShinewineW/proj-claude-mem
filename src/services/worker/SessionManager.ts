@@ -151,7 +151,7 @@ export class SessionManager {
     if (key && (this.freshSummarizeInFlight.get(key) ?? 0) > 0) return true;
     try {
       const pendingStore = this.getPendingStore(dbPath);
-      return this.hasPendingSummarize(sessionDbId, session.dbPath);
+      return pendingStore.hasPendingSummarize(sessionDbId);
     } catch {
       return false;
     }
