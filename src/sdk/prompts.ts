@@ -209,48 +209,12 @@ Output 0 or more observations — skip items that are not noteworthy.\n\n`;
   return { prompt, truncatedFields: totalTruncatedFields };
 }
 
-/**
- * Build prompt to generate progress summary
- */
-export function buildSummaryPrompt(
-  session: SDKSession,
-  mode: ModeConfig,
-): string {
-  const lastAssistantMessage =
-    session.last_assistant_message ||
-    (() => {
-      logger.error(
-        "SDK",
-        "Missing last_assistant_message in session for summary prompt",
-        {
-          sessionId: session.id,
-        },
-      );
-      return "";
-    })();
-
-  return `--- MODE SWITCH: PROGRESS SUMMARY ---
-Do NOT output <observation> tags. This is a summary request, not an observation request.
-Your response MUST use <summary> tags ONLY. Any <observation> output will be discarded.
-
-${mode.prompts.header_summary_checkpoint}
-${mode.prompts.summary_instruction}
-
-${mode.prompts.summary_context_label}
-${lastAssistantMessage}
-
-${mode.prompts.summary_format_instruction}
-<summary>
-  <request>${mode.prompts.xml_summary_request_placeholder}</request>
-  <investigated>${mode.prompts.xml_summary_investigated_placeholder}</investigated>
-  <learned>${mode.prompts.xml_summary_learned_placeholder}</learned>
-  <completed>${mode.prompts.xml_summary_completed_placeholder}</completed>
-  <next_steps>${mode.prompts.xml_summary_next_steps_placeholder}</next_steps>
-  <notes>${mode.prompts.xml_summary_notes_placeholder}</notes>
-</summary>
-
-${mode.prompts.summary_footer}`;
-}
+// buildSummaryPrompt (observer-session mid-conversation "MODE SWITCH" prompt)
+// was removed along with the observer-session summarize path in the
+// fresh-query refactor. Summaries run as a one-shot via
+// buildFreshSummaryPrompt (self-contained, no observer conditioning).
+// Do not reintroduce — see attn_sink/0sum-investigation/NOTES.md for why
+// the mid-session mode-switch was overridden by observer priming.
 
 /**
  * Build prompt for continuation of existing session

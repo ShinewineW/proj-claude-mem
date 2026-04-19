@@ -112,8 +112,9 @@ describe('fresh-summarize architectural pins', () => {
 
     it('rejects prose responses with status=parse_failed (no silent "success")', () => {
       // Guard: if someone changes the no-summary path to e.g. wrap prose in
-      // a synthesized summary, we'll catch it here.
-      expect(src).toContain("status: 'parse_failed'");
+      // a synthesized summary, we'll catch it here. The literal 'parse_failed'
+      // must appear as a status value somewhere in the module.
+      expect(src).toMatch(/['"]parse_failed['"]/);
     });
   });
 
@@ -143,6 +144,35 @@ describe('fresh-summarize architectural pins', () => {
         ?.split('export function ')[0] ?? '';
       expect(fn).not.toContain('observer_role');
       expect(fn).not.toContain('recording_focus');
+    });
+
+    it('does NOT re-export buildSummaryPrompt (legacy observer-session prompt)', () => {
+      // buildSummaryPrompt was the mid-session "--- MODE SWITCH ---" prompt
+      // that Claude's observer conditioning overrode. Removed in the
+      // fresh-query refactor. Re-introducing it means someone reverted the
+      // fix — fail loudly.
+      expect(src).not.toMatch(/export\s+function\s+buildSummaryPrompt\b/);
+    });
+  });
+
+  describe('ResponseProcessor dead-code guards', () => {
+    const src = read('src/services/worker/agents/ResponseProcessor.ts');
+
+    it('does NOT branch on currentSDKMessageKind === summarize (dead since fresh-path refactor)', () => {
+      // After the fresh-query refactor the observer generator never yields
+      // a summarize prompt, so the "kind" is never set to 'summarize'. Any
+      // code branching on this is either dead weight or — worse — an
+      // attempt to re-wire the observer session for summaries.
+      // (Comments mentioning the phrase are fine; actual branch predicates
+      // are not.)
+      expect(src).not.toMatch(/if\s*\(\s*!summaryForStore\s*&&\s*session\.currentSDKMessageKind\s*===\s*['"]summarize['"]/);
+    });
+
+    it('does NOT contain the legacy Case 1 salvage log string', () => {
+      // "SALVAGED summary from N observation(s)" was the Case 1 salvage
+      // log message. Its absence is a canary for the whole branch being
+      // gone.
+      expect(src).not.toContain('SALVAGED summary from');
     });
   });
 });

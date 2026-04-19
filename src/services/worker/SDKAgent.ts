@@ -17,7 +17,6 @@ import { logger } from "../../utils/logger.js";
 import {
   buildInitPrompt,
   buildBatchObservationPrompt,
-  buildSummaryPrompt,
   buildContinuationPrompt,
   buildSessionHistorySummary,
   type Observation,

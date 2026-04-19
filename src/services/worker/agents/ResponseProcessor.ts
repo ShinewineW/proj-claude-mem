@@ -99,34 +99,13 @@ export async function processAgentResponse(
   // Convert nullable fields to empty strings for storeSummary (if summary exists)
   let summaryForStore = normalizeSummaryForStorage(summary);
 
-  // Salvage: When summary parse fails for a summarize response, synthesize
-  // from <observation> tags if the model emitted any (Case 1 — prompt
-  // conditioning leakage, upstream #1312).
-  //
-  // Case 2 (raw text → summary) was deliberately removed: empirically the
-  // "text" Claude produced in that branch was observer-mode meta-commentary
-  // ("I'm observing... I'll wait for actual work...") which poisoned
-  // session_summaries. Upstream v12.1.3 reached the same conclusion —
-  // missing a summary is preferable to a fake one with poorly-mapped fields.
-  // Truly empty responses fall through to the pre-queue salvage path on the
-  // next turn, which synthesizes from DB observations with proper field
-  // mapping (summarize-salvage.ts).
-  if (!summaryForStore && session.currentSDKMessageKind === 'summarize' && observations.length > 0) {
-    const primary = observations[0];
-    summaryForStore = {
-      request: primary.title || `Session observations (${observations.length} items)`,
-      investigated: primary.narrative || primary.facts?.join('; ') || '',
-      learned: primary.facts?.join('; ') || '',
-      completed: primary.type === 'feature' || primary.type === 'bugfix' ? (primary.title || '') : '',
-      next_steps: '',
-      notes: `[Salvaged from ${observations.length} observation(s)]`,
-    };
-    logger.warn('PARSER', `SALVAGED summary from ${observations.length} observation(s) — AI returned <observation> instead of <summary>`, {
-      sessionId: session.sessionDbId,
-      agentName,
-      titles: observations.map(o => o.title).filter(Boolean).slice(0, 3),
-    });
-  }
+  // Case 1 / Case 2 salvage branches used to live here, guarded by
+  // currentSDKMessageKind === 'summarize'. After the fresh-query refactor
+  // the observer generator never yields a summarize prompt, so the kind is
+  // never set — both branches became unreachable and are removed. Summaries
+  // run on a separate subprocess (SDKAgent.runFreshSummarize) and parse via
+  // the same parseSummary. Empty-response cases fall through to pre-queue
+  // salvage (summarize-salvage.ts) on the next turn.
 
   // Get session store for atomic transaction (use per-session dbPath if available)
   const sessionStore = dbManager.getSessionStore(session.dbPath);
