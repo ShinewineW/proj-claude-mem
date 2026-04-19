@@ -43,6 +43,8 @@ const EXCLUDED_PATTERNS = [
   /pool-cooldown-utils\.ts$/,  // Pure predicates — isPoolTimeoutError, shouldEnterCooldown
   /backpressure\.ts$/,  // Pure functions — backpressure level calculation and filter logic
   /generator-action\.ts$/,  // Pure functions — decision logic, no I/O
+  /spawn-args-filter\.ts$/,  // Pure function — filterEmptyFlagPairs, fully unit-testable
+  /fresh-summarize-store\.ts$/,  // Pure atomic store wrapper — caller (SDKAgent.runFreshSummarize) handles logging
 ];
 
 // Files that should always use logger (core business logic)
