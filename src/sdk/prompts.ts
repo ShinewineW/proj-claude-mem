@@ -342,6 +342,96 @@ ${mode.prompts.header_memory_continued}`;
 }
 
 /**
+ * Input shape for buildFreshSummaryPrompt.
+ * Observations come from the DB — facts is an already-parsed string[].
+ */
+export interface FreshSummaryInput {
+  userPrompt: string;
+  lastAssistantMessage: string | null | undefined;
+  observations: Array<{
+    type: string;
+    title: string | null;
+    narrative: string | null;
+    facts: string[];
+  }>;
+  maxFieldChars?: number;
+}
+
+function escapeXml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
+
+/**
+ * Build a self-contained prompt for the fresh-query summarize path.
+ *
+ * Context:
+ *   The memory agent's long-lived SDK session is primed heavily as an observer
+ *   (init + many observation prompts). A mid-conversation mode-switch to
+ *   summary is empirically overridden by that conditioning — Claude keeps
+ *   producing observer prose instead of <summary> XML.
+ *
+ *   This prompt is consumed by a FRESH query() call with NO resume, so the
+ *   model sees only this single user message. It must therefore be fully
+ *   self-contained: no observer role, no <observation> template, no "this is
+ *   an observation" framing — just the data needed to produce one <summary>.
+ *
+ * Ordering: observations render in the order given. DB callers should pass
+ * them in chronological order (oldest first) if chronology matters.
+ */
+export function buildFreshSummaryPrompt(input: FreshSummaryInput): string {
+  const maxChars = input.maxFieldChars ?? 2000;
+  const N = input.observations.length;
+
+  const observationBlocks = input.observations.map((obs, i) => {
+    const type = escapeXml(obs.type || 'unknown');
+    const title = escapeXml(obs.title || '(untitled)');
+    const narrativeRaw = obs.narrative || '';
+    const factsRaw = (obs.facts || []).join('; ');
+    const narrative = escapeXml(truncateField(narrativeRaw, maxChars).text);
+    const facts = escapeXml(truncateField(factsRaw, maxChars).text);
+    return `  <obs index="${i + 1}" type="${type}">
+    <title>${title}</title>
+    <narrative>${narrative}</narrative>
+    <facts>${facts}</facts>
+  </obs>`;
+  }).join('\n');
+
+  const userRequest = escapeXml(input.userPrompt || '');
+  const lastMsgRaw = (input.lastAssistantMessage ?? '').toString();
+  const lastMsgTrimmed = lastMsgRaw.trim();
+  const lastAssistantBlock = lastMsgTrimmed
+    ? `  <last_assistant_message>${escapeXml(truncateField(lastMsgRaw, maxChars).text)}</last_assistant_message>`
+    : '';
+
+  return `You are a session summarizer. Produce exactly one <summary> XML block based on the data below. Do not output observation tags. Do not output any tag other than <summary>. Do not output prose. Do not explain — output only the XML.
+
+<session>
+  <user_request>${userRequest}</user_request>
+${lastAssistantBlock}
+</session>
+
+<observations count="${N}">
+${observationBlocks}
+</observations>
+
+Output exactly one <summary> block using this schema:
+
+<summary>
+  <request>short original request phrase</request>
+  <investigated>bullets or sentences of what was investigated</investigated>
+  <learned>bullets of key facts discovered</learned>
+  <completed>bullets of what was completed (features, fixes)</completed>
+  <next_steps>bullets of what comes next, or leave empty</next_steps>
+  <notes>optional short note, or leave empty</notes>
+</summary>`;
+}
+
+/**
  * Build a compact summary of prior observations for injection after forceInit.
  * Called when the SDK session is reset due to context overflow — provides
  * continuity by listing what was observed before the reset.
