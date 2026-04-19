@@ -182,14 +182,38 @@ export async function runFreshSummarizeQuery(
 
   const durationMs = Date.now() - startedAt;
   const trimmed = collectedText.trim();
-  if (trimmed.length === 0) {
-    return { status: 'no_text', durationMs, obsCount, inputTokens, outputTokens };
+  const parsed = trimmed.length > 0 ? parseSummary(trimmed) : null;
+
+  const status: FreshSummarizeStatus = parsed
+    ? 'success'
+    : trimmed.length === 0
+      ? 'no_text'
+      : 'parse_failed';
+
+  // Emit SDK_USAGE line so the daily aggregator (grep on usageChannel) picks
+  // up fresh-path cost. Channel distinguishes from the observer session's
+  // claude_sdk_main channel. Only emit when at least one assistant message
+  // was seen (i.e. tokens may have been consumed); pure-throw cases in the
+  // catch block above skip this path intentionally so aggregators don't see
+  // zero-token "free success" rows.
+  if (inputTokens !== undefined || outputTokens !== undefined) {
+    logger.info('SDK', 'SDK_USAGE', {
+      usageChannel: 'claude_sdk_fresh_summarize',
+      memorySessionId: input.memorySessionId,
+      status,
+      inputTokens: inputTokens ?? 0,
+      outputTokens: outputTokens ?? 0,
+      durationMs,
+      obsCount,
+    });
   }
 
-  const parsed = parseSummary(trimmed);
-  if (!parsed) {
+  if (status === 'no_text') {
+    return { status, durationMs, obsCount, inputTokens, outputTokens };
+  }
+  if (status === 'parse_failed') {
     return {
-      status: 'parse_failed',
+      status,
       rawText: collectedText,
       durationMs,
       obsCount,
@@ -197,10 +221,9 @@ export async function runFreshSummarizeQuery(
       outputTokens,
     };
   }
-
   return {
-    status: 'success',
-    summary: parsed,
+    status,
+    summary: parsed!,
     rawText: collectedText,
     durationMs,
     obsCount,

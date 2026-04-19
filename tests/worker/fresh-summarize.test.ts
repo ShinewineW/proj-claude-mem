@@ -11,7 +11,8 @@
  * spawn a real Claude subprocess.
  */
 
-import { describe, it, expect, mock } from 'bun:test';
+import { describe, it, expect, mock, spyOn } from 'bun:test';
+import { logger } from '../../src/utils/logger.js';
 
 mock.module('../../src/services/domain/ModeManager.js', () => ({
   ModeManager: {
@@ -297,5 +298,90 @@ describe('runFreshSummarizeQuery', () => {
     expect(result.status).toBe('error');
     expect(result.error).toBeDefined();
     expect(result.error!.message).toContain('network exploded');
+  });
+
+  describe('SDK_USAGE telemetry emission', () => {
+    // Find the SDK_USAGE record that logger.info was called with. Returns
+    // [category, message, context] or null.
+    function findSdkUsageCall(spy: ReturnType<typeof spyOn>): any[] | null {
+      for (const call of spy.mock.calls) {
+        if (call[0] === 'SDK' && call[1] === 'SDK_USAGE') return call;
+      }
+      return null;
+    }
+
+    it('emits one SDK_USAGE log with channel=claude_sdk_fresh_summarize on success', async () => {
+      const spy = spyOn(logger, 'info').mockImplementation(() => {});
+      const { fn } = makeFakeQuery([
+        {
+          type: 'assistant',
+          session_id: 's1',
+          message: {
+            content: [{ type: 'text', text: VALID_SUMMARY_XML }],
+            usage: { input_tokens: 123, output_tokens: 45 },
+          },
+        },
+        { type: 'result', session_id: 's1', stop_reason: 'end_turn' },
+      ]);
+      const deps = makeDeps({ query: fn as any });
+      const result = await runFreshSummarizeQuery(deps, baseInput);
+
+      const call = findSdkUsageCall(spy);
+      spy.mockRestore();
+      expect(result.status).toBe('success');
+      expect(call).not.toBeNull();
+      const ctx = call![2];
+      expect(ctx.usageChannel).toBe('claude_sdk_fresh_summarize');
+      expect(ctx.inputTokens).toBe(123);
+      expect(ctx.outputTokens).toBe(45);
+      expect(ctx.status).toBe('success');
+      expect(ctx.memorySessionId).toBe(baseInput.memorySessionId);
+      expect(typeof ctx.durationMs).toBe('number');
+      expect(ctx.obsCount).toBe(0);
+    });
+
+    it('emits SDK_USAGE even on parse_failed (so cost of failed attempts is visible)', async () => {
+      const spy = spyOn(logger, 'info').mockImplementation(() => {});
+      const { fn } = makeFakeQuery([
+        {
+          type: 'assistant',
+          session_id: 's1',
+          message: {
+            content: [{ type: 'text', text: "I'm observing, nothing yet" }],
+            usage: { input_tokens: 50, output_tokens: 10 },
+          },
+        },
+        { type: 'result', session_id: 's1', stop_reason: 'end_turn' },
+      ]);
+      const deps = makeDeps({ query: fn as any });
+      await runFreshSummarizeQuery(deps, baseInput);
+
+      const call = findSdkUsageCall(spy);
+      spy.mockRestore();
+      expect(call).not.toBeNull();
+      const ctx = call![2];
+      expect(ctx.usageChannel).toBe('claude_sdk_fresh_summarize');
+      expect(ctx.status).toBe('parse_failed');
+      expect(ctx.inputTokens).toBe(50);
+      expect(ctx.outputTokens).toBe(10);
+    });
+
+    it('does NOT emit SDK_USAGE when the query throws (no tokens consumed)', async () => {
+      const spy = spyOn(logger, 'info').mockImplementation(() => {});
+      const badQuery = (_args: any) => {
+        return (async function* () {
+          throw new Error('network exploded');
+        })();
+      };
+      const deps = makeDeps({ query: badQuery as any });
+      await runFreshSummarizeQuery(deps, baseInput);
+
+      const call = findSdkUsageCall(spy);
+      spy.mockRestore();
+      // On throw-before-any-assistant, Claude may not have been reached at
+      // all; skip the usage line so aggregators aren't confused by zero-token
+      // rows that look like free successes.
+      expect(call).toBeNull();
+    });
   });
 });
