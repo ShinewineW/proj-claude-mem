@@ -99,52 +99,33 @@ export async function processAgentResponse(
   // Convert nullable fields to empty strings for storeSummary (if summary exists)
   let summaryForStore = normalizeSummaryForStorage(summary);
 
-  // Salvage: When summary parse fails for a summarize response, synthesize from
-  // whatever the model actually emitted. Two failure modes:
-  //   1. AI returns <observation> instead of <summary> (prompt conditioning leakage, upstream #1312)
-  //   2. AI returns plain text without any XML tags (format confusion)
+  // Salvage: When summary parse fails for a summarize response, synthesize
+  // from <observation> tags if the model emitted any (Case 1 — prompt
+  // conditioning leakage, upstream #1312).
   //
-  // A third branch used to fire when response was entirely empty (DB-fallback
-  // from recent observations), but it misfired on the FIRST streaming message
-  // Claude SDK emits — an empty thinking/tool-use placeholder — before the
-  // real summary response arrived. That short-circuit confirmed the message,
-  // triggered drain-complete, and SIGTERM'd Claude before it could answer.
-  // True empty-response cases (Claude hung / context overflow) are handled by
-  // the 60s drain window + 5min watchdog + pre-queue salvage on the next turn.
-  if (!summaryForStore && session.currentSDKMessageKind === 'summarize') {
-    if (observations.length > 0) {
-      // Case 1: AI returned <observation> instead of <summary>
-      const primary = observations[0];
-      summaryForStore = {
-        request: primary.title || `Session observations (${observations.length} items)`,
-        investigated: primary.narrative || primary.facts?.join('; ') || '',
-        learned: primary.facts?.join('; ') || '',
-        completed: primary.type === 'feature' || primary.type === 'bugfix' ? (primary.title || '') : '',
-        next_steps: '',
-        notes: `[Salvaged from ${observations.length} observation(s)]`,
-      };
-      logger.warn('PARSER', `SALVAGED summary from ${observations.length} observation(s) — AI returned <observation> instead of <summary>`, {
-        sessionId: session.sessionDbId,
-        agentName,
-        titles: observations.map(o => o.title).filter(Boolean).slice(0, 3),
-      });
-    } else if (text && text.trim().length > 0) {
-      // Case 2: AI returned plain text without XML tags — extract from raw response
-      const truncatedText = text.length > 2000 ? text.substring(0, 2000) + '...' : text;
-      summaryForStore = {
-        request: `Session summary (${session.project || 'unknown'})`,
-        investigated: '',
-        learned: truncatedText,
-        completed: '',
-        next_steps: '',
-        notes: '[Salvaged from raw text — AI did not use XML format]',
-      };
-      logger.warn('PARSER', `SALVAGED summary from raw text (${text.length} chars) — AI returned no XML tags`, {
-        sessionId: session.sessionDbId,
-        agentName,
-        textPreview: text.substring(0, 100),
-      });
-    }
+  // Case 2 (raw text → summary) was deliberately removed: empirically the
+  // "text" Claude produced in that branch was observer-mode meta-commentary
+  // ("I'm observing... I'll wait for actual work...") which poisoned
+  // session_summaries. Upstream v12.1.3 reached the same conclusion —
+  // missing a summary is preferable to a fake one with poorly-mapped fields.
+  // Truly empty responses fall through to the pre-queue salvage path on the
+  // next turn, which synthesizes from DB observations with proper field
+  // mapping (summarize-salvage.ts).
+  if (!summaryForStore && session.currentSDKMessageKind === 'summarize' && observations.length > 0) {
+    const primary = observations[0];
+    summaryForStore = {
+      request: primary.title || `Session observations (${observations.length} items)`,
+      investigated: primary.narrative || primary.facts?.join('; ') || '',
+      learned: primary.facts?.join('; ') || '',
+      completed: primary.type === 'feature' || primary.type === 'bugfix' ? (primary.title || '') : '',
+      next_steps: '',
+      notes: `[Salvaged from ${observations.length} observation(s)]`,
+    };
+    logger.warn('PARSER', `SALVAGED summary from ${observations.length} observation(s) — AI returned <observation> instead of <summary>`, {
+      sessionId: session.sessionDbId,
+      agentName,
+      titles: observations.map(o => o.title).filter(Boolean).slice(0, 3),
+    });
   }
 
   // Get session store for atomic transaction (use per-session dbPath if available)
