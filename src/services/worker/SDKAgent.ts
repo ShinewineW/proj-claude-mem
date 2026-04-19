@@ -799,6 +799,11 @@ export class SDKAgent {
     });
 
     if (result.status !== "success" || !result.summary) {
+      // Policy: on any non-success outcome we accept permanent loss of
+      // THIS turn's summary. No retry, no fallback synthesis here —
+      // pre-queue salvage will catch the next summarize IF new obs
+      // arrive. See attn_sink/summarize-fresh-query/RESULT.md
+      // ("Error-recovery policy").
       logger.warn(
         "SDK",
         `Fresh summarize did not produce a valid <summary> — status=${result.status}`,
