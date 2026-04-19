@@ -364,15 +364,25 @@ export function createPidCapturingSpawn(sessionDbId: number, dbPath?: string) {
     // On Windows, use cmd.exe wrapper for .cmd files to properly handle paths with spaces
     const useCmdWrapper = process.platform === 'win32' && spawnOptions.command.endsWith('.cmd');
 
+    // Strip empty-string args (ported from upstream 3d92684, v12.1.6).
+    // Bun's spawn() silently drops empty strings from argv, which makes a
+    // subsequent flag get consumed as the dropped flag's value. The Agent
+    // SDK emits `["--setting-sources", ""]` whenever settingSources defaults
+    // to [] (since []).join(",") === ""). Without this filter, on Claude
+    // Code 2.1.109+ the SDK subprocess crashes with:
+    //   Error processing --setting-sources: Invalid setting source: --permission-mode
+    // causing 100% observation/summary failure.
+    const args = spawnOptions.args.filter(arg => arg !== '');
+
     const child = useCmdWrapper
-      ? spawn('cmd.exe', ['/d', '/c', spawnOptions.command, ...spawnOptions.args], {
+      ? spawn('cmd.exe', ['/d', '/c', spawnOptions.command, ...args], {
           cwd: spawnOptions.cwd,
           env: spawnOptions.env,
           stdio: ['pipe', 'pipe', 'pipe'],
           signal: spawnOptions.signal,
           windowsHide: true
         })
-      : spawn(spawnOptions.command, spawnOptions.args, {
+      : spawn(spawnOptions.command, args, {
           cwd: spawnOptions.cwd,
           env: spawnOptions.env,
           stdio: ['pipe', 'pipe', 'pipe'],
