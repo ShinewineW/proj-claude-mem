@@ -829,7 +829,7 @@ export class SDKAgent {
         sessionRow.memory_session_id,
         sessionRow.project,
         summaryPayload,
-        sessionRow.last_prompt_number ?? undefined,
+        session?.lastPromptNumber ?? undefined,
         0,
       );
     } catch (err) {
@@ -858,7 +858,7 @@ export class SDKAgent {
       next_steps: summaryPayload.next_steps,
       notes: summaryPayload.notes,
       project: sessionRow.project,
-      prompt_number: sessionRow.last_prompt_number ?? null,
+      prompt_number: session?.lastPromptNumber ?? null,
       created_at_epoch: stored.createdAtEpoch,
     });
   }
