@@ -41,6 +41,15 @@ export class SessionManager {
   private onSessionDeletedCallback?: () => void;
   private onStartGeneratorCallback?: (session: ActiveSession, source: string) => void;
   private onSalvagedSummaryCallback?: (payload: SalvageBroadcastPayload) => void;
+  private onRunFreshSummarizeCallback?: (
+    sessionDbId: number,
+    lastAssistantMessage: string | undefined,
+    dbPath: string | undefined,
+  ) => Promise<void>;
+  // Tracks in-flight fresh-query summarize runs per session. Drain window uses
+  // this via hasPendingSummarize() so deleteSession can wait for a fresh
+  // summarize before terminating the subprocess.
+  private freshSummarizeInFlight: Map<string, number> = new Map();
 
   constructor(dbManager: DatabaseManager) {
     this.dbManager = dbManager;
@@ -108,6 +117,44 @@ export class SessionManager {
    */
   setOnSalvagedSummary(callback: (payload: SalvageBroadcastPayload) => void): void {
     this.onSalvagedSummaryCallback = callback;
+  }
+
+  /**
+   * Install the fresh-query summarize handler. Wired in by WorkerService to
+   * route summarize requests through runFreshSummarizeQuery instead of the
+   * observer session (whose conditioning poisons the summary response —
+   * see attn_sink/0sum-investigation/NOTES.md).
+   *
+   * The handler is expected to run the fresh query, persist the result, and
+   * broadcast SSE. It may throw — queueSummarize still decrements the
+   * in-flight counter in that case so drain-window doesn't deadlock.
+   */
+  setOnRunFreshSummarize(
+    callback: (
+      sessionDbId: number,
+      lastAssistantMessage: string | undefined,
+      dbPath: string | undefined,
+    ) => Promise<void>,
+  ): void {
+    this.onRunFreshSummarizeCallback = callback;
+  }
+
+  /**
+   * True when there is an in-flight fresh-query summarize OR an enqueued
+   * pending_messages summarize for this session. deleteSession() polls this
+   * to drain before aborting the observer subprocess.
+   */
+  hasPendingSummarize(sessionDbId: number, dbPath?: string): boolean {
+    const key = dbPath !== undefined
+      ? this.sessionKey(sessionDbId, dbPath)
+      : this.findSessionKey(sessionDbId);
+    if (key && (this.freshSummarizeInFlight.get(key) ?? 0) > 0) return true;
+    try {
+      const pendingStore = this.getPendingStore(dbPath);
+      return this.hasPendingSummarize(sessionDbId, session.dbPath);
+    } catch {
+      return false;
+    }
   }
 
   /**
@@ -404,28 +451,47 @@ export class SessionManager {
       return salvage;
     }
 
-    // CRITICAL: Persist to database FIRST
-    const message: PendingMessage = {
-      type: 'summarize',
-      last_assistant_message: lastAssistantMessage
-    };
-
-    try {
-      const pendingStore = this.getPendingStore(session.dbPath);
-      const messageId = pendingStore.enqueue(sessionDbId, session.contentSessionId, message);
-      const queueDepth = pendingStore.getPendingCount(sessionDbId);
-      logger.info('QUEUE', `ENQUEUED | sessionDbId=${sessionDbId} | messageId=${messageId} | type=summarize | depth=${queueDepth}`, {
-        sessionId: sessionDbId
-      });
-    } catch (error) {
-      logger.error('SESSION', 'Failed to persist summarize to DB', {
-        sessionId: sessionDbId
-      }, error);
-      throw error; // Don't continue if we can't persist
+    // Fresh-query summarize path: dispatch to the registered handler instead
+    // of enqueueing a summarize message into pending_messages. The observer
+    // session is primed too strongly as an observer for mid-session mode
+    // switches to work — see attn_sink/0sum-investigation/NOTES.md. The
+    // handler runs runFreshSummarizeQuery on a separate subprocess.
+    //
+    // We increment an in-flight counter synchronously so hasPendingSummarize
+    // can report truthy for the drain window before the async callback has
+    // a chance to finish. The decrement happens in .finally() even if the
+    // handler throws, so the counter never leaks.
+    if (this.onRunFreshSummarizeCallback) {
+      const inflightKey = this.sessionKey(sessionDbId, session.dbPath);
+      this.freshSummarizeInFlight.set(
+        inflightKey,
+        (this.freshSummarizeInFlight.get(inflightKey) ?? 0) + 1,
+      );
+      // Snapshot the callback reference so a concurrent unsetter can't null
+      // it between here and the .finally() decrement.
+      const handler = this.onRunFreshSummarizeCallback;
+      handler(sessionDbId, lastAssistantMessage, session.dbPath)
+        .catch((err) => {
+          logger.error(
+            'SESSION',
+            'Fresh summarize handler threw',
+            { sessionDbId },
+            err as Error,
+          );
+        })
+        .finally(() => {
+          const current = this.freshSummarizeInFlight.get(inflightKey) ?? 0;
+          if (current <= 1) this.freshSummarizeInFlight.delete(inflightKey);
+          else this.freshSummarizeInFlight.set(inflightKey, current - 1);
+        });
+    } else {
+      logger.warn(
+        'SESSION',
+        'queueSummarize: no runFreshSummarize callback installed; dropping',
+        { sessionDbId },
+      );
     }
 
-    const emitter = this.sessionQueues.get(key);
-    emitter?.emit('message');
     return { status: 'queued', obsCount: 0 };
   }
 
@@ -460,10 +526,10 @@ export class SessionManager {
     const DRAIN_POLL_INTERVAL_MS = 500;
     try {
       const pendingStore = this.getPendingStore(session.dbPath);
-      if (pendingStore.hasPendingSummarize(sessionDbId)) {
+      if (this.hasPendingSummarize(sessionDbId, session.dbPath)) {
         logger.info('SESSION', 'Waiting for pending summarize to drain before delete', { sessionDbId });
         let waited = 0;
-        while (pendingStore.hasPendingSummarize(sessionDbId) && waited < DRAIN_MAX_WAIT_MS) {
+        while (this.hasPendingSummarize(sessionDbId, session.dbPath) && waited < DRAIN_MAX_WAIT_MS) {
           await new Promise(resolve => setTimeout(resolve, DRAIN_POLL_INTERVAL_MS));
           waited += DRAIN_POLL_INTERVAL_MS;
         }

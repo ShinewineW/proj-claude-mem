@@ -35,7 +35,12 @@ import {
 import type { ActiveSession, SDKUserMessage } from "../worker-types.js";
 import { ModeManager } from "../domain/ModeManager.js";
 import { processAgentResponse } from "./agents/ResponseProcessor.js";
+import { broadcastSummary } from "./agents/ObservationBroadcaster.js";
 import type { WorkerRef } from "./agents/types.js";
+import {
+  runFreshSummarizeQuery,
+  type FreshSummarizeDeps,
+} from "./fresh-summarize.js";
 import {
   createPidCapturingSpawn,
   getProcessBySession,
@@ -688,35 +693,16 @@ export class SDKAgent {
           isSynthetic: true,
         };
       } else if (message.type === "summarize") {
-        const summaryPrompt = buildSummaryPrompt(
-          {
-            id: session.sessionDbId,
-            memory_session_id: session.memorySessionId,
-            project: session.project,
-            user_prompt: session.userPrompt,
-            last_assistant_message: message.last_assistant_message || "",
-          },
-          mode,
+        // Legacy branch — as of the fresh-query refactor, summarize messages
+        // are no longer enqueued into pending_messages (SessionManager
+        // dispatches directly to runFreshSummarizeQuery on a separate
+        // subprocess). Any summarize we still see here is a stale message
+        // from a pre-refactor crash recovery or a rogue replay; log + skip.
+        logger.warn(
+          "SDK",
+          "Dropping legacy summarize from pending_messages — fresh-query path handles this now",
+          { sessionDbId: session.sessionDbId },
         );
-
-        // Add to shared conversation history for provider interop
-        session.conversationHistory.push({
-          role: "user",
-          content: summaryPrompt,
-        });
-        session.currentSDKMessageKind = "summarize";
-        session.currentSDKPromptNumber = session.lastPromptNumber;
-
-        yield {
-          type: "user",
-          message: {
-            role: "user",
-            content: summaryPrompt,
-          },
-          session_id: session.contentSessionId,
-          parent_tool_use_id: null,
-          isSynthetic: true,
-        };
       }
     }
   }
@@ -724,6 +710,158 @@ export class SDKAgent {
   // ============================================================================
   // Configuration Helpers
   // ============================================================================
+
+  /**
+   * Run a one-shot summarize on a fresh Claude SDK subprocess.
+   *
+   * This is the FIX for the observer-conditioning bug documented in
+   * attn_sink/0sum-investigation/NOTES.md. The normal observer session
+   * builds up so much "You are observer, only output <observation>"
+   * priming that mid-session mode-switch to summary is ignored — Claude
+   * keeps emitting observer prose. Running on a fresh query() with no
+   * resume sidesteps the conditioning entirely.
+   *
+   * On success: persists via SessionStore.storeSummary and broadcasts the
+   * new_summary SSE event.
+   * On any non-success: logs and returns; pre-queue salvage will catch
+   * subsequent cycles.
+   */
+  async runFreshSummarize(
+    sessionDbId: number,
+    lastAssistantMessage: string | undefined,
+    dbPath: string | undefined,
+    worker?: WorkerRef,
+  ): Promise<void> {
+    const sessionStore = this.dbManager.getSessionStore(dbPath);
+    const sessionRow = sessionStore.getSessionById(sessionDbId);
+    if (!sessionRow?.memory_session_id) {
+      logger.info(
+        "SDK",
+        "Skipping fresh summarize — session has no memory_session_id yet",
+        { sessionDbId },
+      );
+      return;
+    }
+
+    const session = this.sessionManager.getSession(sessionDbId, dbPath);
+    const abortController = session?.abortController ?? new AbortController();
+
+    const claudePath = this.findClaudeExecutable();
+    const modelId = this.getModelId();
+    const disallowedTools = [
+      "Bash", "Read", "Write", "Edit", "Grep", "Glob",
+      "WebFetch", "WebSearch", "Task", "NotebookEdit",
+      "AskUserQuestion", "TodoWrite",
+    ];
+
+    ensureDir(OBSERVER_SESSIONS_DIR);
+    const isolatedEnv = buildIsolatedEnv();
+
+    const deps: FreshSummarizeDeps = {
+      query: query as unknown as FreshSummarizeDeps["query"],
+      getObservationsForSession: (memSessionId: string) => {
+        // getObservationsForSession already returns decoded facts from DB
+        const rows = sessionStore.getObservationsForSession(memSessionId);
+        return rows.map((r) => {
+          let facts: string[] = [];
+          if (r.facts) {
+            try {
+              const parsed = JSON.parse(r.facts);
+              if (Array.isArray(parsed)) {
+                facts = parsed.filter((f): f is string => typeof f === "string");
+              }
+            } catch {
+              // Malformed facts — fall through to empty
+            }
+          }
+          return {
+            type: r.type,
+            title: r.title,
+            narrative: r.narrative,
+            facts,
+          };
+        });
+      },
+      modelId,
+      disallowedTools,
+      abortController,
+      isolatedEnv,
+      cwd: OBSERVER_SESSIONS_DIR,
+      pathToClaudeCodeExecutable: claudePath,
+      spawnClaudeCodeProcess: createPidCapturingSpawn(sessionDbId, dbPath),
+    };
+
+    const result = await runFreshSummarizeQuery(deps, {
+      memorySessionId: sessionRow.memory_session_id,
+      userPrompt: sessionRow.user_prompt ?? "",
+      lastAssistantMessage,
+    });
+
+    if (result.status !== "success" || !result.summary) {
+      logger.warn(
+        "SDK",
+        `Fresh summarize did not produce a valid <summary> — status=${result.status}`,
+        {
+          sessionDbId,
+          memorySessionId: sessionRow.memory_session_id,
+          obsCount: result.obsCount,
+          durationMs: result.durationMs,
+          inputTokens: result.inputTokens,
+          outputTokens: result.outputTokens,
+          rawTextPreview: result.rawText?.substring(0, 120),
+        },
+      );
+      return;
+    }
+
+    const summaryPayload = {
+      request: result.summary.request ?? "",
+      investigated: result.summary.investigated ?? "",
+      learned: result.summary.learned ?? "",
+      completed: result.summary.completed ?? "",
+      next_steps: result.summary.next_steps ?? "",
+      notes: result.summary.notes,
+    };
+
+    let stored: { id: number; createdAtEpoch: number };
+    try {
+      stored = sessionStore.storeSummary(
+        sessionRow.memory_session_id,
+        sessionRow.project,
+        summaryPayload,
+        sessionRow.last_prompt_number ?? undefined,
+        0,
+      );
+    } catch (err) {
+      logger.error(
+        "SDK",
+        "Fresh summarize storeSummary failed",
+        { sessionDbId },
+        err as Error,
+      );
+      return;
+    }
+
+    logger.info(
+      "SDK",
+      `Fresh summarize SUCCESS | sessionDbId=${sessionDbId} | summaryId=${stored.id} | obsCount=${result.obsCount} | durationMs=${result.durationMs}`,
+      { sessionDbId, summaryId: stored.id },
+    );
+
+    broadcastSummary(worker, {
+      id: stored.id,
+      session_id: sessionRow.content_session_id,
+      request: summaryPayload.request,
+      investigated: summaryPayload.investigated,
+      learned: summaryPayload.learned,
+      completed: summaryPayload.completed,
+      next_steps: summaryPayload.next_steps,
+      notes: summaryPayload.notes,
+      project: sessionRow.project,
+      prompt_number: sessionRow.last_prompt_number ?? null,
+      created_at_epoch: stored.createdAtEpoch,
+    });
+  }
 
   /**
    * Find Claude executable (inline, called once per session)

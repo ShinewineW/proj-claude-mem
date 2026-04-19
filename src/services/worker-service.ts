@@ -252,6 +252,22 @@ export class WorkerService {
       });
     });
 
+    // Route summarize requests through a fresh SDK query() (no resume, no
+    // observer priming). Fixes the bug where Claude emitted observer prose
+    // instead of <summary> XML because the long-lived observer session's
+    // conditioning dominated mid-session mode switches.
+    // See attn_sink/0sum-investigation/NOTES.md.
+    this.sessionManager.setOnRunFreshSummarize(
+      async (sessionDbId, lastAssistantMessage, dbPath) => {
+        await this.sdkAgent.runFreshSummarize(
+          sessionDbId,
+          lastAssistantMessage,
+          dbPath,
+          this,
+        );
+      },
+    );
+
 
     // Initialize MCP client
     // Empty capabilities object: this client only calls tools, doesn't expose any
