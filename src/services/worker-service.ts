@@ -609,6 +609,12 @@ export class WorkerService {
               }
             }
           }
+          // Periodic orphan-summarize cleanup: transitions rows whose owning
+          // session is missing or status='failed' into the failed state.
+          // Completed sessions keep their pending summarize rows (SummaryLane
+          // still drains them). Best-effort; errors already logged per-DB.
+          this.sessionManager.cleanupOrphanedSummarizes(this.getEnabledDbPaths());
+
           // Periodic DB ghost scan: clean ghost sessions + stuck processing messages
           const dbUnreachable = this.sessionManager.cleanupGhostSessionsInDb(this.getEnabledDbPaths());
           for (const { sessionDbId, project, dbPath } of dbUnreachable) {

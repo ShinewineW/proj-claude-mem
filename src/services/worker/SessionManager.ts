@@ -816,6 +816,40 @@ export class SessionManager {
    * Ghost = session is 'active' in DB but absent from in-memory sessions Map.
    * Called from the 2-minute stale reaper interval (worker-service.ts).
    */
+  /**
+   * Periodic scheduler for truly-orphan summarize rows.
+   *
+   * Iterates the caller-supplied set of currently-enabled dbPaths and calls
+   * `PendingMessageStore.markTrulyOrphanedSummarizesFailed` on each. Rows
+   * whose owning session is missing OR has `status='failed'` AND whose
+   * `created_at_epoch` is older than the staleness threshold (5min by default,
+   * enforced inside `markTrulyOrphanedSummarizesFailed`) transition to
+   * `status='failed'`. Completed sessions keep their pending summarize rows —
+   * those are legitimate SummaryLane backlog.
+   *
+   * Per-DB errors are logged and swallowed so one unreachable project doesn't
+   * block the rest of the sweep.
+   *
+   * Returns the total number of rows affected across all dbPaths (for
+   * telemetry).
+   */
+  cleanupOrphanedSummarizes(dbPaths: Set<string>): number {
+    let total = 0;
+    for (const dbPath of dbPaths) {
+      try {
+        const pendingStore = this.getPendingStore(dbPath);
+        const affected = pendingStore.markTrulyOrphanedSummarizesFailed();
+        if (affected > 0) {
+          logger.info('SESSION', `Orphan summarize cleanup: ${affected} row(s) failed`, { dbPath, affected });
+        }
+        total += affected;
+      } catch (err) {
+        logger.warn('SESSION', 'Orphan summarize cleanup: skipped unreachable project', { dbPath }, err as Error);
+      }
+    }
+    return total;
+  }
+
   cleanupGhostSessionsInDb(
     dbPaths: Set<string>,
     existsFn: (path: string) => boolean = fs.existsSync,
