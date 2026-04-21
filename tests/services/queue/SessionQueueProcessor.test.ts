@@ -10,6 +10,8 @@ import type { PendingMessageStore, PersistentPendingMessage } from '../../../src
 function createMockStore(): PendingMessageStore {
   return {
     claimNextMessage: mock(() => null),
+    claimNextObservation: mock(() => null),
+    resetStaleObservationProcessing: mock(() => {}),
     toPendingMessage: mock((msg: PersistentPendingMessage) => ({
       type: msg.message_type,
       tool_name: msg.tool_name || undefined,
@@ -140,7 +142,7 @@ describe('SessionQueueProcessor', () => {
         let callCount = 0;
 
         // Return a message on first call, then null
-        (store.claimNextMessage as any) = mock(() => {
+        (store.claimNextObservation as any) = mock(() => {
           callCount++;
           if (callCount === 1) {
             return createMockMessage({ id: 1 });
@@ -170,7 +172,7 @@ describe('SessionQueueProcessor', () => {
         expect(results).toHaveLength(1);
         expect(results[0]._persistentId).toBe(1);
 
-        // Store's claimNextMessage should have been called at least twice
+        // Store's claimNextObservation should have been called at least twice
         // (once returning message, once returning null)
         expect(callCount).toBeGreaterThanOrEqual(1);
       });
@@ -206,7 +208,7 @@ describe('SessionQueueProcessor', () => {
         const onIdleTimeout = mock(() => {});
 
         // Return null to trigger wait
-        (store.claimNextMessage as any) = mock(() => null);
+        (store.claimNextObservation as any) = mock(() => null);
 
         const options: CreateIteratorOptions = {
           sessionDbId: 123,
@@ -242,7 +244,7 @@ describe('SessionQueueProcessor', () => {
         // First call: return null (queue empty)
         // After message event: return message
         // Then return null again
-        (store.claimNextMessage as any) = mock(() => {
+        (store.claimNextObservation as any) = mock(() => {
           callCount++;
           if (callCount === 1) {
             // First check - queue empty, will wait
@@ -312,7 +314,7 @@ describe('SessionQueueProcessor', () => {
 
       it('should clean up event listeners when message received', async () => {
         // Return a message immediately
-        (store.claimNextMessage as any) = mock(() => createMockMessage({ id: 1 }));
+        (store.claimNextObservation as any) = mock(() => createMockMessage({ id: 1 }));
 
         const options: CreateIteratorOptions = {
           sessionDbId: 123,
@@ -344,7 +346,7 @@ describe('SessionQueueProcessor', () => {
       it('should continue after store error with backoff', async () => {
         let callCount = 0;
 
-        (store.claimNextMessage as any) = mock(() => {
+        (store.claimNextObservation as any) = mock(() => {
           callCount++;
           if (callCount === 1) {
             throw new Error('Database error');
@@ -377,7 +379,7 @@ describe('SessionQueueProcessor', () => {
       });
 
       it('should exit cleanly if aborted during error backoff', async () => {
-        (store.claimNextMessage as any) = mock(() => {
+        (store.claimNextObservation as any) = mock(() => {
           throw new Error('Database error');
         });
 
@@ -413,7 +415,7 @@ describe('SessionQueueProcessor', () => {
           created_at_epoch: 1704067200000
         });
 
-        (store.claimNextMessage as any) = mock(() => mockPersistentMessage);
+        (store.claimNextObservation as any) = mock(() => mockPersistentMessage);
 
         const options: CreateIteratorOptions = {
           sessionDbId: 123,

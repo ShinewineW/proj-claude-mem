@@ -27,6 +27,13 @@ export interface GeneratorActionContext {
   consecutiveRestarts: number;
   contextResetCount: number;
   pendingCount: number;
+  /**
+   * Count of pending/processing observation rows for the active turn
+   * (message_type='observation' only). Distinct from `pendingCount`, which
+   * includes summarize rows. Used by P2b to allow an observation-drain
+   * restart during the close window.
+   */
+  pendingObservationCount: number;
   wasAborted: boolean;
   proactiveReset: boolean;
   isClosing: boolean;
@@ -99,8 +106,18 @@ export function decideGeneratorAction(ctx: GeneratorActionContext): GeneratorAct
     return { type: 'abandon', reason: 'unrecoverable' };
   }
 
-  // P2: Idle timeout or closing → noop (don't restart)
-  if (ctx.isIdleTimeout || ctx.isClosing) {
+  // P2a: Idle timeout is always terminal for this generator — noop.
+  if (ctx.isIdleTimeout) {
+    return { type: 'noop' };
+  }
+
+  // P2b: Closing window — allow observation-drain via crash-recovery restart
+  // if there is still observation work for this session. Once observations are
+  // fully drained, close becomes terminal.
+  if (ctx.isClosing) {
+    if (ctx.pendingObservationCount > 0) {
+      return { type: 'crash-recovery', backoffMs: 500 };
+    }
     return { type: 'noop' };
   }
 

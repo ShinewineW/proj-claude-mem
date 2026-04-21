@@ -13,6 +13,7 @@ function makeCtx(overrides: Partial<GeneratorActionContext> = {}): GeneratorActi
     consecutiveRestarts: 0,
     contextResetCount: 0,
     pendingCount: 5,
+    pendingObservationCount: 5,
     wasAborted: false,
     isClosing: false,
     isIdleTimeout: false,
@@ -84,9 +85,14 @@ describe('decideGeneratorAction', () => {
     expect(action.type).toBe('noop');
   });
 
-  test('P2: isClosing → noop', () => {
-    const action = decideGeneratorAction(makeCtx({ isClosing: true }));
+  test('P2: isClosing with no pending observations → noop', () => {
+    const action = decideGeneratorAction(makeCtx({ isClosing: true, pendingObservationCount: 0 }));
     expect(action.type).toBe('noop');
+  });
+
+  test('P2b: isClosing + pendingObservationCount>0 → crash-recovery (observation-drain)', () => {
+    const action = decideGeneratorAction(makeCtx({ isClosing: true, pendingObservationCount: 3 }));
+    expect(action.type).toBe('crash-recovery');
   });
 
   // Priority 3: context-exhausted

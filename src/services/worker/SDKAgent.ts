@@ -694,17 +694,6 @@ export class SDKAgent {
           parent_tool_use_id: null,
           isSynthetic: true,
         };
-      } else if (message.type === "summarize") {
-        // Legacy branch — as of the fresh-query refactor, summarize messages
-        // are no longer enqueued into pending_messages (SessionManager
-        // dispatches directly to runFreshSummarizeQuery on a separate
-        // subprocess). Any summarize we still see here is a stale message
-        // from a pre-refactor crash recovery or a rogue replay; log + skip.
-        logger.warn(
-          "SDK",
-          "Dropping legacy summarize from pending_messages — fresh-query path handles this now",
-          { sessionDbId: session.sessionDbId },
-        );
       }
     }
   }

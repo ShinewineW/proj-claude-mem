@@ -7,6 +7,7 @@ function makeCtx(overrides: any = {}) {
     consecutiveRestarts: 0,
     contextResetCount: 0,
     pendingCount: 5,
+    pendingObservationCount: 5,
     wasAborted: false,
     isClosing: false,
     isIdleTimeout: false,

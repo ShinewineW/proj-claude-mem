@@ -741,7 +741,11 @@ export class WorkerService {
             reason: error instanceof Error ? error.message : String(error),
           });
           const pendingStore = this.sessionManager.getPendingMessageStore(session.dbPath);
-          const { failed: abandoned } = pendingStore.markAllSessionMessagesAbandoned(session.sessionDbId);
+          // SDK termination kills the observer subprocess, but SummaryLane
+          // runs on a fresh query() subprocess independent of that observer.
+          // Preserve summarize rows so SummaryLane can still produce a summary
+          // even after the observer died.
+          const { failed: abandoned } = pendingStore.markSessionObservationMessagesAbandoned(session.sessionDbId);
           if (abandoned > 0) {
             logger.warn('SDK', 'Marked pending messages as failed (terminated session)', {
               sessionId: session.sessionDbId,
@@ -812,11 +816,17 @@ export class WorkerService {
 
         // Only access DB if project is still valid
         let pendingCount = 0;
+        let pendingObservationCount = 0;
         let pendingStore: any = null;
         if (dbFileExists !== false) {
           const { PendingMessageStore } = await import('./sqlite/PendingMessageStore.js');
           pendingStore = new PendingMessageStore(this.dbManager.getSessionStore(session.dbPath).db, 3);
           pendingCount = pendingStore.getPendingCount(session.sessionDbId);
+          pendingObservationCount = pendingStore.getPendingObservationCountUpToPrompt(
+            session.sessionDbId,
+            session.lastPromptNumber ?? null,
+            Date.now(),
+          );
         }
 
         const bpSettings = SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH);
@@ -829,6 +839,7 @@ export class WorkerService {
           consecutiveRestarts: session.consecutiveRestarts,
           contextResetCount: session.contextResetCount ?? 0,
           pendingCount,
+          pendingObservationCount,
           wasAborted: session.abortController.signal.aborted,
           proactiveReset: !!session.proactiveReset,
           isClosing: !!session.closing,
@@ -878,7 +889,9 @@ export class WorkerService {
           // pendingStore may be null if DB was unreachable but hadUnrecoverableError overrides
           if (pendingStore) {
             try {
-              const result = pendingStore.markAllSessionMessagesAbandoned(sessionDbId);
+              // Ghost session cleanup preserves summarize rows so SummaryLane
+              // can still consume them after the observer's lifecycle ended.
+              const result = pendingStore.markSessionObservationMessagesAbandoned(sessionDbId);
               logger.warn('SYSTEM', `Abandoned ${result.failed} messages (${result.retried} retryable)`, {
                 sessionDbId, reason: action.reason,
               });
@@ -1114,8 +1127,9 @@ export class WorkerService {
           }
         }
 
-        // Collect orphaned session IDs from this DB (with dbPath for composite key)
-        const orphaned = pendingStore.getSessionsWithPendingMessages();
+        // Collect orphaned session IDs from this DB (with dbPath for composite key).
+        // Observation-only — SummaryLane handles summarize backlog independently.
+        const orphaned = pendingStore.getSessionsWithPendingObservations();
         for (const id of orphaned) {
           allOrphanedSessions.push({ id, dbPath });
         }
@@ -1166,7 +1180,8 @@ export class WorkerService {
       } catch (error) {
         logger.error('SYSTEM', `Failed to process session ${sessionDbId}`, { dbPath }, error as Error);
         try {
-          const { failed: abandonCount, retried } = this.sessionManager.getPendingMessageStore(dbPath).markAllSessionMessagesAbandoned(sessionDbId);
+          // Startup recovery failure preserves summarize rows; SummaryLane can still consume them.
+          const { failed: abandonCount, retried } = this.sessionManager.getPendingMessageStore(dbPath).markSessionObservationMessagesAbandoned(sessionDbId);
           if (abandonCount + retried > 0) {
             logger.info('SYSTEM', `Abandoned ${abandonCount} orphaned messages for session ${sessionDbId} (${retried} retryable)`, { dbPath });
           }

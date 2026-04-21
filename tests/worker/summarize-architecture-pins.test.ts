@@ -50,11 +50,14 @@ describe('fresh-summarize architectural pins', () => {
       expect(src).not.toContain('sessionStore.storeSummary(');
     });
 
-    it('drops legacy summarize messages with a warning (defense in depth)', () => {
-      // During crash-recovery replay a worker may find pre-refactor summarize
-      // rows in pending_messages. They must be logged+dropped, not silently
-      // yielded (which would re-introduce observer-poisoning).
-      expect(src).toContain('Dropping legacy summarize from pending_messages');
+    it('observer does not reference summarize message type (SummaryLane owns those rows)', () => {
+      // Post-Chunk 4: Observer claims observation rows only. The SummaryLane
+      // global consumer pulls summarize rows independently, so any defensive
+      // drop-and-warn branch inside SDKAgent.createMessageGenerator is dead
+      // code. Reintroducing `message.type === 'summarize'` checks here would
+      // signal the architecture regressed to the observer-owned path.
+      expect(src).not.toMatch(/message\.type\s*===\s*['"]summarize['"]/);
+      expect(src).not.toContain('Dropping legacy summarize from pending_messages');
     });
   });
 

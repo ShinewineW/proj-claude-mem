@@ -35,9 +35,11 @@ export class SessionQueueProcessor {
 
     while (!signal.aborted) {
       try {
-        // Atomically claim next pending message (marks as 'processing')
-        // Self-heals any stale processing messages before claiming
-        const persistentMessage = this.store.claimNextMessage(sessionDbId);
+        // Observer claim chain is observation-only (SummaryLane owns summarize
+        // rows). resetStaleObservationProcessing restores the per-session 60s
+        // self-heal that claimNextObservation deliberately omits.
+        this.store.resetStaleObservationProcessing(sessionDbId);
+        const persistentMessage = this.store.claimNextObservation(sessionDbId);
 
         if (persistentMessage) {
           // Reset activity time when we successfully yield a message
