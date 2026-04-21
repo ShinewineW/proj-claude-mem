@@ -509,6 +509,10 @@ export class SessionRoutes extends BaseRouteHandler {
     app.post('/api/sessions/observations', this.handleObservationsByClaudeId.bind(this));
     app.post('/api/sessions/summarize', this.handleSummarizeByClaudeId.bind(this));
     app.post('/api/sessions/complete', this.handleCompleteByClaudeId.bind(this));
+
+    // Hook-side prompt_number resolution — Stop hook queries this before
+    // POSTing summarize so the turn key is authoritative at enqueue time.
+    app.get('/api/sessions/resolve-prompt-number', this.handleResolvePromptNumber.bind(this));
   }
 
   /**
@@ -908,6 +912,36 @@ export class SessionRoutes extends BaseRouteHandler {
     this.eventBroadcaster.broadcastSummarizeQueued();
 
     res.json(result);
+  });
+
+  /**
+   * Resolve the current `prompt_number` for a content session.
+   * GET /api/sessions/resolve-prompt-number?contentSessionId=...&dbPath=...
+   *
+   * Hook-side pre-resolution: Stop hook calls this before POSTing summarize
+   * so the turn key is authoritative at enqueue time, independent of whatever
+   * the worker's server-side fallback would compute. If no prompt is recorded
+   * yet, returns 404 — the hook should then write a fallback entry without
+   * prompt_number and let replay resolve at that time.
+   */
+  private handleResolvePromptNumber = this.wrapHandler((req: Request, res: Response): void => {
+    const contentSessionId = typeof req.query.contentSessionId === 'string'
+      ? req.query.contentSessionId
+      : undefined;
+    const dbPath = typeof req.query.dbPath === 'string' ? req.query.dbPath : undefined;
+
+    if (!contentSessionId) {
+      res.status(400).json({ error: 'contentSessionId query param required' });
+      return;
+    }
+
+    const store = this.dbManager.getSessionStore(dbPath);
+    const promptNumber = store.getPromptNumberFromUserPrompts(contentSessionId);
+    if (typeof promptNumber !== 'number' || promptNumber <= 0) {
+      res.status(404).json({ error: 'No prompt recorded for contentSessionId yet' });
+      return;
+    }
+    res.json({ prompt_number: promptNumber });
   });
 
   /**

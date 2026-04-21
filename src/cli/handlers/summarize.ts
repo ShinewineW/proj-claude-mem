@@ -15,6 +15,33 @@ import { resolveProjectContext } from '../../shared/project-allowlist.js';
 import { writeFallbackEntry } from '../../shared/fallback-queue.js';
 
 const SUMMARIZE_TIMEOUT_MS = getTimeout(HOOK_TIMEOUTS.DEFAULT);
+const RESOLVE_PROMPT_TIMEOUT_MS = 2000;
+
+/**
+ * Ask the worker for the current `prompt_number` for this contentSessionId.
+ * Returns `null` when the worker can't resolve (no user_prompts row yet,
+ * HTTP error, timeout). Callers must treat `null` as "write fallback without
+ * prompt_number and let replay resolve at that time" to preserve the
+ * durability contract (CodeX-P1).
+ */
+async function resolvePromptNumber(
+  port: number,
+  contentSessionId: string,
+  dbPath: string,
+): Promise<number | null> {
+  try {
+    const url = `http://127.0.0.1:${port}/api/sessions/resolve-prompt-number`
+      + `?contentSessionId=${encodeURIComponent(contentSessionId)}`
+      + `&dbPath=${encodeURIComponent(dbPath)}`;
+    const res = await fetchWithTimeout(url, { method: 'GET' }, RESOLVE_PROMPT_TIMEOUT_MS);
+    if (!res.ok) return null;
+    const body = await res.json() as { prompt_number?: unknown };
+    const pn = body.prompt_number;
+    return typeof pn === 'number' && Number.isFinite(pn) && pn > 0 ? pn : null;
+  } catch {
+    return null;
+  }
+}
 
 export const summarizeHandler: EventHandler = {
   async execute(input: NormalizedHookInput): Promise<HookResult> {
@@ -24,6 +51,8 @@ export const summarizeHandler: EventHandler = {
       // Worker not available — parse transcript NOW, then write to fallback queue.
       // extractLastMessage returns '' on missing/unreadable transcript (never throws).
       // Without parsing here, replay would get null and produce an empty summary.
+      // prompt_number is deliberately NOT written: replay resolves at that time
+      // (see worker-service.replayFallbackEntries).
       const ctx = input._projectContext ?? resolveProjectContext(input.cwd);
       if (ctx) {
         const lastAssistantMessage = input.transcriptPath
@@ -59,29 +88,41 @@ export const summarizeHandler: EventHandler = {
     // The user's original request is already stored in user_prompts table.
     const lastAssistantMessage = extractLastMessage(transcriptPath, 'assistant', true);
 
+    // F5 — hook-side prompt_number resolution. Ask the worker before POSTing
+    // summarize so the turn key is authoritative at enqueue time. Server-side
+    // fallback in SessionRoutes still covers the null case for back-compat.
+    const promptNumber = await resolvePromptNumber(port, sessionId, dbPath);
+
     logger.dataIn('HOOK', 'Stop: Requesting summary', {
       workerPort: port,
-      hasLastAssistantMessage: !!lastAssistantMessage
+      hasLastAssistantMessage: !!lastAssistantMessage,
+      promptNumber,
     });
 
     // Send to worker - worker handles privacy check and database operations
     try {
+      const body: Record<string, unknown> = {
+        contentSessionId: sessionId,
+        last_assistant_message: lastAssistantMessage,
+        dbPath,
+      };
+      if (promptNumber !== null) {
+        body.prompt_number = promptNumber;
+      }
       const response = await fetchWithTimeout(
         `http://127.0.0.1:${port}/api/sessions/summarize`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            contentSessionId: sessionId,
-            last_assistant_message: lastAssistantMessage,
-            dbPath
-          }),
+          body: JSON.stringify(body),
         },
         SUMMARIZE_TIMEOUT_MS
       );
 
       if (!response.ok) {
         logger.warn('HOOK', 'Summarize storage failed, writing fallback', { status: response.status });
+        // Durability contract (CodeX-P1): omit prompt_number when writing
+        // fallback; replay resolves from user_prompts at replay time.
         writeFallbackEntry({
           type: 'summarize', sessionId, cwd, dbPath,
           timestamp: Date.now(),
