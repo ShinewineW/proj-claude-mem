@@ -27,14 +27,14 @@ describe('summary-lane architectural pins', () => {
       expect(src).not.toContain('buildSummaryPrompt(');
     });
 
-    it('imports runFreshSummarizeQuery (guards that the fresh path exists)', () => {
-      expect(src).toContain('runFreshSummarizeQuery');
-      expect(src).toContain("from \"./fresh-summarize.js\"");
-    });
-
-    it('stores the summary via the atomic helper (FK-race safe)', () => {
-      expect(src).toContain('storeFreshSummaryForSession');
-      expect(src).not.toContain('sessionStore.storeSummary(');
+    it('SDKAgent no longer owns the summarize lifecycle (moved to SummaryLane in Chunk 8)', () => {
+      // SDKAgent.runFreshSummarize was deleted in Chunk 8; SummaryLane owns the
+      // entire summarize flow now. Reintroducing this method would mean the
+      // observer subprocess can produce summaries again and we are one typo
+      // away from the pre-SummaryLane design.
+      expect(src).not.toMatch(/(^|[\s;}])\s*(async\s+)?runFreshSummarize\s*\(/m);
+      expect(src).not.toContain('runFreshSummarizeQuery');
+      expect(src).not.toContain('storeFreshSummaryForSession');
     });
 
     it('observer does not reference summarize message type (SummaryLane owns those rows)', () => {
