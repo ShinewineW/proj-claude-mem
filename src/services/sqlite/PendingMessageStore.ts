@@ -246,6 +246,33 @@ export class PendingMessageStore {
   }
 
   /**
+   * Count pending/processing observation rows for this session that belong to
+   * the target turn or earlier. Used by SummaryLane to wait for same-turn drain
+   * without being blocked by future-turn observations.
+   *
+   * @param sessionDbId - sdk_sessions.id
+   * @param promptNumber - the turn this summarize belongs to (may be null for legacy)
+   * @param queuedAtEpoch - the summarize row's created_at_epoch (cutoff for legacy NULL prompt_number rows)
+   */
+  getPendingObservationCountUpToPrompt(
+    sessionDbId: number,
+    promptNumber: number | null,
+    queuedAtEpoch: number,
+  ): number {
+    const row = this.db.prepare(`
+      SELECT COUNT(*) AS c FROM pending_messages
+      WHERE session_db_id = ?
+        AND message_type = 'observation'
+        AND status IN ('pending', 'processing')
+        AND (
+          (prompt_number IS NOT NULL AND prompt_number <= ?)
+          OR (prompt_number IS NULL AND created_at_epoch <= ?)
+        )
+    `).get(sessionDbId, promptNumber, queuedAtEpoch) as { c: number };
+    return row.c;
+  }
+
+  /**
    * Claim up to maxCount FIFO-contiguous pending observations for the same
    * session and prompt_number. Used by SDKAgent for safe same-prompt batching.
    *

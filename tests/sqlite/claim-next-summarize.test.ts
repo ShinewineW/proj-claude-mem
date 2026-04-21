@@ -84,3 +84,48 @@ describe('PendingMessageStore.claimNextSummarize', () => {
     expect(pending.claimNextSummarize()!.id).toBe(idB);
   });
 });
+
+describe('PendingMessageStore.getPendingObservationCountUpToPrompt', () => {
+  it('counts same-turn observations (prompt_number <= target)', () => {
+    const { pending, sessionDbId } = setupStore();
+    pending.enqueue(sessionDbId, 'test-content-session-id', {
+      type: 'observation', tool_name: 'Read', tool_input: '{}', tool_response: '{}', prompt_number: 1, cwd: '/tmp',
+    });
+    pending.enqueue(sessionDbId, 'test-content-session-id', {
+      type: 'observation', tool_name: 'Bash', tool_input: '{}', tool_response: '{}', prompt_number: 1, cwd: '/tmp',
+    });
+    expect(pending.getPendingObservationCountUpToPrompt(sessionDbId, 1, Date.now())).toBe(2);
+  });
+
+  it('excludes future-turn observations (prompt_number > target)', () => {
+    const { pending, sessionDbId } = setupStore();
+    pending.enqueue(sessionDbId, 'test-content-session-id', {
+      type: 'observation', tool_name: 'Read', tool_input: '{}', tool_response: '{}', prompt_number: 1, cwd: '/tmp',
+    });
+    pending.enqueue(sessionDbId, 'test-content-session-id', {
+      type: 'observation', tool_name: 'Bash', tool_input: '{}', tool_response: '{}', prompt_number: 2, cwd: '/tmp',
+    });
+    expect(pending.getPendingObservationCountUpToPrompt(sessionDbId, 1, Date.now())).toBe(1);
+  });
+
+  it('legacy NULL prompt_number rows only included if created_at_epoch <= queuedAtEpoch', () => {
+    const { db, pending, sessionDbId } = setupStore();
+    const earlyId = pending.enqueue(sessionDbId, 'test-content-session-id', {
+      type: 'observation', tool_name: 'Read', tool_input: '{}', tool_response: '{}', prompt_number: 1, cwd: '/tmp',
+    });
+    db.prepare(`UPDATE pending_messages SET prompt_number=NULL WHERE id=?`).run(earlyId);
+    const earlyEpoch = Date.now() - 10_000;
+    db.prepare(`UPDATE pending_messages SET created_at_epoch=? WHERE id=?`).run(earlyEpoch, earlyId);
+
+    expect(pending.getPendingObservationCountUpToPrompt(sessionDbId, 1, earlyEpoch + 1000)).toBe(1);
+    expect(pending.getPendingObservationCountUpToPrompt(sessionDbId, 1, earlyEpoch - 1000)).toBe(0);
+  });
+
+  it('does not count summarize rows', () => {
+    const { pending, sessionDbId } = setupStore();
+    pending.enqueue(sessionDbId, 'test-content-session-id', {
+      type: 'summarize', last_assistant_message: 'x', prompt_number: 1,
+    });
+    expect(pending.getPendingObservationCountUpToPrompt(sessionDbId, 1, Date.now())).toBe(0);
+  });
+});
