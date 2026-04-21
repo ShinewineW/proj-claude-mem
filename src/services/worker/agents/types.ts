@@ -58,7 +58,12 @@ export interface SummarySSEPayload {
   next_steps: string | null;
   notes: string | null;
   project: string;
-  prompt_number: number;
+  /**
+   * Turn number within the Claude Code session. `null` for grandfathered rows
+   * migrated before the prompt_number column existed, which SummaryLane replay
+   * may legitimately surface.
+   */
+  prompt_number: number | null;
   created_at_epoch: number;
 }
 
