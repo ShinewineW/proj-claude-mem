@@ -358,12 +358,12 @@ function escapeXml(s: string): string {
 // Hardcoded schema used when no mode is supplied — preserves self-contained
 // behavior for test doubles and any path where ModeManager is unavailable.
 const FALLBACK_SUMMARY_SCHEMA = `<summary>
-  <request>short original request phrase</request>
-  <investigated>bullets or sentences of what was investigated</investigated>
-  <learned>bullets of key facts discovered</learned>
-  <completed>bullets of what was completed (features, fixes)</completed>
-  <next_steps>bullets of what comes next, or leave empty</next_steps>
-  <notes>optional short note, or leave empty</notes>
+  <request>A brief 3-8 word title describing this turn's WORK (NOT a verbatim copy of user_request). Example: "fix auth token expiry" not "please help me fix the login bug where tokens expire".</request>
+  <investigated>Bullets or sentences describing what was investigated / explored</investigated>
+  <learned>Bullets of key facts or insights discovered</learned>
+  <completed>Bullets of what was completed (features, fixes, decisions)</completed>
+  <next_steps>Bullets of pending work, or leave empty if none</next_steps>
+  <notes>Optional short note about constraints / gotchas, or leave empty</notes>
 </summary>`;
 
 /**

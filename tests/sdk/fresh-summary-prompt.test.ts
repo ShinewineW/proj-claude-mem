@@ -309,13 +309,17 @@ describe('buildFreshSummaryPrompt — mode-driven schema instructions', () => {
   it('falls back to hardcoded schema strings when mode is undefined', () => {
     // Preserves backward compatibility for test double callers and any path
     // where ModeManager is unavailable (worker boot before mode load, etc.).
+    // Chunk 2 Task 2.1 strengthened the fallback schema to prevent verbatim
+    // echoes of user_request in the <request> field.
     const prompt = buildFreshSummaryPrompt(baseInput);
-    expect(prompt).toContain('short original request phrase');
-    expect(prompt).toContain('bullets or sentences of what was investigated');
-    expect(prompt).toContain('bullets of key facts discovered');
-    expect(prompt).toContain('bullets of what was completed (features, fixes)');
-    expect(prompt).toContain('bullets of what comes next, or leave empty');
-    expect(prompt).toContain('optional short note, or leave empty');
+    expect(prompt).toContain('3-8 word title');
+    expect(prompt).toContain('NOT a verbatim copy of user_request');
+    expect(prompt).toContain('fix auth token expiry');
+    expect(prompt).toContain('Bullets or sentences describing what was investigated');
+    expect(prompt).toContain('Bullets of key facts or insights discovered');
+    expect(prompt).toContain('Bullets of what was completed (features, fixes, decisions)');
+    expect(prompt).toContain('Bullets of pending work, or leave empty if none');
+    expect(prompt).toContain('Optional short note about constraints / gotchas, or leave empty');
     // Should NOT accidentally contain mode-style sentinels
     expect(prompt).not.toContain('MODE_REQUEST_INSTRUCTION');
   });

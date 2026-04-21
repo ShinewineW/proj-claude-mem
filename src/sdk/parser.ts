@@ -99,10 +99,47 @@ export function parseObservations(text: string, correlationId?: string): ParsedO
 }
 
 /**
+ * Thrown when <request> in a parsed summary is a verbatim (or >=80% overlap)
+ * echo of the supplied user_request. SummaryLane's retry path catches this to
+ * force the model to regenerate with stronger prompting, instead of persisting
+ * a poisoned title.
+ */
+export class VerbatimEchoRejectionError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'VerbatimEchoRejectionError';
+  }
+}
+
+function normalizeForCompare(s: string): string {
+  return s.trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+function isVerbatimEcho(requestField: string, userRequest: string): boolean {
+  const req = normalizeForCompare(requestField);
+  const user = normalizeForCompare(userRequest);
+  if (req.length === 0 || user.length === 0) return false;
+  if (req === user) return true;
+  const shorter = req.length <= user.length ? req : user;
+  const longer = req.length > user.length ? req : user;
+  if (longer.includes(shorter) && shorter.length / longer.length >= 0.8) return true;
+  return false;
+}
+
+/**
  * Parse summary XML block from SDK response
  * Returns null if no valid summary found or if summary was skipped
+ *
+ * When `opts.userRequest` is provided, performs a structural verbatim-echo
+ * rejection on the `<request>` field: if it exactly equals or >=80% overlaps
+ * the supplied userRequest, throws `VerbatimEchoRejectionError` so the caller's
+ * retry path can trigger instead of persisting poisoned output.
  */
-export function parseSummary(text: string, sessionId?: number): ParsedSummary | null {
+export function parseSummary(
+  text: string,
+  sessionId?: number,
+  opts?: { userRequest?: string },
+): ParsedSummary | null {
   // Check for skip_summary first
   const skipRegex = /<skip_summary\s+reason="([^"]+)"\s*\/>/;
   const skipMatch = skipRegex.exec(text);
@@ -132,6 +169,12 @@ export function parseSummary(text: string, sessionId?: number): ParsedSummary | 
   const completed = extractField(summaryContent, 'completed');
   const next_steps = extractField(summaryContent, 'next_steps');
   const notes = extractField(summaryContent, 'notes'); // Optional
+
+  if (request && opts?.userRequest && isVerbatimEcho(request, opts.userRequest)) {
+    throw new VerbatimEchoRejectionError(
+      '<request> field is a verbatim/near-verbatim echo of <user_request>. Rejecting to force retry with stronger prompting.',
+    );
+  }
 
   // NOTE FROM THEDOTMACK: 100% of the time we must SAVE the summary, even if fields are missing. 10/24/2025 
   // NEVER DO THIS NONSENSE AGAIN.
