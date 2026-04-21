@@ -242,32 +242,9 @@ export class WorkerService {
       this.startSessionProcessor(session, source);
     });
 
-    // Surface salvaged summaries (pre-queue synthesis from DB observations)
-    // to SSE subscribers. Fires from replay/proactive/idle-reap paths that
-    // don't go through the HTTP route's explicit broadcast.
-    this.sessionManager.setOnSalvagedSummary((payload) => {
-      this.sseBroadcaster.broadcast({
-        type: 'new_summary',
-        summary: payload,
-      });
-    });
-
-    // Route summarize requests through a fresh SDK query() (no resume, no
-    // observer priming). Fixes the bug where Claude emitted observer prose
-    // instead of <summary> XML because the long-lived observer session's
-    // conditioning dominated mid-session mode switches.
-    // See attn_sink/0sum-investigation/NOTES.md.
-    this.sessionManager.setOnRunFreshSummarize(
-      async (sessionDbId, lastAssistantMessage, dbPath) => {
-        await this.sdkAgent.runFreshSummarize(
-          sessionDbId,
-          lastAssistantMessage,
-          dbPath,
-          this,
-        );
-      },
-    );
-
+    // SummaryLane (global single consumer) now owns summarize lifecycle
+    // directly; salvage-synthesis paths and the runFreshSummarize callback
+    // wiring were removed in the summary-lane refactor.
 
     // Initialize MCP client
     // Empty capabilities object: this client only calls tools, doesn't expose any
@@ -1246,10 +1223,42 @@ export class WorkerService {
             logger.info('FALLBACK', 'Replayed observation dropped by backpressure', { sessionDbId });
           }
         } else if (entry.type === 'summarize') {
+          // Fallback entries written when worker was down do not carry
+          // prompt_number (the hook cannot resolve it without the worker).
+          // Replay resolves at this point using the fallback's own timestamp
+          // as an upper bound on `created_at_epoch` so we bind the summary to
+          // the turn that was actually in-flight when the fallback fired.
+          let promptNumber: number | null | undefined =
+            entry.payload.prompt_number as number | null | undefined;
+          if (typeof promptNumber !== 'number') {
+            try {
+              const store = this.dbManager.getSessionStore(entry.dbPath);
+              const row = store.db.prepare(`
+                SELECT MAX(prompt_number) AS mx FROM user_prompts
+                WHERE content_session_id = ?
+                  AND created_at_epoch <= ?
+              `).get(entry.sessionId, entry.timestamp) as { mx: number | null } | undefined;
+              promptNumber = row?.mx ?? null;
+            } catch (err) {
+              logger.warn('SYSTEM', 'Fallback summarize: resolve-at-replay failed', { filepath }, err as Error);
+              promptNumber = null;
+            }
+          }
+          if (typeof promptNumber !== 'number') {
+            logger.warn('SYSTEM', 'Fallback summarize entry has no resolvable prompt_number, dropping', {
+              filepath, sessionId: entry.sessionId,
+            });
+            deleteFallbackFile(filepath);
+            continue;
+          }
           this.sessionManager.queueSummarize(
             sessionDbId,
-            entry.payload.last_assistant_message as string | undefined,
-            entry.dbPath
+            {
+              lastAssistantMessage: entry.payload.last_assistant_message as string | undefined,
+              promptNumber,
+              queuedAtEpoch: entry.timestamp,
+            },
+            entry.dbPath,
           );
         }
 

@@ -206,7 +206,6 @@ describe('SessionManager reaper: lastExitWasIdleTimeout', () => {
     insertSession(db, 'session-normal', 'test-project');
     const session = sessionManager.initializeSession(1, 'test', 1, dbPath);
 
-    // Simulate: generator exited normally, no idle timeout flag
     session.generatorPromise = null;
     session.lastExitWasIdleTimeout = false;
     session.lastGeneratorActivity = Date.now() - 20 * 60 * 1000;
@@ -216,11 +215,19 @@ describe('SessionManager reaper: lastExitWasIdleTimeout', () => {
 
     const reaped = await sessionManager.reapStaleSessions();
 
-    // Not reaped yet — proactive summarize queued, generator started
-    expect(reaped).toBe(0);
-    expect(generatorStarted).toBe(true);
+    // Post-SummaryLane: reaper enqueues a summarize row for SummaryLane to
+    // consume instead of waking the observer generator. session.closing=true
+    // so the next reaper cycle routes through finalizeSession.
+    expect(generatorStarted).toBe(false);
     expect(session.proactiveSummarizeQueued).toBe(true);
+    expect(session.closing).toBe(true);
+    const row = db.prepare(
+      `SELECT COUNT(*) AS c FROM pending_messages WHERE message_type = 'summarize' AND session_db_id = 1`,
+    ).get() as { c: number };
+    expect(row.c).toBe(1);
+    // Session still in memory — final reap happens next cycle via finalizeSession.
     expect(sessionManager.getActiveSessionCount()).toBe(1);
+    expect(reaped).toBe(0);
   });
 
   it('queueObservation clears lastExitWasIdleTimeout flag', () => {
@@ -248,7 +255,11 @@ describe('SessionManager reaper: lastExitWasIdleTimeout', () => {
     session.lastExitWasIdleTimeout = true;
 
     // Stop hook fires summarize
-    sessionManager.queueSummarize(1, 'last message', dbPath);
+    sessionManager.queueSummarize(
+      1,
+      { lastAssistantMessage: 'last message', promptNumber: 1, queuedAtEpoch: Date.now() },
+      dbPath,
+    );
 
     expect(session.lastExitWasIdleTimeout).toBe(false);
   });
@@ -283,8 +294,11 @@ describe('SessionManager reaper: lastExitWasIdleTimeout', () => {
 
     const reaped = await sessionManager.reapStaleSessions();
 
-    // Should get proactive summarize (flag is false → normal path)
+    // Should get proactive summarize (flag is false → normal path).
+    // SummaryLane consumes the row; the observer generator stays asleep.
     expect(reaped).toBe(0);
-    expect(generatorStarted).toBe(true);
+    expect(generatorStarted).toBe(false);
+    expect(session.proactiveSummarizeQueued).toBe(true);
+    expect(session.closing).toBe(true);
   });
 });

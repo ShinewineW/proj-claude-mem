@@ -22,11 +22,6 @@ import { getBackpressureLevel, applyBackpressure } from './backpressure.js';
 import { SettingsDefaultsManager } from '../../shared/SettingsDefaultsManager.js';
 import { USER_SETTINGS_PATH } from '../../shared/paths.js';
 import type { SessionEventBroadcaster } from './events/SessionEventBroadcaster.js';
-import {
-  attemptEmptyTranscriptSalvage,
-  type SalvageBroadcastPayload,
-  type SalvageResult,
-} from './summarize-salvage.js';
 
 /** Info about sessions removed due to DB unreachable, for caller to handle SSE + bypass */
 export interface DbUnreachableCleanup {
@@ -41,16 +36,6 @@ export class SessionManager {
   private sessionQueues: Map<string, EventEmitter> = new Map();
   private onSessionDeletedCallback?: () => void;
   private onStartGeneratorCallback?: (session: ActiveSession, source: string) => void;
-  private onSalvagedSummaryCallback?: (payload: SalvageBroadcastPayload) => void;
-  private onRunFreshSummarizeCallback?: (
-    sessionDbId: number,
-    lastAssistantMessage: string | undefined,
-    dbPath: string | undefined,
-  ) => Promise<void>;
-  // Tracks in-flight fresh-query summarize runs per session. Drain window uses
-  // this via hasPendingSummarize() so deleteSession can wait for a fresh
-  // summarize before terminating the subprocess.
-  private freshSummarizeInFlight: Map<string, number> = new Map();
 
   private sessionEventBroadcaster?: SessionEventBroadcaster;
 
@@ -124,44 +109,11 @@ export class SessionManager {
   }
 
   /**
-   * Install SSE broadcast callback for salvaged summaries. Wired in by
-   * WorkerService so that pre-queue salvage fired from replay/proactive paths
-   * surfaces to the viewer the same way the HTTP route does.
-   */
-  setOnSalvagedSummary(callback: (payload: SalvageBroadcastPayload) => void): void {
-    this.onSalvagedSummaryCallback = callback;
-  }
-
-  /**
-   * Install the fresh-query summarize handler. Wired in by WorkerService to
-   * route summarize requests through runFreshSummarizeQuery instead of the
-   * observer session (whose conditioning poisons the summary response —
-   * see attn_sink/0sum-investigation/NOTES.md).
-   *
-   * The handler is expected to run the fresh query, persist the result, and
-   * broadcast SSE. It may throw — queueSummarize still decrements the
-   * in-flight counter in that case so drain-window doesn't deadlock.
-   */
-  setOnRunFreshSummarize(
-    callback: (
-      sessionDbId: number,
-      lastAssistantMessage: string | undefined,
-      dbPath: string | undefined,
-    ) => Promise<void>,
-  ): void {
-    this.onRunFreshSummarizeCallback = callback;
-  }
-
-  /**
-   * True when there is an in-flight fresh-query summarize OR an enqueued
-   * pending_messages summarize for this session. deleteSession() polls this
-   * to drain before aborting the observer subprocess.
+   * True when a pending/processing summarize row exists for this session.
+   * deleteSession() polls this during the legacy 60s drain window; Chunk 7
+   * will drop the drain entirely once Stop hook stops calling deleteSession.
    */
   hasPendingSummarize(sessionDbId: number, dbPath?: string): boolean {
-    const key = dbPath !== undefined
-      ? this.sessionKey(sessionDbId, dbPath)
-      : this.findSessionKey(sessionDbId);
-    if (key && (this.freshSummarizeInFlight.get(key) ?? 0) > 0) return true;
     try {
       const pendingStore = this.getPendingStore(dbPath);
       return pendingStore.hasPendingSummarize(sessionDbId);
@@ -430,87 +382,99 @@ export class SessionManager {
   }
 
   /**
-   * Queue a summarize request (zero-latency notification)
-   * Auto-initializes session if not in memory but exists in database
+   * Enqueue a summarize request for the SummaryLane consumer.
    *
-   * CRITICAL: Persists to database FIRST before adding to in-memory queue.
-   * This ensures summarize requests survive worker crashes.
+   * Persists a `type='summarize'` row into `pending_messages` keyed by
+   * `(content_session_id, prompt_number)`. SummaryLane runs a fresh SDK
+   * subprocess per turn, so callers do NOT invoke the subprocess here; the
+   * lane owns that lifecycle.
+   *
+   * Returns `{status:'skipped'}` when the turn is already summarized or has
+   * a pending/processing summarize row; returns `{status:'queued'}` otherwise.
    */
   queueSummarize(
     sessionDbId: number,
-    lastAssistantMessage?: string,
+    input: {
+      lastAssistantMessage?: string;
+      promptNumber: number;
+      queuedAtEpoch: number;
+    },
     dbPath?: string,
-  ): SalvageResult | { status: 'queued'; obsCount: 0 } {
-    // Auto-initialize from database if needed (handles worker restarts)
+  ): { status: 'queued' | 'skipped'; obsCount: 0 } {
     const key = this.sessionKey(sessionDbId, dbPath);
     let session = this.sessions.get(key);
     if (!session) {
       session = this.initializeSession(sessionDbId, undefined, undefined, dbPath);
     }
 
-    // External summarize (stop hook) proves CC is alive — clear idle timeout flag
     if (session.lastExitWasIdleTimeout) {
-      logger.debug('SESSION', 'Clearing lastExitWasIdleTimeout — summarize received', { sessionDbId: session.sessionDbId });
+      logger.debug('SESSION', 'Clearing lastExitWasIdleTimeout — summarize received', {
+        sessionDbId: session.sessionDbId,
+      });
       session.lastExitWasIdleTimeout = false;
     }
 
-    // Pre-queue salvage: catches proactive (`undefined` lastAssistantMessage) and
-    // fallback replay paths that previously went straight to the SDK with an
-    // empty prompt and got SIGTERM'd in the 10s drain window.
-    const store = this.dbManager.getSessionStore(session.dbPath);
-    const salvage = attemptEmptyTranscriptSalvage(
-      store,
-      sessionDbId,
-      lastAssistantMessage,
-      session.lastPromptNumber ?? null,
-      this.onSalvagedSummaryCallback,
-    );
-    if (salvage.status === 'salvaged' || salvage.status === 'skipped') {
-      return salvage;
+    if (this.shouldDeduplicatePromptSummary({
+      contentSessionId: session.contentSessionId,
+      promptNumber: input.promptNumber,
+      queuedAtEpoch: input.queuedAtEpoch,
+      dbPath: session.dbPath,
+    })) {
+      return { status: 'skipped', obsCount: 0 };
     }
 
-    // Fresh-query summarize path: dispatch to the registered handler instead
-    // of enqueueing a summarize message into pending_messages. The observer
-    // session is primed too strongly as an observer for mid-session mode
-    // switches to work — see attn_sink/0sum-investigation/NOTES.md. The
-    // handler runs runFreshSummarizeQuery on a separate subprocess.
-    //
-    // We increment an in-flight counter synchronously so hasPendingSummarize
-    // can report truthy for the drain window before the async callback has
-    // a chance to finish. The decrement happens in .finally() even if the
-    // handler throws, so the counter never leaks.
-    if (this.onRunFreshSummarizeCallback) {
-      const inflightKey = this.sessionKey(sessionDbId, session.dbPath);
-      this.freshSummarizeInFlight.set(
-        inflightKey,
-        (this.freshSummarizeInFlight.get(inflightKey) ?? 0) + 1,
-      );
-      // Snapshot the callback reference so a concurrent unsetter can't null
-      // it between here and the .finally() decrement.
-      const handler = this.onRunFreshSummarizeCallback;
-      handler(sessionDbId, lastAssistantMessage, session.dbPath)
-        .catch((err) => {
-          logger.error(
-            'SESSION',
-            'Fresh summarize handler threw',
-            { sessionDbId },
-            err as Error,
-          );
-        })
-        .finally(() => {
-          const current = this.freshSummarizeInFlight.get(inflightKey) ?? 0;
-          if (current <= 1) this.freshSummarizeInFlight.delete(inflightKey);
-          else this.freshSummarizeInFlight.set(inflightKey, current - 1);
-        });
-    } else {
-      logger.warn(
-        'SESSION',
-        'queueSummarize: no runFreshSummarize callback installed; dropping',
-        { sessionDbId },
-      );
-    }
+    const pendingStore = this.getPendingStore(session.dbPath);
+    pendingStore.enqueue(sessionDbId, session.contentSessionId, {
+      type: 'summarize',
+      last_assistant_message: input.lastAssistantMessage,
+      prompt_number: input.promptNumber,
+    });
 
     return { status: 'queued', obsCount: 0 };
+  }
+
+  /**
+   * Prompt-scoped dedupe: skip enqueue if this turn is already summarized OR
+   * has a pending/processing summarize row. Empty-turn skip is deferred to
+   * SummaryLane's drain-then-check (spec §4.2.C).
+   */
+  private shouldDeduplicatePromptSummary(input: {
+    contentSessionId: string;
+    promptNumber: number;
+    queuedAtEpoch: number;
+    dbPath?: string;
+  }): boolean {
+    const store = this.dbManager.getSessionStore(input.dbPath);
+    try {
+      const check = store.db.prepare(`
+        SELECT
+          EXISTS(
+            SELECT 1 FROM session_summaries
+            WHERE memory_session_id IN (
+              SELECT memory_session_id FROM sdk_sessions WHERE content_session_id = ?
+            ) AND prompt_number = ?
+          ) AS already_summarized,
+          EXISTS(
+            SELECT 1 FROM pending_messages
+            WHERE content_session_id = ?
+              AND message_type = 'summarize'
+              AND prompt_number = ?
+              AND status IN ('pending', 'processing')
+          ) AS already_queued
+      `).get(
+        input.contentSessionId,
+        input.promptNumber,
+        input.contentSessionId,
+        input.promptNumber,
+      ) as { already_summarized: 0 | 1; already_queued: 0 | 1 };
+      return check.already_summarized === 1 || check.already_queued === 1;
+    } catch (err) {
+      logger.debug('SESSION', 'shouldDeduplicatePromptSummary query failed (defaulting to not-dedupe)', {
+        contentSessionId: input.contentSessionId,
+        promptNumber: input.promptNumber,
+      }, err as Error);
+      return false;
+    }
   }
 
   /**
@@ -812,29 +776,42 @@ export class SessionManager {
       toSummarize.push(session);
     }
 
-    // Phase 1: Queue proactive summarizes (will be reaped on next cycle)
+    // Phase 1: Queue proactive summarizes (SummaryLane picks them up).
     for (const session of toSummarize) {
       try {
-        const result = this.queueSummarize(session.sessionDbId, undefined, session.dbPath);
+        // Reaper needs a stable (contentSessionId, promptNumber) key. When the
+        // session never recorded a prompt number, skip summarize and reap
+        // directly — SummaryLane cannot consume anchorless rows.
+        if (session.lastPromptNumber == null) {
+          logger.info('SESSION', `Skipping proactive summarize — no lastPromptNumber`, {
+            sessionDbId: session.sessionDbId,
+          });
+          toReap.push({
+            key: this.sessionKey(session.sessionDbId, session.dbPath),
+            sessionDbId: session.sessionDbId,
+            dbPath: session.dbPath,
+          });
+          continue;
+        }
+        const result = this.queueSummarize(
+          session.sessionDbId,
+          {
+            lastAssistantMessage: undefined,
+            promptNumber: session.lastPromptNumber,
+            queuedAtEpoch: Date.now(),
+          },
+          session.dbPath,
+        );
         session.proactiveSummarizeQueued = true;
+        // Reaper-initiated close is semantically equivalent to a Stop hook
+        // close — set closing so Phase 2 routes through finalizeSession.
+        session.closing = true;
         logger.info('SESSION', `Queued proactive summarize for idle session ${session.sessionDbId}`, {
           sessionDbId: session.sessionDbId,
           idleMs: now - session.lastGeneratorActivity,
-          salvageStatus: result.status,
-          salvageObsCount: result.obsCount,
+          queueStatus: result.status,
         });
-        // Only start the generator when we actually enqueued SDK work. Salvaged
-        // / skipped paths mean summary is already resolved — spinning up Claude
-        // would just hit the drain window on next reap cycle.
-        if (result.status === 'queued' && this.onStartGeneratorCallback) {
-          this.onStartGeneratorCallback(session, 'proactive-summarize');
-        } else {
-          // Salvaged or skipped — reap the session immediately on this cycle,
-          // no need to wait another MAX_SESSION_IDLE_MS window.
-          toReap.push({ key: this.sessionKey(session.sessionDbId, session.dbPath), sessionDbId: session.sessionDbId, dbPath: session.dbPath });
-        }
       } catch (error) {
-        // Summarize queue failed — reap immediately instead of leaving in limbo
         logger.warn('SESSION', `Proactive summarize failed, reaping directly`, { sessionDbId: session.sessionDbId }, error as Error);
         toReap.push({ key: this.sessionKey(session.sessionDbId, session.dbPath), sessionDbId: session.sessionDbId, dbPath: session.dbPath });
       }

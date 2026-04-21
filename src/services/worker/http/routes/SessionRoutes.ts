@@ -33,10 +33,6 @@ import {
   isProjectStillValid,
   type GeneratorAction,
 } from '../../generator-action.js';
-import {
-  attemptEmptyTranscriptSalvage,
-  type SalvageBroadcastPayload,
-} from '../../summarize-salvage.js';
 
 let cachedPatterns: { key: string; patterns: ToolPattern[] } | null = null;
 
@@ -614,12 +610,50 @@ export class SessionRoutes extends BaseRouteHandler {
     const sessionDbId = this.parseIntParam(req, res, 'sessionDbId');
     if (sessionDbId === null) return;
 
-    const { last_assistant_message, dbPath } = req.body;
+    const { last_assistant_message, prompt_number, dbPath } = req.body;
+    let resolvedPromptNumber: number | null = null;
+    if (typeof prompt_number === 'number' && Number.isFinite(prompt_number)) {
+      resolvedPromptNumber = prompt_number;
+    } else {
+      try {
+        const session = this.sessionManager.getSession(sessionDbId, dbPath);
+        if (session?.contentSessionId) {
+          const store = this.dbManager.getSessionStore(dbPath);
+          resolvedPromptNumber = store.getPromptNumberFromUserPrompts(session.contentSessionId);
+        }
+      } catch {
+        // Best-effort resolution; falls through to 400 if still null.
+      }
+    }
+    if (resolvedPromptNumber === null) {
+      res.status(400).json({ error: 'prompt_number missing and unresolvable for session' });
+      return;
+    }
 
-    this.sessionManager.queueSummarize(sessionDbId, last_assistant_message, dbPath);
+    const queuedAtEpoch = Date.now();
+    this.sessionManager.queueSummarize(
+      sessionDbId,
+      { lastAssistantMessage: last_assistant_message, promptNumber: resolvedPromptNumber, queuedAtEpoch },
+      dbPath,
+    );
 
-    // CRITICAL: Ensure SDK agent is running to consume the queue
-    this.ensureGeneratorRunning(sessionDbId, 'summarize', dbPath);
+    // Observation-drain wake-up: SummaryLane handles the summary itself, but
+    // the observer still needs to drain same-turn observations before
+    // SummaryLane processes the summary (spec §4.2). Start generator only when
+    // observations remain.
+    try {
+      const pendingStore = this.sessionManager.getPendingMessageStore(dbPath);
+      const pendingObs = pendingStore.getPendingObservationCountUpToPrompt(
+        sessionDbId,
+        resolvedPromptNumber,
+        queuedAtEpoch,
+      );
+      if (pendingObs > 0) {
+        this.ensureGeneratorRunning(sessionDbId, 'summary-observation-drain', dbPath);
+      }
+    } catch {
+      // Best-effort; SummaryLane still owns the summarize row.
+    }
 
     // Broadcast summarize queued event
     this.eventBroadcaster.broadcastSummarizeQueued();
@@ -795,65 +829,72 @@ export class SessionRoutes extends BaseRouteHandler {
    * Checks privacy, queues summarize request for SDK agent
    */
   private handleSummarizeByClaudeId = this.wrapHandler((req: Request, res: Response): void => {
-    const { contentSessionId, last_assistant_message, dbPath } = req.body;
+    const { contentSessionId, last_assistant_message, prompt_number, dbPath } = req.body;
 
     if (!contentSessionId) {
       return this.badRequest(res, 'Missing contentSessionId');
     }
 
     const store = this.dbManager.getSessionStore(dbPath);
-
-    // Get or create session
     const sessionDbId = store.createSDKSession(contentSessionId, '', '');
-    const promptNumber = store.getPromptNumberFromUserPrompts(contentSessionId);
 
-    // Privacy check: skip if user prompt was entirely private
+    // Accept an explicit prompt_number from the hook when available; fall back
+    // to the latest user_prompts row for this contentSessionId. The hook may
+    // pass prompt_number when it knows the exact turn being summarized; when
+    // unavailable (or stale client), resolve server-side so a transient hook
+    // miss does not force fallback-queue replay.
+    let resolvedPromptNumber: number;
+    if (typeof prompt_number === 'number' && Number.isFinite(prompt_number)) {
+      resolvedPromptNumber = prompt_number;
+    } else {
+      resolvedPromptNumber = store.getPromptNumberFromUserPrompts(contentSessionId);
+    }
+
+    // Use the resolved prompt_number as the privacy anchor for THIS turn.
     const userPrompt = PrivacyCheckValidator.checkUserPromptPrivacy(
       store,
       contentSessionId,
-      promptNumber,
+      resolvedPromptNumber,
       'summarize',
-      sessionDbId
+      sessionDbId,
     );
     if (!userPrompt) {
       res.json({ status: 'skipped', reason: 'private' });
       return;
     }
 
-    // Pre-queue salvage: when Claude Code's transcript contains no assistant text
-    // (e.g. the turn ended with only tool_use messages), sending an empty prompt
-    // to the SDK produces no usable summary. Synthesize from recent observations
-    // directly so 0-obs-0-sum sessions don't accumulate. See session-209 incident.
-    const salvaged = attemptEmptyTranscriptSalvage(
-      store,
+    const queuedAtEpoch = Date.now();
+    const result = this.sessionManager.queueSummarize(
       sessionDbId,
-      last_assistant_message,
-      promptNumber,
-      (payload) => this.broadcastSalvagedSummary(payload),
+      {
+        lastAssistantMessage: last_assistant_message,
+        promptNumber: resolvedPromptNumber,
+        queuedAtEpoch,
+      },
+      dbPath,
     );
-    if (salvaged.status !== 'fallthrough') {
-      res.json(salvaged);
-      return;
+
+    // Wake observer only when same-turn observations remain to drain; never
+    // start the generator as a "summarize owner" — SummaryLane is the sole
+    // owner of the summarize row.
+    try {
+      const pendingStore = this.sessionManager.getPendingMessageStore(dbPath);
+      const pendingObs = pendingStore.getPendingObservationCountUpToPrompt(
+        sessionDbId,
+        resolvedPromptNumber,
+        queuedAtEpoch,
+      );
+      if (pendingObs > 0) {
+        this.ensureGeneratorRunning(sessionDbId, 'summary-observation-drain', dbPath);
+      }
+    } catch {
+      // Best-effort; SummaryLane still owns the summarize row.
     }
 
-    // Queue summarize
-    this.sessionManager.queueSummarize(sessionDbId, last_assistant_message, dbPath);
-
-    // Ensure SDK agent is running
-    this.ensureGeneratorRunning(sessionDbId, 'summarize', dbPath);
-
-    // Broadcast summarize queued event
     this.eventBroadcaster.broadcastSummarizeQueued();
 
-    res.json({ status: 'queued' });
+    res.json(result);
   });
-
-  private broadcastSalvagedSummary(payload: SalvageBroadcastPayload): void {
-    this.workerService.sse.broadcast({
-      type: 'new_summary',
-      summary: payload,
-    });
-  }
 
   /**
    * Complete session by contentSessionId (session-complete hook uses this)
