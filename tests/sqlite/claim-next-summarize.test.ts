@@ -129,3 +129,40 @@ describe('PendingMessageStore.getPendingObservationCountUpToPrompt', () => {
     expect(pending.getPendingObservationCountUpToPrompt(sessionDbId, 1, Date.now())).toBe(0);
   });
 });
+
+describe('PendingMessageStore.markFailed return shape', () => {
+  it('returns {finalStatus: "pending", retryCount: 1} on first failure when maxRetries=3', () => {
+    const { pending, sessionDbId } = setupStore();
+    const id = pending.enqueue(sessionDbId, 'test-content-session-id', {
+      type: 'summarize', last_assistant_message: 'x', prompt_number: 1,
+    });
+    pending.claimNextSummarize();
+    const result = pending.markFailed(id);
+    expect(result).toEqual({ finalStatus: 'pending', retryCount: 1 });
+  });
+
+  it('returns {finalStatus: "failed", retryCount: 3} when max retries exhausted', () => {
+    // maxRetries=3 means retry_count<3 → pending. After 3 incrementing calls
+    // retry_count=3, the 4th markFailed enters the `else` branch and dead-letters.
+    const { pending, sessionDbId } = setupStore();
+    const id = pending.enqueue(sessionDbId, 'test-content-session-id', {
+      type: 'summarize', last_assistant_message: 'x', prompt_number: 1,
+    });
+    pending.claimNextSummarize();
+    expect(pending.markFailed(id)).toEqual({ finalStatus: 'pending', retryCount: 1 });
+    pending.claimNextSummarize();
+    expect(pending.markFailed(id)).toEqual({ finalStatus: 'pending', retryCount: 2 });
+    pending.claimNextSummarize();
+    expect(pending.markFailed(id)).toEqual({ finalStatus: 'pending', retryCount: 3 });
+    pending.claimNextSummarize();
+    const finalResult = pending.markFailed(id);
+    expect(finalResult.finalStatus).toBe('failed');
+    expect(finalResult.retryCount).toBe(3);
+  });
+
+  it('returns {finalStatus: "failed", retryCount: 0} when message id does not exist', () => {
+    const { pending } = setupStore();
+    const result = pending.markFailed(999_999);
+    expect(result).toEqual({ finalStatus: 'failed', retryCount: 0 });
+  });
+});

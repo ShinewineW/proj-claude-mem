@@ -580,33 +580,37 @@ export class PendingMessageStore {
    * Mark message as failed (status: pending -> failed or back to pending for retry)
    * If retry_count < maxRetries, moves back to 'pending' for retry
    * Otherwise marks as 'failed' permanently
+   *
+   * Returns the final status and new retry count so callers (SummaryLane) can
+   * distinguish "retryable (backoff + try again)" from "dead-lettered (log and
+   * drop)". Existing callers (BypassLane, tests) ignore the return value.
    */
-  markFailed(messageId: number): void {
+  markFailed(messageId: number): { finalStatus: 'pending' | 'failed'; retryCount: number } {
     const now = Date.now();
 
-    // Get current retry count
     const msg = this.db
       .prepare("SELECT retry_count FROM pending_messages WHERE id = ?")
       .get(messageId) as { retry_count: number } | undefined;
 
-    if (!msg) return;
+    if (!msg) {
+      return { finalStatus: 'failed', retryCount: 0 };
+    }
 
     if (msg.retry_count < this.maxRetries) {
-      // Move back to pending for retry
-      const stmt = this.db.prepare(`
+      const newRetryCount = msg.retry_count + 1;
+      this.db.prepare(`
         UPDATE pending_messages
         SET status = 'pending', retry_count = retry_count + 1, started_processing_at_epoch = NULL
         WHERE id = ?
-      `);
-      stmt.run(messageId);
+      `).run(messageId);
+      return { finalStatus: 'pending', retryCount: newRetryCount };
     } else {
-      // Max retries exceeded, mark as permanently failed
-      const stmt = this.db.prepare(`
+      this.db.prepare(`
         UPDATE pending_messages
         SET status = 'failed', failed_at_epoch = ?
         WHERE id = ?
-      `);
-      stmt.run(now, messageId);
+      `).run(now, messageId);
+      return { finalStatus: 'failed', retryCount: msg.retry_count };
     }
   }
 
