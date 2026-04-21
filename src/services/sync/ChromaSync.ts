@@ -54,7 +54,13 @@ interface StoredSummary {
   completed: string | null;
   next_steps: string | null;
   notes: string | null;
-  prompt_number: number;
+  /**
+   * Turn number within the Claude Code session. Null when the summary is a
+   * grandfathered row migrated from before the prompt_number column existed,
+   * or when SummaryLane claims a summarize row whose owning turn could not
+   * be resolved. Never encoded as 0 — a legacy/unknown turn is not "turn 0".
+   */
+  prompt_number: number | null;
   discovery_tokens: number; // ROI metrics
   created_at: string;
   created_at_epoch: number;
@@ -193,8 +199,13 @@ export class ChromaSync {
       memory_session_id: summary.memory_session_id,
       project: summary.project,
       created_at_epoch: summary.created_at_epoch,
-      prompt_number: summary.prompt_number || 0
     };
+    // Omit prompt_number metadata when null — a legacy/unknown turn is NOT
+    // turn 0. Storing 0 would corrupt `where: { prompt_number: 0 }` queries
+    // (return all NULL-turn summaries across projects as false positives).
+    if (summary.prompt_number !== null && summary.prompt_number !== undefined) {
+      baseMetadata.prompt_number = summary.prompt_number;
+    }
 
     // Each field becomes a separate document
     if (summary.request) {
@@ -393,18 +404,68 @@ export class ChromaSync {
   }
 
   /**
+   * Delete all Chroma documents associated with a given summary ID.
+   * A summary spawns up to 6 granular docs (request, investigated, learned,
+   * completed, next_steps, notes) with stable IDs `summary_{id}_{field}`.
+   * `chroma_delete_documents` silently ignores non-existent IDs, so we
+   * enumerate all six candidates in one batch. Fire-and-forget — Chroma
+   * cleanup is best-effort.
+   */
+  private async deleteSummaryDocs(summaryId: number): Promise<void> {
+    try {
+      await this.ensureCollectionExists();
+      const chromaMcp = ChromaMcpManager.getInstance();
+
+      const ids = [
+        `summary_${summaryId}_request`,
+        `summary_${summaryId}_investigated`,
+        `summary_${summaryId}_learned`,
+        `summary_${summaryId}_completed`,
+        `summary_${summaryId}_next_steps`,
+        `summary_${summaryId}_notes`,
+      ];
+
+      await chromaMcp.callTool('chroma_delete_documents', {
+        collection_name: this.collectionName,
+        ids,
+      });
+    } catch (error) {
+      logger.warn('CHROMA_SYNC', 'Failed to delete summary docs from Chroma', {
+        collection: this.collectionName,
+        summaryId,
+      }, error as Error);
+      // Fire-and-forget: Chroma cleanup is best-effort
+    }
+  }
+
+  /**
    * Sync a single summary to Chroma
-   * Blocks until sync completes, throws on error
+   * Blocks until sync completes, throws on error.
+   *
+   * Replace-by-stable-doc-ids contract: we always DELETE the six candidate
+   * doc ids (`summary_{id}_*`) BEFORE adding. This makes syncSummary
+   * idempotent on replay regardless of `chroma_add_documents` semantics —
+   * whether the server treats add-with-existing-id as upsert, error, or
+   * silent skip, the post-state is "one set of docs per summary id, freshly
+   * written". Critical for SummaryLane idempotent replay after crash.
+   *
+   * promptNumber accepts `null` for summaries whose turn cannot be resolved
+   * (grandfathered rows or turn-key dedup misses); see formatSummaryDocs for
+   * metadata encoding.
    */
   async syncSummary(
     summaryId: number,
     memorySessionId: string,
     project: string,
     summary: ParsedSummary,
-    promptNumber: number,
+    promptNumber: number | null,
     createdAtEpoch: number,
     discoveryTokens: number = 0
   ): Promise<void> {
+    // Replace-by-stable-doc-ids: delete before add guarantees idempotent
+    // replay even if the MCP server rejects duplicate IDs.
+    await this.deleteSummaryDocs(summaryId);
+
     // Convert ParsedSummary to StoredSummary format
     const stored: StoredSummary = {
       id: summaryId,

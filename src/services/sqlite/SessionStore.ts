@@ -697,6 +697,98 @@ export class SessionStore {
   }
 
   /**
+   * Get the user prompt row for a specific (contentSessionId, promptNumber)
+   * pair. Used by SummaryLane to resolve the per-turn userPrompt so each
+   * summary in a multi-turn session gets the CURRENT turn's request (not the
+   * session-metadata first-turn prompt stored in sdk_sessions.user_prompt).
+   */
+  getUserPromptByContentSessionAndPromptNumber(
+    contentSessionId: string,
+    promptNumber: number,
+  ): { prompt_text: string } | null {
+    const stmt = this.db.prepare(`
+      SELECT prompt_text
+      FROM user_prompts
+      WHERE content_session_id = ? AND prompt_number = ?
+      LIMIT 1
+    `);
+    return (stmt.get(contentSessionId, promptNumber) as { prompt_text: string } | undefined) ?? null;
+  }
+
+  /**
+   * Get a single session summary by its SQLite id. SummaryLane re-reads the
+   * persisted row after storeFreshSummaryForSession returns so downstream
+   * (Chroma sync, SSE broadcast) is driven by the stored row, never the
+   * (non-deterministic) LLM output.
+   *
+   * Schema note: `prompt_number`/`discovery_tokens` are NOT NULL in the
+   * modern schema, but are declared as optional on SessionSummaryRecord for
+   * backward-compatibility with legacy rows. Callers that need strict
+   * non-null semantics should coerce explicitly (e.g., `?? null` before
+   * passing to SSE payload shapes that accept `null`).
+   */
+  getSummaryById(id: number): SessionSummaryRecord | null {
+    const stmt = this.db.prepare(`
+      SELECT *
+      FROM session_summaries
+      WHERE id = ?
+      LIMIT 1
+    `);
+    return (stmt.get(id) as SessionSummaryRecord | undefined) ?? null;
+  }
+
+  /**
+   * Get observations for SummaryLane's fresh-query prompt, scoped by
+   * content_session_id + prompt_number window. This is the SummaryLane
+   * replacement for `getObservationsForSession(memory_session_id)` — using
+   * content_session_id avoids the subtle bug where the observer captures a
+   * new memory_session_id mid-flight (via ensureMemorySessionIdRegistered),
+   * making the old per-memory-session scope lose observations written before
+   * the id change.
+   *
+   * `queuedAtEpoch` is the summarize row's `created_at_epoch`, used as an
+   * upper bound on `created_at_epoch` for the fallback branch where an
+   * observation row has no prompt_number (NULL pre-migration data). Same
+   * pattern as PendingMessageStore.getPendingObservationCountUpToPrompt.
+   */
+  getObservationsForContentSessionUpToPrompt(
+    contentSessionId: string,
+    promptNumber: number,
+    queuedAtEpoch: number,
+  ): Array<{ type: string; title: string | null; narrative: string | null; facts: string[] }> {
+    const stmt = this.db.prepare(`
+      SELECT type, title, narrative, facts
+      FROM observations
+      WHERE content_session_id = ?
+        AND (
+          (prompt_number IS NOT NULL AND prompt_number <= ?)
+          OR (prompt_number IS NULL AND created_at_epoch <= ?)
+        )
+      ORDER BY id ASC
+    `);
+    const rows = stmt.all(contentSessionId, promptNumber, queuedAtEpoch) as Array<{
+      type: string;
+      title: string | null;
+      narrative: string | null;
+      facts: string | null;
+    }>;
+    return rows.map((r) => {
+      let facts: string[] = [];
+      if (r.facts) {
+        try {
+          const parsed = JSON.parse(r.facts);
+          if (Array.isArray(parsed)) {
+            facts = parsed.filter((f): f is string => typeof f === 'string');
+          }
+        } catch {
+          // Malformed facts JSON — fall through to empty
+        }
+      }
+      return { type: r.type, title: r.title, narrative: r.narrative, facts };
+    });
+  }
+
+  /**
    * Store an observation (from SDK parsing)
    * Assumes session already exists (created by hook)
    * Performs content-hash deduplication: skips INSERT if an identical observation exists within 30s

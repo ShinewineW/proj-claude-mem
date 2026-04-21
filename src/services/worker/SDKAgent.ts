@@ -835,7 +835,7 @@ export class SDKAgent {
     // transaction to avoid the FK race where the observer path updated
     // sdk_sessions.memory_session_id while our fresh query was running.
     // See src/services/worker/fresh-summarize-store.ts for the full story.
-    let stored: { id: number; createdAtEpoch: number; memorySessionId: string } | null;
+    let stored: Awaited<ReturnType<typeof storeFreshSummaryForSession>>;
     try {
       stored = storeFreshSummaryForSession(
         sessionStore,

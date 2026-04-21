@@ -115,6 +115,7 @@ import { SessionManager } from './worker/SessionManager.js';
 import { SSEBroadcaster } from './worker/SSEBroadcaster.js';
 import { SDKAgent } from './worker/SDKAgent.js';
 import { BypassLane } from './worker/BypassLane.js';
+import { SummaryLane } from './worker/SummaryLane.js';
 import { PaginationHelper } from './worker/PaginationHelper.js';
 import { SearchManager } from './worker/SearchManager.js';
 import { FormattingService } from './worker/FormattingService.js';
@@ -176,6 +177,7 @@ export class WorkerService {
   private paginationHelper: PaginationHelper;
   private sessionEventBroadcaster: SessionEventBroadcaster;
   private bypassLane: BypassLane;
+  private summaryLane: SummaryLane;
 
   // Route handlers
   private searchRoutes: SearchRoutes | null = null;
@@ -221,6 +223,19 @@ export class WorkerService {
     // Bypass lane: parallel REST consumer for observation throughput
     this.bypassLane = new BypassLane();
     this.bypassLane.setDependencies(this.sessionManager, this.dbManager);
+
+    // SummaryLane: global single consumer for pending_messages.summarize rows.
+    // Fully wired here; actually started after observation-only recovery
+    // kickoff in initializeBackground() to preserve the established startup
+    // order invariant (observations first, then summaries).
+    this.summaryLane = new SummaryLane();
+    this.summaryLane.setSessionManager(this.sessionManager);
+    this.summaryLane.setDbManager(this.dbManager);
+    this.summaryLane.setDbPathsProvider(() => this.getEnabledDbPaths());
+    this.summaryLane.setBroadcastSummary((payload) =>
+      this.sseBroadcaster.broadcast({ type: 'new_summary', summary: payload }),
+    );
+    this.summaryLane.setBroadcastProcessingStatus(() => this.broadcastProcessingStatus());
 
     this.paginationHelper = new PaginationHelper(this.dbManager);
     this.sessionEventBroadcaster = new SessionEventBroadcaster(this.sseBroadcaster, this);
@@ -623,7 +638,13 @@ export class WorkerService {
         }
       }, 30 * 60 * 1000); // Every 30 minutes
 
-      // Auto-recover orphaned queues (fire-and-forget with error logging)
+      // Auto-recover orphaned queues (fire-and-forget with error logging).
+      // SummaryLane starts AFTER observation-only recovery kickoff resolves —
+      // summarize rows depend on their session's observations being visible,
+      // and recovery is what re-instantiates the observer sessions that will
+      // stream more observations. Starting the lane before recovery kickoff
+      // races summarize claims against observations that haven't been written
+      // yet.
       this.processPendingQueues(50).then(result => {
         if (result.sessionsStarted > 0) {
           logger.info('SYSTEM', `Auto-recovered ${result.sessionsStarted} sessions with pending work`, {
@@ -632,8 +653,21 @@ export class WorkerService {
             sessionIds: result.startedSessionIds
           });
         }
+        // Lane is started unconditionally — even when recovery finds no
+        // sessions, the lane must be able to claim new summarize rows from
+        // live sessions going forward.
+        this.summaryLane.start();
+        logger.info('SYSTEM', 'SummaryLane started (post-recovery kickoff)');
       }).catch(error => {
         logger.error('SYSTEM', 'Auto-recovery of pending queues failed', {}, error as Error);
+        // Still start the lane so new summarize rows from live sessions are
+        // consumed — recovery failure shouldn't permanently disable summaries.
+        try {
+          this.summaryLane.start();
+          logger.info('SYSTEM', 'SummaryLane started (recovery failed, starting anyway)');
+        } catch (startError) {
+          logger.error('SYSTEM', 'SummaryLane start failed', {}, startError as Error);
+        }
       });
     } catch (error) {
       logger.error('SYSTEM', 'Background initialization failed', {}, error as Error);
@@ -1277,6 +1311,16 @@ export class WorkerService {
    * Shutdown the worker service
    */
   async shutdown(): Promise<void> {
+    // Stop SummaryLane FIRST so its fresh-query subprocess is aborted
+    // cleanly before any shared resources (DB pool, SSE broadcaster) tear
+    // down. Its abort signal propagates to the in-flight Claude subprocess
+    // through the AbortController wired by buildFreshSummarizeDeps.
+    try {
+      await this.summaryLane.stop();
+    } catch (err) {
+      logger.warn('SYSTEM', 'SummaryLane stop failed during shutdown', {}, err as Error);
+    }
+
     // Stop orphan reaper before shutdown (Issue #737)
     if (this.stopOrphanReaper) {
       this.stopOrphanReaper();

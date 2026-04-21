@@ -21,6 +21,15 @@
  *   correct because the summary represents work on sessionDbId N, and
  *   whichever memory_session_id is currently attached to that row is the
  *   one the summary belongs to.
+ *
+ * Turn-key dedup (Chunk 6b):
+ *   Before INSERTing, we check (content_session_id, prompt_number) turn key
+ *   against the partial unique index from Chunk 6a. If an existing row
+ *   matches, return it with action='returned_existing'. This makes idempotent
+ *   replay safe: SummaryLane can reclaim a pending summarize row after crash
+ *   without generating a duplicate summary. When promptNumber is absent or
+ *   contentSessionId is NULL the turn key is invalid and we fall back to the
+ *   content-hash dedup inside storeSummary.
  */
 
 import type { SessionStore } from '../sqlite/SessionStore.js';
@@ -34,14 +43,21 @@ export interface FreshSummaryPayload {
   notes: string | null;
 }
 
+export interface StoreFreshSummaryResult {
+  action: 'inserted' | 'returned_existing';
+  id: number;
+  createdAtEpoch: number;
+  memorySessionId: string;
+}
+
 export function storeFreshSummaryForSession(
   store: SessionStore,
   sessionDbId: number,
   summary: FreshSummaryPayload,
   opts?: { promptNumber?: number; discoveryTokens?: number; contentSessionId?: string | null },
-): { id: number; createdAtEpoch: number; memorySessionId: string } | null {
+): StoreFreshSummaryResult | null {
   const atomicInsert = store.db.transaction(
-    (): { id: number; createdAtEpoch: number; memorySessionId: string } | null => {
+    (): StoreFreshSummaryResult | null => {
       const row = store
         .db
         .prepare(
@@ -54,6 +70,36 @@ export function storeFreshSummaryForSession(
 
       const contentSessionId = opts?.contentSessionId ?? row.content_session_id ?? null;
 
+      // Turn-key dedup (Chunk 6a partial unique index): if this
+      // (content_session_id, prompt_number) has already produced a summary,
+      // return the existing row as 'returned_existing' so the caller can
+      // still drive downstream (Chroma sync, SSE broadcast) and confirm the
+      // pending_messages row idempotently. Guarded by non-NULL because the
+      // index is partial over non-NULL columns.
+      if (
+        contentSessionId !== null &&
+        opts?.promptNumber !== undefined &&
+        opts.promptNumber !== null
+      ) {
+        const existing = store
+          .db
+          .prepare(
+            `SELECT id, created_at_epoch FROM session_summaries
+             WHERE content_session_id = ? AND prompt_number = ?
+             LIMIT 1`,
+          )
+          .get(contentSessionId, opts.promptNumber) as { id: number; created_at_epoch: number } | undefined;
+
+        if (existing) {
+          return {
+            action: 'returned_existing',
+            id: existing.id,
+            createdAtEpoch: existing.created_at_epoch,
+            memorySessionId: row.memory_session_id,
+          };
+        }
+      }
+
       const stored = store.storeSummary(
         row.memory_session_id,
         row.project,
@@ -64,6 +110,7 @@ export function storeFreshSummaryForSession(
         contentSessionId,
       );
       return {
+        action: 'inserted',
         id: stored.id,
         createdAtEpoch: stored.createdAtEpoch,
         memorySessionId: row.memory_session_id,

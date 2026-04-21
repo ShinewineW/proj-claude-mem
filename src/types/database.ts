@@ -82,15 +82,38 @@ export interface ObservationRecord {
 export interface SessionSummaryRecord {
   id: number;
   memory_session_id: string;
+  /**
+   * Claude Code-facing session id (migration 29 adds the column). May be
+   * NULL for grandfathered rows inserted before the column existed.
+   */
+  content_session_id: string | null;
   project: string;
   request: string | null;
   investigated: string | null;
   learned: string | null;
   completed: string | null;
   next_steps: string | null;
+  /**
+   * Free-form notes — nullable because some summaries intentionally omit
+   * them (observer drift without specific caveats).
+   */
+  notes: string | null;
+  /**
+   * Files recorded against this summary (JSON-encoded string[]).
+   * Added by older migrations; not always populated.
+   */
+  files_read?: string | null;
+  files_edited?: string | null;
+  /**
+   * Content hash for idempotent dedup (migration 26).
+   */
+  content_hash?: string | null;
   created_at: string;
   created_at_epoch: number;
-  prompt_number?: number;
+  /**
+   * Optional (legacy rows) — may be undefined/null for pre-migration-X rows.
+   */
+  prompt_number?: number | null;
   discovery_tokens?: number;
 }
 

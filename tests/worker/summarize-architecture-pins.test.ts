@@ -109,6 +109,28 @@ describe('summary-lane architectural pins', () => {
       expect(src).toContain('user_prompts');
       expect(src).toContain('prompt_number');
     });
+
+    it('instantiates SummaryLane and wires its 5 dependencies', () => {
+      expect(src).toContain('new SummaryLane(');
+      expect(src).toContain('this.summaryLane.setSessionManager(');
+      expect(src).toContain('this.summaryLane.setDbManager(');
+      expect(src).toContain('this.summaryLane.setDbPathsProvider(');
+      expect(src).toContain('this.summaryLane.setBroadcastSummary(');
+      expect(src).toContain('this.summaryLane.setBroadcastProcessingStatus(');
+    });
+
+    it('starts SummaryLane AFTER observation-only recovery kickoff', () => {
+      // The call to summaryLane.start() must live inside the
+      // processPendingQueues(...).then() closure so observation recovery
+      // happens first, then the lane begins consuming summarize rows.
+      expect(src).toMatch(/processPendingQueues\([\s\S]*?\)\.then[\s\S]*?summaryLane\.start\(\)/);
+    });
+
+    it('stops SummaryLane at the top of shutdown()', () => {
+      // Stop first so the fresh-query subprocess aborts before the DB pool
+      // and SSE broadcaster tear down.
+      expect(src).toMatch(/async shutdown\(\)[\s\S]*?this\.summaryLane\.stop\(\)/);
+    });
   });
 
   describe('prompt content contract', () => {
