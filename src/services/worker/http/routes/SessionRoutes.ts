@@ -698,7 +698,10 @@ export class SessionRoutes extends BaseRouteHandler {
 
     const dbPath = req.body?.dbPath;
     const project = this.sessionManager.getSession(sessionDbId, dbPath)?.project;
-    await this.completionHandler.completeByDbId(sessionDbId, dbPath, project);
+    // Admin DELETE → immediate close + finalize. Post-SummaryLane, pending
+    // summarize rows persist; SummaryLane still consumes them against the
+    // now-completed session row.
+    await this.completionHandler.deleteByDbId(sessionDbId, dbPath, project);
 
     res.json({ status: 'deleted' });
   });

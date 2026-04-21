@@ -570,10 +570,14 @@ export class SessionManager {
   }
 
   /**
-   * Delete a session (abort SDK agent and cleanup)
-   * Preserves the legacy 60s drain wait for admin DELETE callers until
-   * Chunk 7 rewires the Stop hook to skip the drain entirely. Structurally
-   * this is now `drain-wait + closeSession + finalizeSession`.
+   * Delete a session (close + finalize).
+   *
+   * Post-SummaryLane: the legacy 60s drain is gone. SummaryLane owns the
+   * summarize lifecycle; pending summarize rows stay in pending_messages
+   * and are consumed asynchronously after the session row is marked
+   * completed. Admin DELETE (the primary caller for this path) is
+   * therefore immediate-finalize; Stop hook goes through closeSession
+   * directly via SessionCompletionHandler.
    */
   async deleteSession(sessionDbId: number, dbPath?: string): Promise<void> {
     const key = dbPath !== undefined
@@ -585,46 +589,13 @@ export class SessionManager {
 
     const sessionDuration = Date.now() - session.startTime;
 
-    // Mark closing early so generator-action treats pending exits as noop.
-    session.closing = true;
-
-    // Legacy drain wait — retained until Chunk 7 Stop-hook rewire removes it.
-    const DRAIN_MAX_WAIT_MS = 60_000;
-    const DRAIN_POLL_INTERVAL_MS = 500;
-    try {
-      const pendingStore = this.getPendingStore(session.dbPath);
-      if (this.hasPendingSummarize(sessionDbId, session.dbPath)) {
-        logger.info('SESSION', 'Waiting for pending summarize to drain before delete', { sessionDbId });
-        let waited = 0;
-        while (this.hasPendingSummarize(sessionDbId, session.dbPath) && waited < DRAIN_MAX_WAIT_MS) {
-          await new Promise(resolve => setTimeout(resolve, DRAIN_POLL_INTERVAL_MS));
-          waited += DRAIN_POLL_INTERVAL_MS;
-        }
-        if (waited >= DRAIN_MAX_WAIT_MS) {
-          logger.warn('SESSION', `Summarize drain timed out after ${DRAIN_MAX_WAIT_MS}ms, proceeding with delete`, { sessionDbId });
-          try {
-            const { failed: abandonCount, retried } = pendingStore.markAllSessionMessagesAbandoned(sessionDbId);
-            if (abandonCount + retried > 0) {
-              logger.warn('SESSION', `Marked ${abandonCount} messages abandoned after drain timeout (${retried} retryable)`, { sessionDbId });
-            }
-          } catch (abandonError) {
-            logger.warn('SESSION', 'Failed to mark messages as abandoned', { sessionDbId }, abandonError as Error);
-          }
-        } else {
-          logger.info('SESSION', `Summarize drained after ${waited}ms`, { sessionDbId });
-        }
-      }
-    } catch (error) {
-      logger.warn('SESSION', 'Error during summarize drain check, proceeding with delete', { sessionDbId }, error as Error);
-    }
-
     await this.closeSession(sessionDbId, dbPath);
     await this.finalizeSession(sessionDbId, dbPath);
 
     logger.info('SESSION', 'Session deleted', {
       sessionId: sessionDbId,
       duration: `${(sessionDuration / 1000).toFixed(1)}s`,
-      project: session.project
+      project: session.project,
     });
   }
 
