@@ -59,7 +59,8 @@ export function storeSummary(
   summary: SummaryInput,
   promptNumber?: number,
   discoveryTokens: number = 0,
-  overrideTimestampEpoch?: number
+  overrideTimestampEpoch?: number,
+  contentSessionId: string | null = null
 ): StoreSummaryResult {
   // Use override timestamp if provided (for processing backlog messages with original timestamps)
   const timestampEpoch = overrideTimestampEpoch ?? Date.now();
@@ -82,13 +83,14 @@ export function storeSummary(
 
   const stmt = db.prepare(`
     INSERT INTO session_summaries
-    (memory_session_id, project, request, investigated, learned, completed,
+    (memory_session_id, content_session_id, project, request, investigated, learned, completed,
      next_steps, notes, prompt_number, discovery_tokens, created_at, created_at_epoch, content_hash)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   const result = stmt.run(
     memorySessionId,
+    contentSessionId,
     project,
     summary.request,
     summary.investigated,

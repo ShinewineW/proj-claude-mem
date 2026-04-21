@@ -55,7 +55,8 @@ export function storeObservationsAndMarkComplete(
   messageId: number,
   promptNumber?: number,
   discoveryTokens: number = 0,
-  overrideTimestampEpoch?: number
+  overrideTimestampEpoch?: number,
+  contentSessionId: string | null = null
 ): StoreAndMarkCompleteResult {
   if (!project || project.trim() === '') {
     throw new Error('storeObservationsAndMarkComplete: project parameter is required');
@@ -72,9 +73,9 @@ export function storeObservationsAndMarkComplete(
     // 1. Store all observations (with content-hash deduplication)
     const obsStmt = db.prepare(`
       INSERT INTO observations
-      (memory_session_id, project, type, title, subtitle, facts, narrative, concepts,
+      (memory_session_id, content_session_id, project, type, title, subtitle, facts, narrative, concepts,
        files_read, files_modified, prompt_number, discovery_tokens, content_hash, created_at, created_at_epoch)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     for (const observation of observations) {
@@ -87,6 +88,7 @@ export function storeObservationsAndMarkComplete(
 
       const result = obsStmt.run(
         memorySessionId,
+        contentSessionId,
         project,
         observation.type,
         observation.title,
@@ -115,11 +117,11 @@ export function storeObservationsAndMarkComplete(
       } else {
         const result = db.prepare(`
           INSERT INTO session_summaries
-          (memory_session_id, project, request, investigated, learned, completed,
+          (memory_session_id, content_session_id, project, request, investigated, learned, completed,
            next_steps, notes, prompt_number, discovery_tokens, created_at, created_at_epoch, content_hash)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).run(
-          memorySessionId, project,
+          memorySessionId, contentSessionId, project,
           summary.request, summary.investigated, summary.learned, summary.completed,
           summary.next_steps, summary.notes,
           promptNumber || null, discoveryTokens, timestampIso, timestampEpoch, summaryHash
@@ -174,7 +176,8 @@ export function storeObservations(
   summary: SummaryInput | null,
   promptNumber?: number,
   discoveryTokens: number = 0,
-  overrideTimestampEpoch?: number
+  overrideTimestampEpoch?: number,
+  contentSessionId: string | null = null
 ): StoreObservationsResult {
   if (!project || project.trim() === '') {
     throw new Error('storeObservations: project parameter is required');
@@ -191,9 +194,9 @@ export function storeObservations(
     // 1. Store all observations (with content-hash deduplication)
     const obsStmt = db.prepare(`
       INSERT INTO observations
-      (memory_session_id, project, type, title, subtitle, facts, narrative, concepts,
+      (memory_session_id, content_session_id, project, type, title, subtitle, facts, narrative, concepts,
        files_read, files_modified, prompt_number, discovery_tokens, content_hash, created_at, created_at_epoch)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     for (const observation of observations) {
@@ -206,6 +209,7 @@ export function storeObservations(
 
       const result = obsStmt.run(
         memorySessionId,
+        contentSessionId,
         project,
         observation.type,
         observation.title,
@@ -234,11 +238,11 @@ export function storeObservations(
       } else {
         const result = db.prepare(`
           INSERT INTO session_summaries
-          (memory_session_id, project, request, investigated, learned, completed,
+          (memory_session_id, content_session_id, project, request, investigated, learned, completed,
            next_steps, notes, prompt_number, discovery_tokens, created_at, created_at_epoch, content_hash)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).run(
-          memorySessionId, project,
+          memorySessionId, contentSessionId, project,
           summary.request, summary.investigated, summary.learned, summary.completed,
           summary.next_steps, summary.notes,
           promptNumber || null, discoveryTokens, timestampIso, timestampEpoch, summaryHash

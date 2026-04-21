@@ -716,7 +716,8 @@ export class SessionStore {
     },
     promptNumber?: number,
     discoveryTokens: number = 0,
-    overrideTimestampEpoch?: number
+    overrideTimestampEpoch?: number,
+    contentSessionId: string | null = null
   ): { id: number; createdAtEpoch: number } {
     // Use override timestamp if provided (for processing backlog messages with original timestamps)
     const timestampEpoch = overrideTimestampEpoch ?? Date.now();
@@ -735,13 +736,14 @@ export class SessionStore {
 
     const stmt = this.db.prepare(`
       INSERT INTO observations
-      (memory_session_id, project, type, title, subtitle, facts, narrative, concepts,
+      (memory_session_id, content_session_id, project, type, title, subtitle, facts, narrative, concepts,
        files_read, files_modified, prompt_number, discovery_tokens, content_hash, created_at, created_at_epoch)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     const result = stmt.run(
       memorySessionId,
+      contentSessionId,
       project,
       observation.type,
       observation.title,
@@ -779,7 +781,8 @@ export class SessionStore {
     promptNumber: number | null,
     discoveryTokens: number,
     timestampIso: string,
-    timestampEpoch: number
+    timestampEpoch: number,
+    contentSessionId: string | null = null
   ): { id: number; createdAtEpoch: number } {
     const contentHash = computeSummaryContentHash(memorySessionId, summary.request, summary.investigated);
     const existing = findDuplicateSummary(this.db, contentHash, timestampEpoch);
@@ -789,11 +792,11 @@ export class SessionStore {
 
     const result = this.db.prepare(`
       INSERT INTO session_summaries
-      (memory_session_id, project, request, investigated, learned, completed,
+      (memory_session_id, content_session_id, project, request, investigated, learned, completed,
        next_steps, notes, prompt_number, discovery_tokens, created_at, created_at_epoch, content_hash)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
-      memorySessionId, project,
+      memorySessionId, contentSessionId, project,
       summary.request, summary.investigated, summary.learned, summary.completed,
       summary.next_steps, summary.notes,
       promptNumber, discoveryTokens, timestampIso, timestampEpoch, contentHash
@@ -808,11 +811,12 @@ export class SessionStore {
     summary: { request: string; investigated: string; learned: string; completed: string; next_steps: string; notes: string | null },
     promptNumber?: number,
     discoveryTokens: number = 0,
-    overrideTimestampEpoch?: number
+    overrideTimestampEpoch?: number,
+    contentSessionId: string | null = null
   ): { id: number; createdAtEpoch: number } {
     const timestampEpoch = overrideTimestampEpoch ?? Date.now();
     const timestampIso = new Date(timestampEpoch).toISOString();
-    return this.insertSummaryDeduped(memorySessionId, project, summary, promptNumber || null, discoveryTokens, timestampIso, timestampEpoch);
+    return this.insertSummaryDeduped(memorySessionId, project, summary, promptNumber || null, discoveryTokens, timestampIso, timestampEpoch, contentSessionId);
   }
 
   /**
@@ -854,7 +858,8 @@ export class SessionStore {
     } | null,
     promptNumber?: number,
     discoveryTokens: number = 0,
-    overrideTimestampEpoch?: number
+    overrideTimestampEpoch?: number,
+    contentSessionId: string | null = null
   ): { observationIds: number[]; summaryId: number | null; createdAtEpoch: number } {
     if (!project || project.trim() === '') {
       throw new Error('storeObservations: project parameter is required');
@@ -871,14 +876,15 @@ export class SessionStore {
       // 1. Store all observations
       const obsStmt = this.db.prepare(`
         INSERT INTO observations
-        (memory_session_id, project, type, title, subtitle, facts, narrative, concepts,
+        (memory_session_id, content_session_id, project, type, title, subtitle, facts, narrative, concepts,
          files_read, files_modified, prompt_number, discovery_tokens, created_at, created_at_epoch)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
 
       for (const observation of observations) {
         const result = obsStmt.run(
           memorySessionId,
+          contentSessionId,
           project,
           observation.type,
           observation.title,
@@ -898,7 +904,7 @@ export class SessionStore {
 
       // 2. Store summary if provided (with content-hash dedup)
       const summaryId = summary
-        ? this.insertSummaryDeduped(memorySessionId, project, summary, promptNumber || null, discoveryTokens, timestampIso, timestampEpoch).id
+        ? this.insertSummaryDeduped(memorySessionId, project, summary, promptNumber || null, discoveryTokens, timestampIso, timestampEpoch, contentSessionId).id
         : null;
 
       return { observationIds, summaryId, createdAtEpoch: timestampEpoch };
@@ -956,7 +962,8 @@ export class SessionStore {
     _pendingStore: PendingMessageStore,
     promptNumber?: number,
     discoveryTokens: number = 0,
-    overrideTimestampEpoch?: number
+    overrideTimestampEpoch?: number,
+    contentSessionId: string | null = null
   ): { observationIds: number[]; summaryId?: number; createdAtEpoch: number } {
     if (!project || project.trim() === '') {
       throw new Error('storeObservationsAndMarkComplete: project parameter is required');
@@ -973,14 +980,15 @@ export class SessionStore {
       // 1. Store all observations
       const obsStmt = this.db.prepare(`
         INSERT INTO observations
-        (memory_session_id, project, type, title, subtitle, facts, narrative, concepts,
+        (memory_session_id, content_session_id, project, type, title, subtitle, facts, narrative, concepts,
          files_read, files_modified, prompt_number, discovery_tokens, created_at, created_at_epoch)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
 
       for (const observation of observations) {
         const result = obsStmt.run(
           memorySessionId,
+          contentSessionId,
           project,
           observation.type,
           observation.title,
@@ -1000,7 +1008,7 @@ export class SessionStore {
 
       // 2. Store summary if provided (with content-hash dedup)
       const summaryId = summary
-        ? this.insertSummaryDeduped(memorySessionId, project, summary, promptNumber || null, discoveryTokens, timestampIso, timestampEpoch).id
+        ? this.insertSummaryDeduped(memorySessionId, project, summary, promptNumber || null, discoveryTokens, timestampIso, timestampEpoch, contentSessionId).id
         : undefined;
 
       // 3. Mark pending message as processed

@@ -841,7 +841,11 @@ export class SDKAgent {
         sessionStore,
         sessionDbId,
         summaryPayload,
-        { promptNumber: session?.lastPromptNumber, discoveryTokens: 0 },
+        {
+          promptNumber: session?.lastPromptNumber,
+          discoveryTokens: 0,
+          contentSessionId: session?.contentSessionId ?? sessionRow.content_session_id ?? null,
+        },
       );
     } catch (err) {
       logger.error(

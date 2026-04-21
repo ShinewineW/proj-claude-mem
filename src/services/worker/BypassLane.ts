@@ -649,6 +649,7 @@ export class BypassLane {
       message.prompt_number || undefined,
       0, // discoveryTokens
       message.created_at_epoch,
+      session.contentSessionId,
     );
 
     // Chroma sync (fire-and-forget)

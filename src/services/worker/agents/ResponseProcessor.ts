@@ -165,7 +165,8 @@ export async function processAgentResponse(
     summaryForStore,
     session.lastPromptNumber,
     discoveryTokens,
-    originalTimestamp ?? undefined
+    originalTimestamp ?? undefined,
+    session.contentSessionId
   );
 
   // Log storage result with IDs for end-to-end traceability

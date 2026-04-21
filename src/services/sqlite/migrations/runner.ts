@@ -38,6 +38,11 @@ export class MigrationRunner {
       ['addObservationAccessCountColumn', () => this.addObservationAccessCountColumn()],
       ['createRetentionMetadataTable', () => this.createRetentionMetadataTable()],
       ['addSummaryContentHashColumn', () => this.addSummaryContentHashColumn()],
+      ['createSummaryLanePreMigrationSnapshot', () => this.createSummaryLanePreMigrationSnapshot()],
+      ['addObservationContentSessionIdColumn', () => this.addObservationContentSessionIdColumn()],
+      ['addSummaryContentSessionIdColumn', () => this.addSummaryContentSessionIdColumn()],
+      ['backfillContentSessionIds', () => this.backfillContentSessionIds()],
+      ['addSummaryTurnUniqueIndex', () => this.addSummaryTurnUniqueIndex()],
     ];
 
     for (const [name, fn] of steps) {
@@ -92,6 +97,7 @@ export class MigrationRunner {
       CREATE TABLE IF NOT EXISTS observations (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         memory_session_id TEXT NOT NULL,
+        content_session_id TEXT,
         project TEXT NOT NULL,
         text TEXT NOT NULL,
         type TEXT NOT NULL,
@@ -108,6 +114,7 @@ export class MigrationRunner {
       CREATE TABLE IF NOT EXISTS session_summaries (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         memory_session_id TEXT UNIQUE NOT NULL,
+        content_session_id TEXT,
         project TEXT NOT NULL,
         request TEXT,
         investigated TEXT,
@@ -198,8 +205,20 @@ export class MigrationRunner {
    */
   private removeSessionSummariesUniqueConstraint(): void {
     // Check actual constraint state — don't rely on version tracking alone (issue #979)
+    //
+    // We specifically look for the AUTO-GENERATED UNIQUE index on
+    // memory_session_id (`origin='u'` in sqlite_master / implicit from the
+    // `UNIQUE` column modifier), NOT any other unique index. Migration 31
+    // adds a partial unique index on (content_session_id, prompt_number),
+    // which is a legitimate new constraint that must not trigger a rebuild.
     const summariesIndexes = this.db.query('PRAGMA index_list(session_summaries)').all() as IndexInfo[];
-    const hasUniqueConstraint = summariesIndexes.some(idx => idx.unique === 1);
+    const hasUniqueConstraint = summariesIndexes.some(idx => {
+      if (idx.unique !== 1) return false;
+      // Only the column-level `UNIQUE` modifier produces an auto-index on memory_session_id.
+      // Check index columns: if it's a single-column index on memory_session_id, it's the legacy one.
+      const cols = this.db.query(`PRAGMA index_info(${idx.name})`).all() as Array<{ name: string }>;
+      return cols.length === 1 && cols[0].name === 'memory_session_id';
+    });
 
     if (!hasUniqueConstraint) {
       // Already migrated (no constraint exists)
@@ -953,5 +972,169 @@ export class MigrationRunner {
 
     this.db.prepare('INSERT OR IGNORE INTO schema_versions (version, applied_at) VALUES (?, ?)').run(26, new Date().toISOString());
     logger.debug('DB', 'Added content_hash column to session_summaries for dedup');
+  }
+
+  /**
+   * Create pre-migration snapshot tables for the SummaryLane refactor (migration 27)
+   *
+   * Captures the state of `observations` and `session_summaries` BEFORE content_session_id
+   * backfill + dedup. Enables recovery if the SummaryLane migration chain (27-31) turns out
+   * to corrupt data in unexpected ways on real-world DBs.
+   *
+   * The snapshots are one-shot: created on the first migration run, never updated.
+   * They exist only as a rescue hatch — they are NOT part of the live query surface.
+   */
+  private createSummaryLanePreMigrationSnapshot(): void {
+    const applied = this.db.prepare('SELECT version FROM schema_versions WHERE version = ?').get(27) as SchemaVersion | undefined;
+    if (applied) return;
+
+    // CREATE TABLE AS SELECT is idempotent against double-run only if we drop first — but we don't
+    // want to drop, because an existing snapshot is the source of truth for recovery. Guard via
+    // sqlite_master existence check.
+    const existingObsSnapshot = this.db.query(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name='observations_premigration_summarylane'"
+    ).all() as TableNameRow[];
+
+    if (existingObsSnapshot.length === 0) {
+      // Table might not exist on completely fresh DBs — guard with IF NOT EXISTS on source too.
+      const obsTableExists = this.db.query(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='observations'"
+      ).all() as TableNameRow[];
+      if (obsTableExists.length > 0) {
+        this.db.run(`CREATE TABLE observations_premigration_summarylane AS SELECT * FROM observations`);
+        logger.debug('DB', 'Created pre-migration snapshot: observations_premigration_summarylane');
+      }
+    }
+
+    const existingSumSnapshot = this.db.query(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name='session_summaries_premigration_summarylane'"
+    ).all() as TableNameRow[];
+
+    if (existingSumSnapshot.length === 0) {
+      const sumTableExists = this.db.query(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='session_summaries'"
+      ).all() as TableNameRow[];
+      if (sumTableExists.length > 0) {
+        this.db.run(`CREATE TABLE session_summaries_premigration_summarylane AS SELECT * FROM session_summaries`);
+        logger.debug('DB', 'Created pre-migration snapshot: session_summaries_premigration_summarylane');
+      }
+    }
+
+    this.db.prepare('INSERT OR IGNORE INTO schema_versions (version, applied_at) VALUES (?, ?)').run(27, new Date().toISOString());
+  }
+
+  /**
+   * Add content_session_id column to observations table (migration 28)
+   *
+   * Part of the SummaryLane refactor. Observations and summaries gain a content_session_id
+   * column so the partial unique index on (content_session_id, prompt_number) can enforce
+   * per-turn summary uniqueness without involving memory_session_id (which is UPDATEd async).
+   *
+   * Idempotent: skips ALTER if column already exists.
+   */
+  private addObservationContentSessionIdColumn(): void {
+    const applied = this.db.prepare('SELECT version FROM schema_versions WHERE version = ?').get(28) as SchemaVersion | undefined;
+    if (applied) return;
+
+    const tableInfo = this.db.query('PRAGMA table_info(observations)').all() as TableColumnInfo[];
+    const hasColumn = tableInfo.some(col => col.name === 'content_session_id');
+
+    if (!hasColumn) {
+      this.db.run('ALTER TABLE observations ADD COLUMN content_session_id TEXT');
+      logger.debug('DB', 'Added content_session_id column to observations table');
+    }
+
+    this.db.prepare('INSERT OR IGNORE INTO schema_versions (version, applied_at) VALUES (?, ?)').run(28, new Date().toISOString());
+  }
+
+  /**
+   * Add content_session_id column to session_summaries table (migration 29)
+   */
+  private addSummaryContentSessionIdColumn(): void {
+    const applied = this.db.prepare('SELECT version FROM schema_versions WHERE version = ?').get(29) as SchemaVersion | undefined;
+    if (applied) return;
+
+    const tableInfo = this.db.query('PRAGMA table_info(session_summaries)').all() as TableColumnInfo[];
+    const hasColumn = tableInfo.some(col => col.name === 'content_session_id');
+
+    if (!hasColumn) {
+      this.db.run('ALTER TABLE session_summaries ADD COLUMN content_session_id TEXT');
+      logger.debug('DB', 'Added content_session_id column to session_summaries table');
+    }
+
+    this.db.prepare('INSERT OR IGNORE INTO schema_versions (version, applied_at) VALUES (?, ?)').run(29, new Date().toISOString());
+  }
+
+  /**
+   * Backfill content_session_id on existing observations and session_summaries (migration 30)
+   *
+   * Historic rows have NULL content_session_id. Join on memory_session_id → sdk_sessions to
+   * recover the value. Rows whose parent session is gone stay NULL — the partial unique
+   * index explicitly excludes them (WHERE content_session_id IS NOT NULL).
+   */
+  private backfillContentSessionIds(): void {
+    const applied = this.db.prepare('SELECT version FROM schema_versions WHERE version = ?').get(30) as SchemaVersion | undefined;
+    if (applied) return;
+
+    this.db.run(`
+      UPDATE observations
+      SET content_session_id = (
+        SELECT content_session_id FROM sdk_sessions
+        WHERE sdk_sessions.memory_session_id = observations.memory_session_id
+        LIMIT 1
+      )
+      WHERE content_session_id IS NULL
+    `);
+
+    this.db.run(`
+      UPDATE session_summaries
+      SET content_session_id = (
+        SELECT content_session_id FROM sdk_sessions
+        WHERE sdk_sessions.memory_session_id = session_summaries.memory_session_id
+        LIMIT 1
+      )
+      WHERE content_session_id IS NULL
+    `);
+
+    logger.debug('DB', 'Backfilled content_session_id on observations and session_summaries');
+
+    this.db.prepare('INSERT OR IGNORE INTO schema_versions (version, applied_at) VALUES (?, ?)').run(30, new Date().toISOString());
+  }
+
+  /**
+   * Historical duplicate cleanup + partial unique index on session_summaries (migration 31)
+   *
+   * Before creating the partial unique index, dedupe existing rows by
+   * (content_session_id, prompt_number) keeping the newest id. Then create the index
+   * to enforce one summary per turn going forward.
+   *
+   * The index is partial: NULL content_session_id or NULL prompt_number is excluded, so
+   * legacy rows and edge cases don't trigger spurious conflicts.
+   */
+  private addSummaryTurnUniqueIndex(): void {
+    const applied = this.db.prepare('SELECT version FROM schema_versions WHERE version = ?').get(31) as SchemaVersion | undefined;
+    if (applied) return;
+
+    // Dedupe: keep highest id per (content_session_id, prompt_number)
+    this.db.run(`
+      DELETE FROM session_summaries
+      WHERE id NOT IN (
+        SELECT MAX(id)
+        FROM session_summaries
+        WHERE content_session_id IS NOT NULL
+        GROUP BY content_session_id, prompt_number
+      )
+      AND content_session_id IS NOT NULL
+    `);
+
+    this.db.run(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_session_summaries_turn_unique
+      ON session_summaries(content_session_id, prompt_number)
+      WHERE content_session_id IS NOT NULL AND prompt_number IS NOT NULL
+    `);
+
+    logger.debug('DB', 'Deduped session_summaries and added partial unique index on (content_session_id, prompt_number)');
+
+    this.db.prepare('INSERT OR IGNORE INTO schema_versions (version, applied_at) VALUES (?, ?)').run(31, new Date().toISOString());
   }
 }

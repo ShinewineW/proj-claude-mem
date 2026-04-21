@@ -38,19 +38,21 @@ export function storeFreshSummaryForSession(
   store: SessionStore,
   sessionDbId: number,
   summary: FreshSummaryPayload,
-  opts?: { promptNumber?: number; discoveryTokens?: number },
+  opts?: { promptNumber?: number; discoveryTokens?: number; contentSessionId?: string | null },
 ): { id: number; createdAtEpoch: number; memorySessionId: string } | null {
   const atomicInsert = store.db.transaction(
     (): { id: number; createdAtEpoch: number; memorySessionId: string } | null => {
       const row = store
         .db
         .prepare(
-          `SELECT memory_session_id, project FROM sdk_sessions WHERE id = ? LIMIT 1`,
+          `SELECT memory_session_id, project, content_session_id FROM sdk_sessions WHERE id = ? LIMIT 1`,
         )
-        .get(sessionDbId) as { memory_session_id: string | null; project: string } | undefined;
+        .get(sessionDbId) as { memory_session_id: string | null; project: string; content_session_id: string | null } | undefined;
 
       if (!row) return null;
       if (!row.memory_session_id) return null;
+
+      const contentSessionId = opts?.contentSessionId ?? row.content_session_id ?? null;
 
       const stored = store.storeSummary(
         row.memory_session_id,
@@ -58,6 +60,8 @@ export function storeFreshSummaryForSession(
         summary,
         opts?.promptNumber,
         opts?.discoveryTokens ?? 0,
+        undefined,
+        contentSessionId,
       );
       return {
         id: stored.id,
