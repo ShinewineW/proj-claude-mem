@@ -811,6 +811,40 @@ export class PendingMessageStore {
   }
 
   /**
+   * Mark as failed only the summarize rows that are TRULY orphaned:
+   *   (a) session row missing, OR
+   *   (b) session row status='failed'.
+   *
+   * Unlike markOrphanedSummarizesFailed (which checks in-memory active map),
+   * this respects the "completed session != orphan" invariant — completed
+   * sessions keep their pending summarize for SummaryLane to process.
+   *
+   * NOTE: the `opts.skipDbPaths` argument is reserved for future cross-DB
+   * filtering in multi-project orchestration. The per-DB invocation here is
+   * already safe when callers only invoke on currently-enabled projects.
+   */
+  markTrulyOrphanedSummarizesFailed(
+    staleThresholdMs: number = 5 * 60 * 1000,
+    _opts: { skipDbPaths?: ReadonlySet<string> } = {},
+  ): number {
+    const now = Date.now();
+    const staleCutoff = now - staleThresholdMs;
+
+    const result = this.db.prepare(`
+      UPDATE pending_messages
+      SET status = 'failed', failed_at_epoch = ?
+      WHERE message_type = 'summarize'
+        AND status IN ('pending', 'processing')
+        AND created_at_epoch < ?
+        AND (
+          session_db_id NOT IN (SELECT id FROM sdk_sessions)
+          OR session_db_id IN (SELECT id FROM sdk_sessions WHERE status = 'failed')
+        )
+    `).run(now, staleCutoff);
+    return result.changes;
+  }
+
+  /**
    * Get all session IDs that have pending messages (for recovery on startup)
    */
   getSessionsWithPendingMessages(): number[] {
