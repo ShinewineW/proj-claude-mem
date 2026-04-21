@@ -548,6 +548,36 @@ export class PendingMessageStore {
   }
 
   /**
+   * Observation-scoped variant of markAllSessionMessagesAbandoned.
+   * Used by worker-service startup recovery failure & ghost cleanup paths
+   * that must NOT kill in-flight summarize rows owned by SummaryLane.
+   */
+  markSessionObservationMessagesAbandoned(sessionDbId: number): { retried: number; failed: number } {
+    const now = Date.now();
+    const result = this.db.prepare(`
+      UPDATE pending_messages
+      SET status = 'failed', failed_at_epoch = ?
+      WHERE session_db_id = ?
+        AND message_type = 'observation'
+        AND status IN ('pending', 'processing')
+    `).run(now, sessionDbId);
+    return { retried: 0, failed: result.changes };
+  }
+
+  /**
+   * Return session ids that have any pending/processing observation rows.
+   * Observation-scoped counterpart to getSessionsWithPendingMessages; used by
+   * startup recovery to decide which session processors to re-launch.
+   */
+  getSessionsWithPendingObservations(): number[] {
+    const rows = this.db.prepare(`
+      SELECT DISTINCT session_db_id FROM pending_messages
+      WHERE message_type = 'observation' AND status IN ('pending', 'processing')
+    `).all() as { session_db_id: number }[];
+    return rows.map(r => r.session_db_id);
+  }
+
+  /**
    * Unconditionally mark all pending and processing messages for a session as 'failed'.
    * Called when a session is being abandoned (generator crashed repeatedly, drain timeout, etc.).
    * No retries — if the pipeline is fundamentally broken, retrying produces the same failure,

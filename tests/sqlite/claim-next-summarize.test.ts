@@ -213,3 +213,38 @@ describe('PendingMessageStore.resetStaleObservationProcessing', () => {
     expect(row.status).toBe('processing');
   });
 });
+
+describe('PendingMessageStore observation-only helpers', () => {
+  it('markSessionObservationMessagesAbandoned only fails observation rows', () => {
+    const { db, pending, sessionDbId } = setupStore();
+    const obsId = pending.enqueue(sessionDbId, 'test-content-session-id', {
+      type: 'observation', tool_name: 'Bash', tool_input: '{}', tool_response: '{}', prompt_number: 1, cwd: '/tmp',
+    });
+    const sumId = pending.enqueue(sessionDbId, 'test-content-session-id', {
+      type: 'summarize', last_assistant_message: 'x', prompt_number: 1,
+    });
+
+    const result = pending.markSessionObservationMessagesAbandoned(sessionDbId);
+    expect(result.failed).toBe(1);
+
+    const obs = db.prepare(`SELECT status FROM pending_messages WHERE id=?`).get(obsId) as { status: string };
+    const sum = db.prepare(`SELECT status FROM pending_messages WHERE id=?`).get(sumId) as { status: string };
+    expect(obs.status).toBe('failed');
+    expect(sum.status).toBe('pending');
+  });
+
+  it('getSessionsWithPendingObservations returns only sessions with observation work', () => {
+    const { db, pending, sessionDbId } = setupStore();
+    const otherSession = createSDKSession(db, 'cs-other', 'proj-other', 'p');
+    pending.enqueue(sessionDbId, 'test-content-session-id', {
+      type: 'observation', tool_name: 'Bash', tool_input: '{}', tool_response: '{}', prompt_number: 1, cwd: '/tmp',
+    });
+    pending.enqueue(otherSession, 'cs-other', {
+      type: 'summarize', last_assistant_message: 'x', prompt_number: 1,
+    });
+
+    const ids = pending.getSessionsWithPendingObservations();
+    expect(ids).toContain(sessionDbId);
+    expect(ids).not.toContain(otherSession);
+  });
+});
