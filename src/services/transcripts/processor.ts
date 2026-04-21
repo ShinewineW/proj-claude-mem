@@ -2,13 +2,14 @@ import { sessionInitHandler } from '../../cli/handlers/session-init.js';
 import { observationHandler } from '../../cli/handlers/observation.js';
 import { fileEditHandler } from '../../cli/handlers/file-edit.js';
 import { sessionCompleteHandler } from '../../cli/handlers/session-complete.js';
-import { ensureWorkerRunning, getWorkerPort } from '../../shared/worker-utils.js';
+import { ensureWorkerRunning, getWorkerPort, fetchWithTimeout } from '../../shared/worker-utils.js';
 import { logger } from '../../utils/logger.js';
 import { getProjectContext } from '../../utils/project-name.js';
 import { writeAgentsMd } from '../../utils/agents-md-utils.js';
 import { resolveFieldSpec, resolveFields, matchesRule } from './field-utils.js';
 import { expandHomePath } from './config.js';
 import { resolveProjectContext } from '../../shared/project-allowlist.js';
+import { writeFallbackEntry } from '../../shared/fallback-queue.js';
 import type { TranscriptSchema, WatchTarget, SchemaEvent } from './types.js';
 
 interface SessionState {
@@ -315,28 +316,72 @@ export class TranscriptEventProcessor {
   }
 
   private async queueSummary(session: SessionState): Promise<void> {
-    const workerReady = await ensureWorkerRunning();
-    if (!workerReady) return;
-
-    const port = getWorkerPort();
-    const lastAssistantMessage = session.lastAssistantMessage ?? '';
-
     const summaryCtx = resolveProjectContext(session.cwd ?? process.cwd());
     if (!summaryCtx) return;  // Cannot resolve project — skip summary
 
+    const lastAssistantMessage = session.lastAssistantMessage ?? '';
+    const workerReady = await ensureWorkerRunning();
+
+    // F6 durability contract: mirror the Stop-hook path. When the worker is
+    // unavailable, write a fallback entry so replay can resolve later. Never
+    // silently drop.
+    if (!workerReady) {
+      writeFallbackEntry({
+        type: 'summarize',
+        sessionId: session.sessionId,
+        cwd: session.cwd ?? process.cwd(),
+        dbPath: summaryCtx.dbPath,
+        timestamp: Date.now(),
+        payload: { last_assistant_message: lastAssistantMessage },
+      });
+      return;
+    }
+
+    const port = getWorkerPort();
+    // F6 hook-side pre-resolution: ask the worker for the current
+    // prompt_number before POSTing. Null on any failure (timeout, 404, etc.)
+    // — SessionRoutes server-side fallback still covers back-compat.
+    let promptNumber: number | null = null;
     try {
+      const url = `http://127.0.0.1:${port}/api/sessions/resolve-prompt-number`
+        + `?contentSessionId=${encodeURIComponent(session.sessionId)}`
+        + `&dbPath=${encodeURIComponent(summaryCtx.dbPath)}`;
+      const res = await fetchWithTimeout(url, { method: 'GET' }, 2000);
+      if (res.ok) {
+        const body = await res.json() as { prompt_number?: unknown };
+        const pn = body.prompt_number;
+        if (typeof pn === 'number' && Number.isFinite(pn) && pn > 0) promptNumber = pn;
+      }
+    } catch {
+      // leave promptNumber as null — server-side fallback will try to resolve
+    }
+
+    try {
+      const requestBody: Record<string, unknown> = {
+        contentSessionId: session.sessionId,
+        last_assistant_message: lastAssistantMessage,
+        dbPath: summaryCtx.dbPath,
+      };
+      if (promptNumber !== null) {
+        requestBody.prompt_number = promptNumber;
+      }
       await fetch(`http://127.0.0.1:${port}/api/sessions/summarize`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contentSessionId: session.sessionId,
-          last_assistant_message: lastAssistantMessage,
-          dbPath: summaryCtx.dbPath
-        })
+        body: JSON.stringify(requestBody),
       });
     } catch (error) {
-      logger.warn('TRANSCRIPT', 'Summary request failed', {
-        error: error instanceof Error ? error.message : String(error)
+      logger.warn('TRANSCRIPT', 'Summary request failed, writing fallback', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      // Durability contract: fetch error must not drop the summarize request.
+      writeFallbackEntry({
+        type: 'summarize',
+        sessionId: session.sessionId,
+        cwd: session.cwd ?? process.cwd(),
+        dbPath: summaryCtx.dbPath,
+        timestamp: Date.now(),
+        payload: { last_assistant_message: lastAssistantMessage },
       });
     }
   }

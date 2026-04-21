@@ -126,12 +126,14 @@ describe('L6: transcript queueSummary with drifted cwd', () => {
     // Call queueSummary via cast (private method)
     await (processor as any).queueSummary(session);
 
-    // Verify fetch was called
-    expect(fetchCalls.length).toBe(1);
-    expect(fetchCalls[0].url).toBe('http://127.0.0.1:37777/api/sessions/summarize');
+    // F6: queueSummary now GETs /resolve-prompt-number before POSTing summarize,
+    // so two fetches are expected. Filter on the POST to preserve the
+    // historical intent of this pin (dbPath routing under cwd drift).
+    const postCall = fetchCalls.find(c => c.url.endsWith('/api/sessions/summarize'));
+    expect(postCall).toBeDefined();
 
     // KEY ASSERTION: dbPath in POST body is the PARENT project's path
-    const sentDbPath = fetchCalls[0].body.dbPath;
+    const sentDbPath = postCall!.body.dbPath;
     expect(sentDbPath).toBe(join(TEST_PROJECT, '.claude', 'mem.db'));
 
     // NOT the nested repo's path (this is what the old resolveProjectDbPath would produce)
