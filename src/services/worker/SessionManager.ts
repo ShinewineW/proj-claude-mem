@@ -30,6 +30,32 @@ export interface DbUnreachableCleanup {
   dbPath: string;
 }
 
+/**
+ * Maximum character count for `last_assistant_message` passed through
+ * `queueSummarize` into `pending_messages`. The value flows into the fresh
+ * Claude subprocess prompt verbatim, so an unbounded length is both a memory
+ * pressure and a straightforward DoS vector via crafted hook input. 64 KB is
+ * generous for every realistic assistant response while capping the attack
+ * surface.
+ */
+export const MAX_LAST_ASSISTANT_MESSAGE_CHARS = 64 * 1024;
+
+/**
+ * Inserted in place of the truncated head of an oversize
+ * `last_assistant_message`. The tail is preserved because the recent
+ * assistant output is what actually drives summarization; the head is
+ * historical context that has already been digested into observations.
+ */
+export const LAST_ASSISTANT_MESSAGE_TRUNCATION_MARKER =
+  '[...truncated — head removed to cap length]\n';
+
+function capLastAssistantMessage(msg: string | undefined): string | undefined {
+  if (msg === undefined) return undefined;
+  if (msg.length <= MAX_LAST_ASSISTANT_MESSAGE_CHARS) return msg;
+  const tailLen = MAX_LAST_ASSISTANT_MESSAGE_CHARS;
+  return LAST_ASSISTANT_MESSAGE_TRUNCATION_MARKER + msg.slice(-tailLen);
+}
+
 export class SessionManager {
   private dbManager: DatabaseManager;
   private sessions: Map<string, ActiveSession> = new Map();
@@ -424,9 +450,20 @@ export class SessionManager {
     }
 
     const pendingStore = this.getPendingStore(session.dbPath);
+    const cappedMsg = capLastAssistantMessage(input.lastAssistantMessage);
+    if (
+      input.lastAssistantMessage !== undefined &&
+      cappedMsg !== input.lastAssistantMessage
+    ) {
+      logger.warn('SESSION', 'queueSummarize: lastAssistantMessage exceeded cap, truncated head', {
+        sessionDbId,
+        originalLength: input.lastAssistantMessage.length,
+        cappedLength: cappedMsg?.length ?? 0,
+      });
+    }
     pendingStore.enqueue(sessionDbId, session.contentSessionId, {
       type: 'summarize',
-      last_assistant_message: input.lastAssistantMessage,
+      last_assistant_message: cappedMsg,
       prompt_number: input.promptNumber,
     });
 
