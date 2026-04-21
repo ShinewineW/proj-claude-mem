@@ -201,6 +201,51 @@ export class PendingMessageStore {
   }
 
   /**
+   * Global claim of next pending summarize row across all sessions (FIFO by id).
+   * Inlines stale recovery (>60s processing → pending) for summarize rows only.
+   *
+   * Used exclusively by SummaryLane. Observer and BypassLane must NOT call this.
+   */
+  claimNextSummarize(): PersistentPendingMessage | null {
+    const STALE_SUMMARIZE_THRESHOLD_MS = 60_000;
+    const tx = this.db.transaction((): PersistentPendingMessage | null => {
+      const now = Date.now();
+      const staleCutoff = now - STALE_SUMMARIZE_THRESHOLD_MS;
+      this.db.prepare(`
+        UPDATE pending_messages
+        SET status = 'pending', started_processing_at_epoch = NULL
+        WHERE message_type = 'summarize'
+          AND status = 'processing'
+          AND started_processing_at_epoch IS NOT NULL
+          AND started_processing_at_epoch < ?
+      `).run(staleCutoff);
+
+      const row = this.db.prepare(`
+        SELECT * FROM pending_messages
+        WHERE message_type = 'summarize' AND status = 'pending'
+        ORDER BY id ASC
+        LIMIT 1
+      `).get() as PersistentPendingMessage | undefined;
+
+      if (!row) return null;
+
+      const claimTime = Date.now();
+      this.db.prepare(`
+        UPDATE pending_messages
+        SET status = 'processing', started_processing_at_epoch = ?
+        WHERE id = ? AND status = 'pending'
+      `).run(claimTime, row.id);
+
+      return {
+        ...row,
+        status: 'processing',
+        started_processing_at_epoch: claimTime,
+      };
+    });
+    return tx() as PersistentPendingMessage | null;
+  }
+
+  /**
    * Claim up to maxCount FIFO-contiguous pending observations for the same
    * session and prompt_number. Used by SDKAgent for safe same-prompt batching.
    *
