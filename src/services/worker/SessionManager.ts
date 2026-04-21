@@ -21,6 +21,7 @@ import { logSDKUsageSummary } from './SDKUsageTelemetry.js';
 import { getBackpressureLevel, applyBackpressure } from './backpressure.js';
 import { SettingsDefaultsManager } from '../../shared/SettingsDefaultsManager.js';
 import { USER_SETTINGS_PATH } from '../../shared/paths.js';
+import type { SessionEventBroadcaster } from './events/SessionEventBroadcaster.js';
 import {
   attemptEmptyTranscriptSalvage,
   type SalvageBroadcastPayload,
@@ -51,8 +52,11 @@ export class SessionManager {
   // summarize before terminating the subprocess.
   private freshSummarizeInFlight: Map<string, number> = new Map();
 
-  constructor(dbManager: DatabaseManager) {
+  private sessionEventBroadcaster?: SessionEventBroadcaster;
+
+  constructor(dbManager: DatabaseManager, sessionEventBroadcaster?: SessionEventBroadcaster) {
     this.dbManager = dbManager;
+    this.sessionEventBroadcaster = sessionEventBroadcaster;
   }
 
   /**
@@ -97,6 +101,15 @@ export class SessionManager {
   private getPendingStore(dbPath?: string): PendingMessageStore {
     const sessionStore = this.dbManager.getSessionStore(dbPath);
     return new PendingMessageStore(sessionStore.db, 3);
+  }
+
+  /**
+   * Public accessor for the pending-message store used by SummaryLane consumers.
+   * Thin wrapper over the private getPendingStore to avoid widening visibility
+   * for everyone; SummaryLane is the only external consumer.
+   */
+  public getPendingMessageStore(dbPath?: string): PendingMessageStore {
+    return this.getPendingStore(dbPath);
   }
 
   /**
@@ -203,6 +216,11 @@ export class SessionManager {
         session.lastPromptNumber = promptNumber || session.lastPromptNumber;
         // New prompt cycle — reset restart budget so the generator can try again
         session.consecutiveRestarts = 0;
+        // A new prompt begins a new turn — clear per-turn flags set by
+        // closeSession / reaper so the generator is not treated as closing.
+        session.closing = false;
+        session.closeBroadcasted = false;
+        session.proactiveSummarizeQueued = false;
       } else {
         logger.debug('SESSION', 'No currentUserPrompt provided for existing session', {
           sessionDbId,
@@ -496,32 +514,117 @@ export class SessionManager {
   }
 
   /**
+   * Close a session: mark DB row completed + broadcast + set closing flag.
+   * Does NOT abort observer, does NOT remove from in-memory map, does NOT
+   * wait for drain. Returns within ~5ms. The in-memory session is retained
+   * so SummaryLane can look up session state until the reaper finalizes.
+   *
+   * Retry-safe (C4): if session.closing is already true, subsequent calls
+   * short-circuit without re-broadcasting session_completed. Stop hook may
+   * retry POST /complete on 499/network blips, and SSE consumers must not
+   * receive duplicate session_completed events.
+   */
+  async closeSession(sessionDbId: number, dbPath?: string): Promise<void> {
+    const key = dbPath !== undefined
+      ? this.sessionKey(sessionDbId, dbPath)
+      : this.findSessionKey(sessionDbId);
+    if (!key) return;
+    const session = this.sessions.get(key);
+    if (!session) return;
+
+    // Capture whether we already broadcast-fired. The closing flag may have
+    // been set by deleteSession (which calls this method from its composition
+    // path) before the DB update ran, so we cannot short-circuit on `closing`
+    // alone — that would leave the DB in 'active' state forever.
+    const alreadyBroadcasted = !!session.closeBroadcasted;
+
+    // UPDATE is idempotent (guarded by status='active'), safe to run on retry.
+    try {
+      const store = this.dbManager.getSessionStore(session.dbPath);
+      store.db.prepare(
+        'UPDATE sdk_sessions SET status = ?, completed_at_epoch = ? WHERE id = ? AND status = ?'
+      ).run('completed', Date.now(), sessionDbId, 'active');
+    } catch (err) {
+      logger.warn('SESSION', 'Failed to mark session completed', { sessionDbId }, err as Error);
+    }
+
+    session.closing = true;
+    if (!alreadyBroadcasted) {
+      session.closeBroadcasted = true;
+      this.sessionEventBroadcaster?.broadcastSessionCompleted(sessionDbId, session.project);
+    }
+  }
+
+  /**
+   * In-memory cleanup. Triggered by reaper (15min idle + session.closing=true)
+   * or worker shutdown. Aborts observer, waits generator (up to 30s), ensures
+   * subprocess exit, removes from maps.
+   */
+  async finalizeSession(sessionDbId: number, dbPath?: string): Promise<void> {
+    const key = dbPath !== undefined
+      ? this.sessionKey(sessionDbId, dbPath)
+      : this.findSessionKey(sessionDbId);
+    if (!key) return;
+    const session = this.sessions.get(key);
+    if (!session) return;
+
+    session.abortController.abort();
+
+    if (session.generatorPromise) {
+      const generatorDone = session.generatorPromise.catch(() => {
+        logger.debug('SYSTEM', 'Generator already failed, cleaning up', { sessionId: session.sessionDbId });
+      });
+      const timeoutDone = new Promise<void>(resolve => {
+        AbortSignal.timeout(30_000).addEventListener('abort', () => resolve(), { once: true });
+      });
+      await Promise.race([generatorDone, timeoutDone]).then(() => {}, () => {
+        logger.warn('SESSION', 'Generator did not exit within 30s after abort, forcing cleanup (#1099)', { sessionDbId });
+      });
+    }
+
+    const tracked = getProcessBySession(sessionDbId);
+    if (tracked && tracked.process.exitCode === null) {
+      logger.debug('SESSION', `Waiting for subprocess PID ${tracked.pid} to exit`, {
+        sessionId: sessionDbId,
+        pid: tracked.pid
+      });
+      await ensureProcessExit(tracked, 5000);
+    }
+
+    try {
+      logSDKUsageSummary({ session, summaryType: 'session' });
+    } catch {
+      // best-effort
+    }
+
+    this.sessions.delete(key);
+    this.sessionQueues.delete(key);
+
+    if (this.onSessionDeletedCallback) {
+      this.onSessionDeletedCallback();
+    }
+  }
+
+  /**
    * Delete a session (abort SDK agent and cleanup)
-   * Verifies subprocess exit to prevent zombie process accumulation (Issue #737)
+   * Preserves the legacy 60s drain wait for admin DELETE callers until
+   * Chunk 7 rewires the Stop hook to skip the drain entirely. Structurally
+   * this is now `drain-wait + closeSession + finalizeSession`.
    */
   async deleteSession(sessionDbId: number, dbPath?: string): Promise<void> {
     const key = dbPath !== undefined
       ? this.sessionKey(sessionDbId, dbPath)
       : this.findSessionKey(sessionDbId);
-    if (!key) return; // Already deleted
+    if (!key) return;
     const session = this.sessions.get(key);
-    if (!session) {
-      return; // Already deleted
-    }
+    if (!session) return;
 
     const sessionDuration = Date.now() - session.startTime;
 
-    // Mark session as closing early to prevent .finally() from restarting generator
-    // during the drain window (R2). Since we're about to delete, restarts are futile.
+    // Mark closing early so generator-action treats pending exits as noop.
     session.closing = true;
 
-    // Wait for pending summarize messages before aborting.
-    // Prevents summary loss when session-complete arrives before SDKAgent
-    // finishes. 60s ceiling: direct-probe measurements showed Claude produces
-    // a well-formed <summary> in 15–32s with rich context; the previous 10s
-    // ceiling SIGTERM'd 74% of SIGTERMs at the drain wall and pushed every
-    // production summary onto salvage fallback. Watchdog (5min) still catches
-    // true hangs. See attn_sink/0sum-investigation/NOTES.md.
+    // Legacy drain wait — retained until Chunk 7 Stop-hook rewire removes it.
     const DRAIN_MAX_WAIT_MS = 60_000;
     const DRAIN_POLL_INTERVAL_MS = 500;
     try {
@@ -535,8 +638,6 @@ export class SessionManager {
         }
         if (waited >= DRAIN_MAX_WAIT_MS) {
           logger.warn('SESSION', `Summarize drain timed out after ${DRAIN_MAX_WAIT_MS}ms, proceeding with delete`, { sessionDbId });
-          // Mark any remaining pending/processing messages as failed
-          // so they don't become permanent orphans
           try {
             const { failed: abandonCount, retried } = pendingStore.markAllSessionMessagesAbandoned(sessionDbId);
             if (abandonCount + retried > 0) {
@@ -550,66 +651,17 @@ export class SessionManager {
         }
       }
     } catch (error) {
-      // Don't let drain errors block session cleanup
       logger.warn('SESSION', 'Error during summarize drain check, proceeding with delete', { sessionDbId }, error as Error);
     }
 
-    // 1. Abort the SDK agent
-    session.abortController.abort();
-
-    // 2. Wait for generator to finish (with 30s timeout to prevent stale stall, Issue #1099)
-    if (session.generatorPromise) {
-      const generatorDone = session.generatorPromise.catch(() => {
-        logger.debug('SYSTEM', 'Generator already failed, cleaning up', { sessionId: session.sessionDbId });
-      });
-      const timeoutDone = new Promise<void>(resolve => {
-        AbortSignal.timeout(30_000).addEventListener('abort', () => resolve(), { once: true });
-      });
-      await Promise.race([generatorDone, timeoutDone]).then(() => {}, () => {
-        logger.warn('SESSION', 'Generator did not exit within 30s after abort, forcing cleanup (#1099)', { sessionDbId });
-      });
-    }
-
-    // 3. Verify subprocess exit with 5s timeout (Issue #737 fix)
-    const tracked = getProcessBySession(sessionDbId);
-    if (tracked && tracked.process.exitCode === null) {
-      logger.debug('SESSION', `Waiting for subprocess PID ${tracked.pid} to exit`, {
-        sessionId: sessionDbId,
-        pid: tracked.pid
-      });
-      await ensureProcessExit(tracked, 5000);
-    }
-
-    // 4. Mark session as completed in database (best-effort)
-    // Uses AND status = 'active' guard to avoid overwriting 'failed' status set by reaper
-    try {
-      const store = this.dbManager.getSessionStore(session.dbPath);
-      store.db.prepare(
-        'UPDATE sdk_sessions SET status = ?, completed_at_epoch = ? WHERE id = ? AND status = ?'
-      ).run('completed', Date.now(), sessionDbId, 'active');
-    } catch (error) {
-      logger.warn('SESSION', 'Failed to mark session completed in DB', { sessionDbId }, error as Error);
-    }
-
-    // 5. Cleanup
-    logSDKUsageSummary({
-      session,
-      summaryType: 'session'
-    });
-
-    this.sessions.delete(key);
-    this.sessionQueues.delete(key);
+    await this.closeSession(sessionDbId, dbPath);
+    await this.finalizeSession(sessionDbId, dbPath);
 
     logger.info('SESSION', 'Session deleted', {
       sessionId: sessionDbId,
       duration: `${(sessionDuration / 1000).toFixed(1)}s`,
       project: session.project
     });
-
-    // Trigger callback to broadcast status update (spinner may need to stop)
-    if (this.onSessionDeletedCallback) {
-      this.onSessionDeletedCallback();
-    }
   }
 
   /**
@@ -731,6 +783,19 @@ export class SessionManager {
       const idleMs = now - session.lastGeneratorActivity;
       if (idleMs <= SessionManager.MAX_SESSION_IDLE_MS) continue;
 
+      // Sessions closed by Stop hook (closing=true) and idle → final reap.
+      // Do NOT queue another proactive summarize — the Stop hook already
+      // queued one and the viewer has already received session_completed.
+      if (session.closing) {
+        logger.info(
+          'SESSION',
+          `Reaping closed session ${session.sessionDbId} (idle >${Math.round(SessionManager.MAX_SESSION_IDLE_MS / 60000)}m)`,
+          { sessionDbId: session.sessionDbId },
+        );
+        toReap.push({ key, sessionDbId: session.sessionDbId, dbPath: session.dbPath });
+        continue;
+      }
+
       // If last generator exited due to idle timeout and no new hook messages arrived since,
       // CC is gone — reap directly instead of futile proactive summarize that would spin for
       // ~16 min waiting for a dead SDK subprocess
@@ -775,10 +840,22 @@ export class SessionManager {
       }
     }
 
-    // Phase 2: Reap sessions that are done with their summarize
+    // Phase 2: Reap sessions that are done with their summarize.
+    // When session.closing=true the Stop hook already closed DB + broadcast,
+    // so we go straight to finalizeSession (in-memory cleanup only).
+    // Non-closed idle sessions keep the legacy deleteSession path for now.
     for (const { sessionDbId, dbPath } of toReap) {
-      logger.warn('SESSION', `Reaping stale session ${sessionDbId} (idle >${Math.round(SessionManager.MAX_SESSION_IDLE_MS / 60000)}m)`, { sessionDbId });
-      await this.deleteSession(sessionDbId, dbPath);
+      const reapKey = dbPath !== undefined
+        ? this.sessionKey(sessionDbId, dbPath)
+        : this.findSessionKey(sessionDbId);
+      const reapSession = reapKey ? this.sessions.get(reapKey) : undefined;
+      if (reapSession?.closing) {
+        logger.warn('SESSION', `Finalizing closed session ${sessionDbId}`, { sessionDbId });
+        await this.finalizeSession(sessionDbId, dbPath);
+      } else {
+        logger.warn('SESSION', `Reaping stale session ${sessionDbId} (non-closed path)`, { sessionDbId });
+        await this.deleteSession(sessionDbId, dbPath);
+      }
     }
 
     return toReap.length;

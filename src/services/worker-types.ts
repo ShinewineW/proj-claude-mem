@@ -49,6 +49,13 @@ export interface ActiveSession {
   // These IDs will be confirmed (deleted) after successful storage
   processingMessageIds: number[];
   closing?: boolean; // Set by deleteSession() before abort to prevent restart in .finally() (R2)
+  /**
+   * Whether SessionManager has already broadcast session_completed for this
+   * session. Prevents duplicate SSE events when Stop hook retries or when
+   * deleteSession calls closeSession after setting the closing flag itself.
+   * Reset by initializeSession when a new prompt arrives.
+   */
+  closeBroadcasted?: boolean;
   // SDK Token Optimization Phase 1 counters
   optimizationStats?: {
     batchedObservations: number; // observations sent as part of a batch (count > 1)
