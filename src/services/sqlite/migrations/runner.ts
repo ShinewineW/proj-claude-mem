@@ -1115,16 +1115,23 @@ export class MigrationRunner {
     const applied = this.db.prepare('SELECT version FROM schema_versions WHERE version = ?').get(31) as SchemaVersion | undefined;
     if (applied) return;
 
-    // Dedupe: keep highest id per (content_session_id, prompt_number)
+    // Dedupe: keep highest id per (content_session_id, prompt_number).
+    // Both columns must be NOT NULL to align with the partial unique index
+    // predicate below. SQL's GROUP BY treats NULL values as a single group,
+    // so excluding `prompt_number IS NOT NULL` here was dropping legitimate
+    // legacy NULL-prompt rows that the index itself never enforces
+    // uniqueness on (security audit H1).
     this.db.run(`
       DELETE FROM session_summaries
       WHERE id NOT IN (
         SELECT MAX(id)
         FROM session_summaries
         WHERE content_session_id IS NOT NULL
+          AND prompt_number IS NOT NULL
         GROUP BY content_session_id, prompt_number
       )
       AND content_session_id IS NOT NULL
+      AND prompt_number IS NOT NULL
     `);
 
     this.db.run(`

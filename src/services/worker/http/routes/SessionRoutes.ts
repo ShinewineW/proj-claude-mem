@@ -276,10 +276,20 @@ export class SessionRoutes extends BaseRouteHandler {
 
         // Only access DB if project is still valid (or no I/O error occurred)
         let pendingCount = 0;
+        let pendingObservationCount = 0;
         let pendingStore: any = null;
         if (dbFileExists !== false) {
           pendingStore = this.sessionManager.getPendingMessageStore(session.dbPath);
           pendingCount = pendingStore.getPendingCount(sessionDbId);
+          // Security audit C1: decideGeneratorAction's P2b close-window branch
+          // requires pendingObservationCount to be a real number. Passing
+          // undefined silently disabled the same-turn drain restart path and
+          // let queued observations get dropped at session close.
+          pendingObservationCount = pendingStore.getPendingObservationCountUpToPrompt(
+            sessionDbId,
+            session.lastPromptNumber ?? null,
+            Date.now(),
+          );
         }
 
         const settings = SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH);
@@ -292,6 +302,7 @@ export class SessionRoutes extends BaseRouteHandler {
           consecutiveRestarts: session.consecutiveRestarts,
           contextResetCount: session.contextResetCount ?? 0,
           pendingCount,
+          pendingObservationCount,
           wasAborted,
           proactiveReset: !!session.proactiveReset,
           isClosing: !!session.closing,
