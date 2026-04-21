@@ -1153,14 +1153,6 @@ export class SessionManager {
   }
 
   /**
-   * Get the PendingMessageStore for a specific database path
-   * (for SDKAgent to mark messages as processed)
-   */
-  getPendingMessageStore(dbPath?: string): PendingMessageStore {
-    return this.getPendingStore(dbPath);
-  }
-
-  /**
    * Collect per-session diagnostics for the health endpoint.
    * Iterates active sessions, queries queue stats, detects stuck sessions.
    */
