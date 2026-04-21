@@ -166,3 +166,50 @@ describe('PendingMessageStore.markFailed return shape', () => {
     expect(result).toEqual({ finalStatus: 'failed', retryCount: 0 });
   });
 });
+
+describe('PendingMessageStore.resetStaleObservationProcessing', () => {
+  it('resets observation rows stale >60s back to pending', () => {
+    const { db, pending, sessionDbId } = setupStore();
+    const id = pending.enqueue(sessionDbId, 'test-content-session-id', {
+      type: 'observation', tool_name: 'Bash', tool_input: '{}', tool_response: '{}', prompt_number: 1, cwd: '/tmp',
+    });
+    const oldEpoch = Date.now() - 70_000;
+    db.prepare(`UPDATE pending_messages SET status='processing', started_processing_at_epoch=? WHERE id=?`)
+      .run(oldEpoch, id);
+
+    pending.resetStaleObservationProcessing(sessionDbId);
+
+    const row = db.prepare(`SELECT status FROM pending_messages WHERE id=?`).get(id) as { status: string };
+    expect(row.status).toBe('pending');
+  });
+
+  it('does not reset summarize rows (strict type scope)', () => {
+    const { db, pending, sessionDbId } = setupStore();
+    const id = pending.enqueue(sessionDbId, 'test-content-session-id', {
+      type: 'summarize', last_assistant_message: 'x', prompt_number: 1,
+    });
+    const oldEpoch = Date.now() - 70_000;
+    db.prepare(`UPDATE pending_messages SET status='processing', started_processing_at_epoch=? WHERE id=?`)
+      .run(oldEpoch, id);
+
+    pending.resetStaleObservationProcessing(sessionDbId);
+
+    const row = db.prepare(`SELECT status FROM pending_messages WHERE id=?`).get(id) as { status: string };
+    expect(row.status).toBe('processing');
+  });
+
+  it('does not reset rows from other sessions', () => {
+    const { db, pending } = setupStore();
+    const otherSession = createSDKSession(db, 'cs-other', 'proj-other', 'p');
+    const id = pending.enqueue(otherSession, 'cs-other', {
+      type: 'observation', tool_name: 'Bash', tool_input: '{}', tool_response: '{}', prompt_number: 1, cwd: '/tmp',
+    });
+    db.prepare(`UPDATE pending_messages SET status='processing', started_processing_at_epoch=? WHERE id=?`)
+      .run(Date.now() - 70_000, id);
+
+    pending.resetStaleObservationProcessing(999);
+
+    const row = db.prepare(`SELECT status FROM pending_messages WHERE id=?`).get(id) as { status: string };
+    expect(row.status).toBe('processing');
+  });
+});

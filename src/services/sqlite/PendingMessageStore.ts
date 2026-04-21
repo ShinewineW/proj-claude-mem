@@ -201,6 +201,28 @@ export class PendingMessageStore {
   }
 
   /**
+   * Reset stale 'processing' observation rows for one session back to 'pending'.
+   * Used by the Observer (SessionQueueProcessor) before each claim to preserve
+   * the pre-SummaryLane 60s self-heal behavior for observation rows.
+   *
+   * BypassLane deliberately does NOT call this — see PendingMessageStore.claimNextObservation
+   * for the "no self-heal on bypass" rationale.
+   */
+  resetStaleObservationProcessing(sessionDbId: number): void {
+    const STALE_OBS_PROCESSING_THRESHOLD_MS = 60_000;
+    const staleCutoff = Date.now() - STALE_OBS_PROCESSING_THRESHOLD_MS;
+    this.db.prepare(`
+      UPDATE pending_messages
+      SET status = 'pending', started_processing_at_epoch = NULL
+      WHERE session_db_id = ?
+        AND message_type = 'observation'
+        AND status = 'processing'
+        AND started_processing_at_epoch IS NOT NULL
+        AND started_processing_at_epoch < ?
+    `).run(sessionDbId, staleCutoff);
+  }
+
+  /**
    * Global claim of next pending summarize row across all sessions (FIFO by id).
    * Inlines stale recovery (>60s processing → pending) for summarize rows only.
    *
