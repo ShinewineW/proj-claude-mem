@@ -646,7 +646,7 @@ export class SessionRoutes extends BaseRouteHandler {
     }
 
     const queuedAtEpoch = Date.now();
-    this.sessionManager.queueSummarize(
+    const result = this.sessionManager.queueSummarize(
       sessionDbId,
       { lastAssistantMessage: last_assistant_message, promptNumber: resolvedPromptNumber, queuedAtEpoch },
       dbPath,
@@ -670,10 +670,13 @@ export class SessionRoutes extends BaseRouteHandler {
       // Best-effort; SummaryLane still owns the summarize row.
     }
 
-    // Broadcast summarize queued event
-    this.eventBroadcaster.broadcastSummarizeQueued();
+    // Broadcast only when a NEW summarize row was persisted. Deduped turns
+    // must not emit phantom queued state to the viewer or API callers.
+    if (result.status === 'queued') {
+      this.eventBroadcaster.broadcastSummarizeQueued();
+    }
 
-    res.json({ status: 'queued' });
+    res.json({ status: result.status });
   });
 
   /**
@@ -909,7 +912,9 @@ export class SessionRoutes extends BaseRouteHandler {
       // Best-effort; SummaryLane still owns the summarize row.
     }
 
-    this.eventBroadcaster.broadcastSummarizeQueued();
+    if (result.status === 'queued') {
+      this.eventBroadcaster.broadcastSummarizeQueued();
+    }
 
     res.json(result);
   });
