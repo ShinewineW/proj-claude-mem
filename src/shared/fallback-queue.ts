@@ -18,6 +18,12 @@ export interface FallbackEntry {
   cwd: string;
   dbPath: string;
   timestamp: number;
+  /**
+   * Hook/transcript payload. For summarize entries, `prompt_number` is
+   * intentionally optional: when the worker is down or prompt-number
+   * pre-resolution fails, replay resolves the turn later using
+   * `user_prompts` as of `timestamp`.
+   */
   payload: Record<string, unknown>;
 }
 

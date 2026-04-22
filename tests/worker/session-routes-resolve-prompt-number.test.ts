@@ -61,6 +61,15 @@ describe('F5: summarize hook wiring', () => {
     expect(src).toContain('prompt_number');
   });
 
+  it('summarize handler falls back immediately when prompt-number resolve returns null', () => {
+    const startIdx = src.indexOf('const promptNumber = await resolvePromptNumber');
+    expect(startIdx).toBeGreaterThanOrEqual(0);
+    const endIdx = src.indexOf('logger.dataIn', startIdx);
+    const block = src.slice(startIdx, endIdx > 0 ? endIdx : startIdx + 1200);
+    expect(block).toContain('if (promptNumber === null)');
+    expect(block).toContain('writeFallbackEntry');
+  });
+
   it('summarize handler writes fallback without prompt_number on resolve failure (CodeX-P1)', () => {
     // Durability contract: a worker-side resolve failure must not drop the
     // summarize request — write fallback so replay can resolve later.

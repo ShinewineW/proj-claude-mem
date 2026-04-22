@@ -27,6 +27,9 @@ describe('stop handler — summarize→complete ordering (P5 race guard)', () =>
       fetchWithTimeout: async (url: string, _init?: any) => {
         const u = String(url);
         fetchOrder.push(u);
+        if (u.includes('/resolve-prompt-number')) {
+          return new Response(JSON.stringify({ prompt_number: 1 }), { status: 200 });
+        }
         if (u.includes('/summarize')) {
           await new Promise(r => setTimeout(r, 10));
           summarizeAckSent = true;

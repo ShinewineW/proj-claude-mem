@@ -1010,19 +1010,18 @@ export class SessionManager {
    * Called once on Worker startup.
    *
    * 1. Resets stale 'processing' messages (>5min) back to 'pending'
-   * 2. Marks orphaned summarize messages as 'failed':
-   *    - Session not in active sessions map
-   *    - Message older than 5 minutes
+   * 2. Marks TRULY orphaned summarize messages as 'failed':
+   *    - Session row missing, OR
+   *    - Session row status='failed'
+   *
+   * Completed sessions are legitimate SummaryLane backlog and MUST be
+   * preserved so the lane can finish draining after worker restart.
    */
   cleanupOrphanedMessages(dbPath?: string): void {
     try {
       const pendingStore = this.getPendingStore(dbPath);
       const resetCount = pendingStore.resetStaleProcessingMessages(); // default: 5 min threshold
-      // Filter to sessions belonging to this specific DB to avoid cross-project false matches (W4)
-      const activeSessionIds = Array.from(this.sessions.values())
-        .filter(s => s.dbPath === dbPath || (!s.dbPath && !dbPath))
-        .map(s => s.sessionDbId);
-      const orphanCount = pendingStore.markOrphanedSummarizesFailed(activeSessionIds);
+      const orphanCount = pendingStore.markTrulyOrphanedSummarizesFailed();
 
       if (resetCount > 0 || orphanCount > 0) {
         logger.info('SESSION', 'Startup orphan cleanup complete', {

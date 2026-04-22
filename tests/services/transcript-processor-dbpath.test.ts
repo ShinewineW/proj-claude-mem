@@ -9,6 +9,8 @@ import { describe, it, expect, beforeEach, afterEach, mock } from "bun:test";
 
 // Track all fetch calls to verify dbPath inclusion
 let fetchCalls: Array<{ url: string; body: any }> = [];
+let fallbackEntries: any[] = [];
+let summarizeStatus = 200;
 
 // Mock fetch globally
 const originalFetch = globalThis.fetch;
@@ -24,8 +26,11 @@ function mockFetch() {
     fetchCalls.push({ url: urlStr, body });
 
     // Return appropriate mock responses based on URL
+    if (urlStr.includes('/api/sessions/resolve-prompt-number')) {
+      return new Response(JSON.stringify({ prompt_number: 1 }), { status: 200 });
+    }
     if (urlStr.includes('/api/sessions/summarize')) {
-      return new Response(JSON.stringify({ status: 'queued' }), { status: 200 });
+      return new Response(JSON.stringify({ status: summarizeStatus === 200 ? 'queued' : 'error' }), { status: summarizeStatus });
     }
     if (urlStr.includes('/api/context/inject')) {
       return new Response('mock context content', { status: 200 });
@@ -42,6 +47,13 @@ function restoreFetch() {
 mock.module("../../src/shared/worker-utils.js", () => ({
   ensureWorkerRunning: async () => true,
   getWorkerPort: () => 37777,
+  fetchWithTimeout: async (url: string | URL | Request, init?: RequestInit) => fetch(url, init),
+}));
+
+mock.module("../../src/shared/fallback-queue.js", () => ({
+  writeFallbackEntry: (entry: any) => {
+    fallbackEntries.push(entry);
+  },
 }));
 
 mock.module("../../src/utils/logger.js", () => ({
@@ -138,6 +150,8 @@ mock.module("../../src/shared/hook-constants.js", () => ({
 
 describe("TranscriptEventProcessor dbPath threading", () => {
   beforeEach(() => {
+    fallbackEntries = [];
+    summarizeStatus = 200;
     mockFetch();
   });
 
@@ -167,6 +181,31 @@ describe("TranscriptEventProcessor dbPath threading", () => {
       );
       expect(summarizeRequest).toBeDefined();
       expect(summarizeRequest!.body.dbPath).toBe("/test/project/.claude/mem.db");
+    });
+
+    it("writes fallback when /api/sessions/summarize returns non-OK", async () => {
+      summarizeStatus = 500;
+
+      const { TranscriptEventProcessor } = await import(
+        "../../src/services/transcripts/processor.js"
+      );
+      const processor = new TranscriptEventProcessor();
+
+      const session = {
+        sessionId: "test-session-500",
+        cwd: "/test/project",
+        lastAssistantMessage: "some response",
+        pendingTools: new Map(),
+      };
+
+      await (processor as any).queueSummary(session);
+
+      expect(fallbackEntries).toHaveLength(1);
+      expect(fallbackEntries[0]).toMatchObject({
+        type: "summarize",
+        sessionId: "test-session-500",
+        dbPath: "/test/project/.claude/mem.db",
+      });
     });
   });
 

@@ -340,7 +340,8 @@ export class TranscriptEventProcessor {
     const port = getWorkerPort();
     // F6 hook-side pre-resolution: ask the worker for the current
     // prompt_number before POSTing. Null on any failure (timeout, 404, etc.)
-    // — SessionRoutes server-side fallback still covers back-compat.
+    // means "persist fallback now and let replay resolve by timestamp" —
+    // do NOT POST a summarize without a turn key from this path.
     let promptNumber: number | null = null;
     try {
       const url = `http://127.0.0.1:${port}/api/sessions/resolve-prompt-number`
@@ -353,23 +354,49 @@ export class TranscriptEventProcessor {
         if (typeof pn === 'number' && Number.isFinite(pn) && pn > 0) promptNumber = pn;
       }
     } catch {
-      // leave promptNumber as null — server-side fallback will try to resolve
+      // leave promptNumber as null — the branch below will persist a
+      // fallback entry so replay can resolve with the original timestamp.
+    }
+    if (promptNumber === null) {
+      logger.warn('TRANSCRIPT', 'Summary prompt-number resolve failed, writing fallback', {
+        sessionId: session.sessionId,
+      });
+      writeFallbackEntry({
+        type: 'summarize',
+        sessionId: session.sessionId,
+        cwd: session.cwd ?? process.cwd(),
+        dbPath: summaryCtx.dbPath,
+        timestamp: Date.now(),
+        payload: { last_assistant_message: lastAssistantMessage },
+      });
+      return;
     }
 
     try {
-      const requestBody: Record<string, unknown> = {
+      const requestBody = {
         contentSessionId: session.sessionId,
         last_assistant_message: lastAssistantMessage,
+        prompt_number: promptNumber,
         dbPath: summaryCtx.dbPath,
       };
-      if (promptNumber !== null) {
-        requestBody.prompt_number = promptNumber;
-      }
-      await fetch(`http://127.0.0.1:${port}/api/sessions/summarize`, {
+      const response = await fetch(`http://127.0.0.1:${port}/api/sessions/summarize`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(requestBody),
       });
+      if (!response.ok) {
+        logger.warn('TRANSCRIPT', 'Summary request returned non-OK, writing fallback', {
+          status: response.status,
+        });
+        writeFallbackEntry({
+          type: 'summarize',
+          sessionId: session.sessionId,
+          cwd: session.cwd ?? process.cwd(),
+          dbPath: summaryCtx.dbPath,
+          timestamp: Date.now(),
+          payload: { last_assistant_message: lastAssistantMessage },
+        });
+      }
     } catch (error) {
       logger.warn('TRANSCRIPT', 'Summary request failed, writing fallback', {
         error: error instanceof Error ? error.message : String(error),

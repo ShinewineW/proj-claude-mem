@@ -89,9 +89,23 @@ export const summarizeHandler: EventHandler = {
     const lastAssistantMessage = extractLastMessage(transcriptPath, 'assistant', true);
 
     // F5 — hook-side prompt_number resolution. Ask the worker before POSTing
-    // summarize so the turn key is authoritative at enqueue time. Server-side
-    // fallback in SessionRoutes still covers the null case for back-compat.
+    // summarize so the turn key is authoritative at enqueue time. Older
+    // clients may still omit prompt_number and rely on SessionRoutes'
+    // server-side fallback, but this hook path writes a fallback entry if
+    // pre-resolution fails to avoid mis-binding the summary to a later turn.
     const promptNumber = await resolvePromptNumber(port, sessionId, dbPath);
+    if (promptNumber === null) {
+      logger.warn('HOOK', 'Summarize prompt-number resolve failed, writing fallback', {
+        sessionId,
+        dbPath,
+      });
+      writeFallbackEntry({
+        type: 'summarize', sessionId, cwd, dbPath,
+        timestamp: Date.now(),
+        payload: { last_assistant_message: lastAssistantMessage }
+      });
+      return { continue: true, suppressOutput: true, exitCode: HOOK_EXIT_CODES.SUCCESS };
+    }
 
     logger.dataIn('HOOK', 'Stop: Requesting summary', {
       workerPort: port,
@@ -101,14 +115,12 @@ export const summarizeHandler: EventHandler = {
 
     // Send to worker - worker handles privacy check and database operations
     try {
-      const body: Record<string, unknown> = {
+      const body = {
         contentSessionId: sessionId,
         last_assistant_message: lastAssistantMessage,
+        prompt_number: promptNumber,
         dbPath,
       };
-      if (promptNumber !== null) {
-        body.prompt_number = promptNumber;
-      }
       const response = await fetchWithTimeout(
         `http://127.0.0.1:${port}/api/sessions/summarize`,
         {

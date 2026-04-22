@@ -6,7 +6,8 @@
  * for this follow-up). We verify:
  *   1. Uses /api/sessions/resolve-prompt-number to pre-resolve.
  *   2. POST body may include prompt_number (when resolved).
- *   3. Writes fallback on failure paths — !workerReady AND fetch error —
+ *   3. Writes fallback on failure paths — !workerReady, non-OK response,
+ *      AND fetch error —
  *      matching Stop hook durability contract (CodeX-P1).
  */
 
@@ -48,8 +49,25 @@ describe('F6: transcripts/processor.ts queueSummary contract', () => {
     const startIdx = src.indexOf('private async queueSummary');
     const endIdx = src.indexOf('\n  private ', startIdx + 1);
     const body = src.slice(startIdx, endIdx > 0 ? endIdx : startIdx + 3000);
-    // Count fallback writes inside queueSummary; expect >=2 (worker-down + catch).
+    // Count fallback writes inside queueSummary; expect >=3 (worker-down,
+    // non-OK response, and catch).
     const count = (body.match(/writeFallbackEntry\(/g) || []).length;
-    expect(count).toBeGreaterThanOrEqual(2);
+    expect(count).toBeGreaterThanOrEqual(3);
+  });
+
+  it('queueSummary writes fallback on non-OK summarize response', () => {
+    const startIdx = src.indexOf('private async queueSummary');
+    const endIdx = src.indexOf('\n  private ', startIdx + 1);
+    const body = src.slice(startIdx, endIdx > 0 ? endIdx : startIdx + 3000);
+    expect(body).toContain('if (!response.ok)');
+    expect(body).toContain('Summary request returned non-OK, writing fallback');
+  });
+
+  it('queueSummary falls back immediately when prompt-number resolve fails', () => {
+    const startIdx = src.indexOf('private async queueSummary');
+    const endIdx = src.indexOf('\n  private ', startIdx + 1);
+    const body = src.slice(startIdx, endIdx > 0 ? endIdx : startIdx + 3000);
+    expect(body).toContain('if (promptNumber === null)');
+    expect(body).toContain('Summary prompt-number resolve failed, writing fallback');
   });
 });

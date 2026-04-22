@@ -29,6 +29,9 @@ const originalFetch = globalThis.fetch;
 globalThis.fetch = (async (url: string, opts?: any) => {
   const body = opts?.body ? JSON.parse(opts.body) : null;
   fetchCalls.push({ url, body });
+  if (url.includes('/api/sessions/resolve-prompt-number')) {
+    return new Response(JSON.stringify({ prompt_number: 1 }), { status: 200 });
+  }
   return new Response('{}', { status: 200 });
 }) as any;
 
@@ -43,6 +46,7 @@ afterAll(() => {
 mock.module('../../src/shared/worker-utils.js', () => ({
   ensureWorkerRunning: async () => true,
   getWorkerPort: () => 37777,
+  fetchWithTimeout: async (url: string | URL | Request, init?: RequestInit) => fetch(url, init),
 }));
 
 // --- Mock logger ---

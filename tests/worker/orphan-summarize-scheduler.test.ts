@@ -145,4 +145,20 @@ describe('SessionManager.cleanupOrphanedSummarizes', () => {
 
     expect(affected).toBe(1);
   });
+
+  it('startup cleanup preserves completed-session summarize backlog', () => {
+    const projA = makeProject('/tmp/startup-a.db');
+    const sessA = createSDKSession(projA.cmDb.db, 'cs-a', 'proj-a', 'p');
+    projA.cmDb.db.prepare(`UPDATE sdk_sessions SET status='completed' WHERE id=?`).run(sessA);
+    const msgA = projA.pending.enqueue(sessA, 'cs-a', {
+      type: 'summarize', last_assistant_message: 'x', prompt_number: 1,
+    });
+    projA.cmDb.db.prepare(`UPDATE pending_messages SET created_at_epoch=? WHERE id=?`).run(Date.now() - 10 * 60_000, msgA);
+
+    const mgr = new SessionManager(makeStubDbManager(new Map([[projA.dbPath, projA]])));
+    mgr.cleanupOrphanedMessages(projA.dbPath);
+
+    const row = projA.cmDb.db.prepare(`SELECT status FROM pending_messages WHERE id=?`).get(msgA) as { status: string };
+    expect(row.status).toBe('pending');
+  });
 });
