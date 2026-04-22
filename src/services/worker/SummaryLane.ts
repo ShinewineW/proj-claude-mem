@@ -30,6 +30,7 @@ import { createPidCapturingSpawn } from './ProcessRegistry.js';
 import { ModeManager } from '../domain/ModeManager.js';
 import { getWorkerPort } from '../../shared/worker-utils.js';
 import { updateCursorContextForProject } from '../integrations/CursorHooksInstaller.js';
+import { ObsCapPolicy } from './obs-cap-policy.js';
 
 type SummaryLaneState = 'DISABLED' | 'ACTIVE' | 'STOPPED';
 
@@ -78,9 +79,11 @@ export class SummaryLane {
   private abortController: AbortController | null = null;
   private state: SummaryLaneState = 'DISABLED';
   private consumerPromise: Promise<void> | null = null;
+  private obsCapPolicy: ObsCapPolicy;
 
-  constructor() {
+  constructor(deps?: { obsCapPolicy?: ObsCapPolicy }) {
     this.telemetry = new SummaryLaneTelemetry();
+    this.obsCapPolicy = deps?.obsCapPolicy ?? new ObsCapPolicy();
   }
 
   setSessionManager(sm: SessionManager): void { this.sessionManager = sm; }
@@ -164,10 +167,28 @@ export class SummaryLane {
               await this.abortableSleep(2000, signal);
             } else {
               this.telemetry.recordDeadLetter(message.id);
-              logger.error('SUMLANE', 'Summary dead-lettered after 3 retries — silently dropped', {
+              // Step the session's obs cap down ONE notch so the NEXT
+              // summarize on this session renders a smaller prompt. We only
+              // step down on dead-letter (not on per-retry failures) —
+              // retries within a single message reuse the same cap since the
+              // prompt content is identical.
+              this.obsCapPolicy.recordFailure(message.session_db_id);
+              // Salvage fallback: synthesize a labeled summary from DB
+              // observations so the turn has SOMETHING persisted (rather
+              // than silently dropping the data). Only runs on dead-letter,
+              // only if recent obs exist. Safe by construction — no Claude
+              // call, no untrusted LLM text.
+              await this.salvageAfterDeadLetter(message, dbPath).catch((e) => {
+                logger.warn('SUMLANE', 'Salvage synthesis failed (non-critical)', {
+                  sessionDbId: message.session_db_id,
+                  messageId: message.id,
+                }, e as Error);
+              });
+              logger.error('SUMLANE', 'Summary dead-lettered after 3 retries — salvage attempted', {
                 sessionDbId: message.session_db_id,
                 messageId: message.id,
                 lastError: errMsg,
+                nextObsCap: this.obsCapPolicy.getCapForSession(message.session_db_id),
               });
             }
           }
@@ -287,11 +308,15 @@ export class SummaryLane {
       signal,
     });
 
+    // Read the session's current obs cap from the adaptive policy. Default
+    // is 60; steps down on dead-letter; resets on success. See obs-cap-policy.ts.
+    const maxObservations = this.obsCapPolicy.getCapForSession(sessionDbId);
     const result = await runFreshSummarizeQuery(deps, {
       memorySessionId: sessionRow.memory_session_id,
       userPrompt,
       lastAssistantMessage: message.last_assistant_message ?? undefined,
       mode,
+      maxObservations,
     });
 
     if (result.status !== 'success' || !result.summary) {
@@ -425,9 +450,80 @@ export class SummaryLane {
     pendingStore.confirmProcessed(message.id);
     this.onBroadcastProcessingStatus!();
 
+    // Successful summarize — reset the session's obs cap to default (60).
+    // If the cap had been stepped down by an earlier dead-letter on this
+    // session, this unwinds that degradation. See obs-cap-policy.ts.
+    this.obsCapPolicy.recordSuccess(sessionDbId);
+
     this.telemetry.recordStored(stored.id, Date.now() - processingStartedAt, {
       drainTimedOut, action: stored.action,
     });
+  }
+
+  /**
+   * Dead-letter salvage: synthesize a labeled summary from DB observations
+   * so the turn is not completely lost. Only runs when the fresh-summarize
+   * Claude call has exhausted 3 retries. No Claude call — pure metadata
+   * aggregation — so it cannot propagate LLM hallucination into the
+   * summary stream (which is why the observer-era salvage branches were
+   * removed in the 2026-04-19 fresh-query refactor; this one only runs on
+   * explicit dead-letter, not as a silent fallback, and only from DB data).
+   *
+   * Stores through the same storeFreshSummaryForSession helper so turn-key
+   * dedup and FK-race guards both apply. On zero observations, skips
+   * entirely (nothing meaningful to synthesize).
+   */
+  private async salvageAfterDeadLetter(
+    message: PersistentPendingMessage,
+    dbPath: string,
+  ): Promise<void> {
+    const sessionStore = this.dbManager!.getSessionStore(dbPath);
+    const sessionDbId = message.session_db_id;
+    const sessionRow = sessionStore.getSessionById(sessionDbId);
+    if (!sessionRow || !sessionRow.memory_session_id) return;
+
+    const recentObs = sessionStore.getRecentObservationsForSession(
+      sessionRow.memory_session_id,
+      20,
+    );
+    if (recentObs.length === 0) return;
+
+    // Build a deterministic, clearly-labeled payload from observation
+    // metadata. Keep fields tight so the viewer shows it cleanly.
+    const titles = recentObs
+      .map((o) => o.title || '(untitled)')
+      .slice(0, 20);
+    const investigated = titles.map((t) => `- ${t}`).join('\n');
+    const firstObs = recentObs[0];
+    const request = `[salvaged] ${firstObs.title ?? 'Session summary'}`.slice(0, 120);
+
+    const payload = {
+      request,
+      investigated,
+      learned: '',
+      completed: '',
+      next_steps: '',
+      notes:
+        `salvage synthesis — fresh-summarize exceeded retry budget; content ` +
+        `derived from ${recentObs.length} observation metadata row(s), not from Claude output.`,
+    };
+
+    const { storeFreshSummaryForSession } = await import('./fresh-summarize-store.js');
+    try {
+      storeFreshSummaryForSession(sessionStore, sessionDbId, payload, {
+        promptNumber: message.prompt_number ?? undefined,
+        discoveryTokens: 0,
+        contentSessionId: sessionRow.content_session_id ?? null,
+      });
+    } catch (err) {
+      // Turn-key dedup may throw on concurrent writes — swallow here; this
+      // is a best-effort recovery path, not load-bearing.
+      logger.warn('SUMLANE', 'Salvage store failed (non-critical)', {
+        sessionDbId, messageId: message.id,
+      }, err as Error);
+    }
+    // Salvage stores AN ADDITIONAL summary row; the pending row stays in
+    // 'failed' (set by markFailed above) for operator observability.
   }
 
   /**
@@ -473,7 +569,15 @@ export class SummaryLane {
       isolatedEnv: buildIsolatedEnv(),
       cwd: OBSERVER_SESSIONS_DIR,
       pathToClaudeCodeExecutable: findClaudeExecutable(),
-      spawnClaudeCodeProcess: createPidCapturingSpawn(input.sessionDbId, input.dbPath),
+      // Fresh-query subprocess is intentionally NOT registered into
+      // ProcessRegistry. Registering under input.sessionDbId lets the
+      // observer pool's `waitForSlot → isProcessStale` reclaim it as
+      // "stale" when the host session has been idle >30s, SIGKILLing
+      // an in-flight summary subprocess and producing status=no_text.
+      // The AbortController plumbing (input.signal → buildFreshSummarizeDeps)
+      // still cancels on shutdown; the 5-min orphan reaper remains as a
+      // safety net. See docs/spec/2026-04-22-claude-mem-summarylane-fixes.md §2.
+      spawnClaudeCodeProcess: undefined,
     });
   }
 

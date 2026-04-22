@@ -46,6 +46,7 @@ const EXCLUDED_PATTERNS = [
   /spawn-args-filter\.ts$/,  // Pure function — filterEmptyFlagPairs, fully unit-testable
   /fresh-summarize-store\.ts$/,  // Pure atomic store wrapper — caller (SDKAgent.runFreshSummarize) handles logging
   /fresh-summarize-deps\.ts$/,   // Pure struct assembly — ESM helper, no I/O
+  /obs-cap-policy\.ts$/,         // Pure state machine — per-session adaptive obs cap, no I/O
 ];
 
 // Files that should always use logger (core business logic)
