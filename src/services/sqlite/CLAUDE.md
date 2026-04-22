@@ -28,6 +28,7 @@
 - **String detection in enqueue**: `typeof tool_input === 'string'` stores as-is (avoids double-encoding from cleanToolField). Objects get `JSON.stringify`. Post-claim invariant: `toPendingMessage()` returns raw JSON strings (no parsing).
 - **Batch claiming**: `claimNextObservationBatch(sessionDbId, promptNumber, maxCount)` claims FIFO-contiguous same-prompt observations with boundary protection (`status IN ('pending', 'processing')` subquery prevents skipping over summarize/different-prompt rows).
 - Stale 'processing' messages auto-reset after 60s. `hasPendingSummarize()` checks unclaimed summarizes for drain window.
+- **`markFailed` retry semantic**: uses `retry_count < maxRetries` (strict less-than). With `maxRetries=3`: call 1 → retry_count=1 (pending), call 2 → 2 (pending), call 3 → 3 (pending), call 4 → `'failed'`. Need **N+1 calls** to reach `'failed'` when `maxRetries=N`. Returns `{finalStatus: 'pending' | 'failed', retryCount}` — SummaryLane uses `finalStatus` to decide retry-with-backoff vs dead-letter; legacy callers (BypassLane, tests) ignore the return value. Existing test pin at `pending-message-retry.test.ts` seeds `enqueueWithState('processing', 3)` → `markFailed` → expects `failed_at_epoch` set.
 
 ## Migration Conventions
 
