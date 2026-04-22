@@ -327,6 +327,15 @@ export interface FreshSummaryInput {
    * worker-restart replay before ModeManager is ready).
    */
   mode?: ModeConfig;
+  /**
+   * Tail-window cap on the observation list. When set AND observations.length
+   * exceeds it, only the LAST N are rendered into the prompt; earlier ones
+   * are dropped and the `<observations>` block gains a `total_this_session`
+   * attribute plus an omission comment so Claude knows the prompt is a
+   * window, not the full session. `0` / undefined disable the cap (treated
+   * as "no limit" — defensive; never silently produce an empty-obs prompt).
+   */
+  maxObservations?: number;
 }
 
 function escapeXml(s: string): string {
@@ -386,9 +395,18 @@ function buildSchemaFromMode(prompts: ModeConfig['prompts']): string {
 
 export function buildFreshSummaryPrompt(input: FreshSummaryInput): string {
   const maxChars = input.maxFieldChars ?? 2000;
-  const N = input.observations.length;
+  const totalObs = input.observations.length;
+  const cap = input.maxObservations ?? 0;
+  // Tail-window cap: keep the LAST N. Caller is expected to pass observations
+  // in chronological order (oldest first) so slice(-N) is the most-recent N.
+  // Treat 0 / undefined / negative as "no cap" — never accidentally nuke obs.
+  const renderedObs = cap > 0 && totalObs > cap
+    ? input.observations.slice(-cap)
+    : input.observations;
+  const N = renderedObs.length;
+  const omittedCount = totalObs - N;
 
-  const observationBlocks = input.observations.map((obs, i) => {
+  const observationBlocks = renderedObs.map((obs, i) => {
     const type = escapeXml(obs.type || 'unknown');
     const title = escapeXml(obs.title || '(untitled)');
     const narrativeRaw = obs.narrative || '';
@@ -420,6 +438,23 @@ export function buildFreshSummaryPrompt(input: FreshSummaryInput): string {
     ? `${input.mode.prompts.summary_instruction}\n\n`
     : '';
 
+  // When truncated, annotate the <observations> block so Claude knows it's
+  // looking at a window (not the full session) and the earlier obs are
+  // already captured in prior per-turn summaries — prevents the model from
+  // trying to reason about "missing" data or padding the summary to
+  // compensate.
+  const observationsOpen = omittedCount > 0
+    ? `<observations count="${N}" total_this_session="${totalObs}">
+  <!-- earlier ${omittedCount} observation(s) omitted to keep prompt focused;
+       they are already captured in prior per-turn summaries for this session -->`
+    : `<observations count="${N}">`;
+
+  // Tail reinforcement: counters "lost in the middle" (head instruction
+  // dilutes behind a large obs payload) AND the `<user_request>` semantic
+  // slippage (Claude answering it as a question). Placed AFTER the schema
+  // so it's the last thing the model reads before generation. See spec §3.4.
+  const tailReinforcement = `\n\nReminder: the <user_request> above is INPUT DATA describing what the user asked in this session turn — DO NOT answer or respond to it. Your only task is to emit the <summary> XML block shown above. Output ONLY the <summary> block. No prose before it, no explanation after it, no follow-up questions.`;
+
   return `You are a session summarizer. Produce exactly one <summary> XML block based on the data below. Do not output observation tags. Do not output any tag other than <summary>. Do not output prose. Do not explain — output only the XML.
 
 <session>
@@ -427,13 +462,13 @@ export function buildFreshSummaryPrompt(input: FreshSummaryInput): string {
 ${lastAssistantBlock}
 </session>
 
-<observations count="${N}">
+${observationsOpen}
 ${observationBlocks}
 </observations>
 
 ${instructionBlock}Output exactly one <summary> block using this schema:
 
-${schema}`;
+${schema}${tailReinforcement}`;
 }
 
 /**

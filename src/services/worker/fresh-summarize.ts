@@ -70,6 +70,17 @@ export interface FreshSummarizeInput {
    * from ModeManager.getInstance().getActiveMode().
    */
   mode?: ModeConfig;
+  /**
+   * Cap the observation list to the last N rows before building the prompt.
+   * Most-recent retained (slice(-N)), assuming the dep returns ASC order.
+   * Why: Claude Code's `--input-format stream-json` parser rejects single
+   * input lines beyond a buffer limit; on long sessions (200+ obs) the
+   * full prompt exceeds it and the subprocess exits 1 with
+   * "Error parsing streaming input line". 60 is the safe default.
+   * Treated as "no cap" when undefined or 0 (defensive — never silently
+   * produce an empty-obs summary from a misconfigured 0).
+   */
+  maxObservations?: number;
 }
 
 export type FreshSummarizeStatus =
@@ -102,13 +113,22 @@ export async function runFreshSummarizeQuery(
 ): Promise<FreshSummarizeResult> {
   const startedAt = Date.now();
   const observations = deps.getObservationsForSession(input.memorySessionId);
-  const obsCount = observations.length;
+  // obsCount reports the POST-cap count — the number of observations the
+  // model actually saw in the prompt. Slicing is delegated to the prompt
+  // builder so that it can emit `total_this_session` / omission-comment
+  // annotations alongside the truncation.
+  const cap = input.maxObservations;
+  const obsCount =
+    typeof cap === 'number' && cap > 0 && observations.length > cap
+      ? cap
+      : observations.length;
 
   const promptText = buildFreshSummaryPrompt({
     userPrompt: input.userPrompt,
     lastAssistantMessage: input.lastAssistantMessage,
     observations,
     mode: input.mode,
+    maxObservations: input.maxObservations,
   });
 
   // The SDK expects `prompt` to be an async iterable of user messages.
