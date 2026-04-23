@@ -5,13 +5,13 @@
  *   - Before each runFreshSummarizeQuery call, read `getCapForSession(id)`
  *     and pass it as `maxObservations`.
  *   - On successful store, call `recordSuccess(id)` so the cap resets to
- *     default (60).
- *   - On dead-letter (3rd retry exhausted → pending_messages.status='failed'),
- *     call `recordFailure(id)` so the NEXT summarize attempt on the same
- *     session uses a smaller cap.
- *
- * Retries WITHIN a single dead-lettered message reuse the current cap — we
- * only step down between messages, matching user spec "走了一次 salvage → 30".
+ *     the configured default (150 by default).
+ *   - On every failure, call `recordFailure(id)` so retries within the same
+ *     message probe progressively smaller caps instead of repeating the same
+ *     oversized prompt.
+ *   - When SummaryLane owns the policy instance, it refreshes
+ *     CLAUDE_MEM_MAX_SUMMARY_OBSERVATIONS from settings before each summarize
+ *     so config changes apply on the next run without a worker restart.
  */
 
 import { describe, it, expect, mock, beforeEach, afterEach, spyOn } from 'bun:test';
@@ -90,9 +90,14 @@ mock.module('../../src/services/worker/ProcessRegistry.js', () => ({
 import { SessionStore } from '../../src/services/sqlite/SessionStore.js';
 import { PendingMessageStore } from '../../src/services/sqlite/PendingMessageStore.js';
 import { SummaryLane } from '../../src/services/worker/SummaryLane.js';
-import { ObsCapPolicy } from '../../src/services/worker/obs-cap-policy.js';
+import {
+  ObsCapPolicy,
+  DEFAULT_OBS_CAP,
+  DEFAULT_STEP_SEQUENCE,
+} from '../../src/services/worker/obs-cap-policy.js';
 import { logger } from '../../src/utils/logger.js';
 import { DB_PATH } from '../../src/shared/paths.js';
+import { SettingsDefaultsManager } from '../../src/shared/SettingsDefaultsManager.js';
 
 // ---- Helpers ---------------------------------------------------------------
 
@@ -133,6 +138,36 @@ function seedSession(store: SessionStore, prompt = 1): {
   return { sessionDbId, contentSessionId };
 }
 
+function seedObservations(
+  store: SessionStore,
+  sessionDbId: number,
+  contentSessionId: string,
+  count: number,
+  prompt = 1,
+): void {
+  const memorySessionId = `mem-${sessionDbId}`;
+  for (let i = 0; i < count; i++) {
+    store.storeObservation(
+      memorySessionId,
+      'test-proj',
+      {
+        type: 'discovery',
+        title: `obs-${prompt}-${i + 1}`,
+        subtitle: null,
+        facts: [`fact-${i + 1}`],
+        narrative: `narrative ${i + 1}`,
+        concepts: [],
+        files_read: [],
+        files_modified: [],
+      },
+      prompt,
+      0,
+      undefined,
+      contentSessionId,
+    );
+  }
+}
+
 async function runUntilNSummaries(
   lane: SummaryLane,
   broadcasts: unknown[],
@@ -151,10 +186,12 @@ describe('SummaryLane: ObsCapPolicy wiring', () => {
   let store: SessionStore;
   let pendingStore: PendingMessageStore;
   let spies: Array<ReturnType<typeof spyOn>>;
+  let settingsSpy: ReturnType<typeof spyOn> | null;
 
   beforeEach(() => {
     captured.options = [];
     captured.collected = [];
+    settingsSpy = null;
     spies = [
       spyOn(logger, 'info').mockImplementation(() => {}),
       spyOn(logger, 'warn').mockImplementation(() => {}),
@@ -168,9 +205,10 @@ describe('SummaryLane: ObsCapPolicy wiring', () => {
   afterEach(async () => {
     store.close();
     for (const s of spies) s.mockRestore();
+    settingsSpy?.mockRestore();
   });
 
-  it('passes the policy cap into fresh-summarize prompt on first attempt (default 60)', async () => {
+  it('passes the policy cap into fresh-summarize prompt on first attempt (configured default)', async () => {
     const { sessionDbId, contentSessionId } = seedSession(store);
     pendingStore.enqueue(sessionDbId, contentSessionId, {
       type: 'summarize',
@@ -199,6 +237,49 @@ describe('SummaryLane: ObsCapPolicy wiring', () => {
     expect(captured.collected.length).toBeGreaterThan(0);
   });
 
+  it('refreshes configured max cap from settings on the next summarize without restarting SummaryLane', async () => {
+    let configuredCap = '150';
+    settingsSpy = spyOn(SettingsDefaultsManager, 'loadFromFile').mockImplementation(() => ({
+      CLAUDE_MEM_MODEL: 'claude-sonnet-4-5',
+      CLAUDE_MEM_MAX_SUMMARY_OBSERVATIONS: configuredCap,
+    } as any));
+
+    const first = seedSession(store);
+    seedObservations(store, first.sessionDbId, first.contentSessionId, 200);
+    pendingStore.enqueue(first.sessionDbId, first.contentSessionId, {
+      type: 'summarize',
+      last_assistant_message: 'first',
+      prompt_number: 1,
+    });
+
+    const broadcasts: any[] = [];
+    const lane = new SummaryLane();
+    lane.setSessionManager(makeStubSessionManager(store, pendingStore));
+    lane.setDbManager(makeStubDbManager(store, pendingStore));
+    lane.setDbPathsProvider(() => new Set([DB_PATH]));
+    lane.setBroadcastSummary((p) => { broadcasts.push(p); });
+    lane.setBroadcastProcessingStatus(() => {});
+
+    lane.start();
+    await runUntilNSummaries(lane, broadcasts, 1, 5000);
+
+    configuredCap = '40';
+    const second = seedSession(store);
+    seedObservations(store, second.sessionDbId, second.contentSessionId, 200);
+    pendingStore.enqueue(second.sessionDbId, second.contentSessionId, {
+      type: 'summarize',
+      last_assistant_message: 'second',
+      prompt_number: 1,
+    });
+
+    await runUntilNSummaries(lane, broadcasts, 2, 5000);
+    await lane.stop();
+
+    expect(broadcasts.length).toBe(2);
+    expect(captured.collected[0]).toContain('<observations count="150" total_this_session="200">');
+    expect(captured.collected[1]).toContain('<observations count="40" total_this_session="200">');
+  });
+
   it('recordSuccess is called after a successful store (cap stays at default)', async () => {
     const { sessionDbId, contentSessionId } = seedSession(store);
     pendingStore.enqueue(sessionDbId, contentSessionId, {
@@ -208,9 +289,10 @@ describe('SummaryLane: ObsCapPolicy wiring', () => {
     });
 
     const policy = new ObsCapPolicy();
-    // Pre-set cap lower than default to assert success resets it
-    policy.recordFailure(sessionDbId); // 60 → 30
-    expect(policy.getCapForSession(sessionDbId)).toBe(30);
+    // Pre-set cap lower than default to assert success resets it.
+    // sequence[1] = 150 halved = 75.
+    policy.recordFailure(sessionDbId);
+    expect(policy.getCapForSession(sessionDbId)).toBe(DEFAULT_STEP_SEQUENCE[1]);
 
     const broadcasts: any[] = [];
     const lane = new SummaryLane({ obsCapPolicy: policy });
@@ -225,16 +307,18 @@ describe('SummaryLane: ObsCapPolicy wiring', () => {
     await lane.stop();
 
     expect(broadcasts.length).toBe(1);
-    expect(policy.getCapForSession(sessionDbId)).toBe(60);
+    expect(policy.getCapForSession(sessionDbId)).toBe(DEFAULT_OBS_CAP);
   });
 
-  it('recordFailure fires once per dead-letter (retries within message do NOT step down)', async () => {
+  // Timeout bumped to 30s: full retry chain is 3×2s abortableSleep + claim
+  // latency ≈ ~8-10s end-to-end, but bun:test's default 5s is not enough.
+  it('recordFailure fires on EVERY retry (not just dead-letter) — intra-message stepdown', async () => {
     const { sessionDbId, contentSessionId } = seedSession(store);
 
-    // Seed the summarize row ALREADY at retry_count=2 (bun:sqlite direct).
-    // With maxRetries=3 and markFailed semantics (retry_count < maxRetries →
-    // pending, else → failed), a single failure from retry_count=2 produces
-    // retry_count=3 → status='failed' (dead-letter) in one markFailed call.
+    // Seed a fresh summarize row at retry_count=0 so it consumes the full
+    // retry budget. markFailed uses `retry_count < maxRetries` (strict less),
+    // so with maxRetries=3: 0→1 (pending), 1→2 (pending), 2→3 (pending),
+    // 3→failed (dead-letter). 4 failure events total.
     const now = Date.now();
     store.db.prepare(`
       INSERT INTO pending_messages (
@@ -242,37 +326,13 @@ describe('SummaryLane: ObsCapPolicy wiring', () => {
         last_assistant_message, prompt_number,
         status, retry_count, created_at_epoch,
         started_processing_at_epoch
-      ) VALUES (?, ?, 'summarize', ?, ?, 'pending', 2, ?, NULL)
+      ) VALUES (?, ?, 'summarize', ?, ?, 'pending', 0, ?, NULL)
     `).run(sessionDbId, contentSessionId, 'am', 1, now);
 
-    // Unregister the memory_session_id so the runFreshSummarizeQuery call
-    // raises "non-success" status=error (session row ok, memory_session_id
-    // is there — instead we will sabotage the SDK mock to throw).
-    //
-    // Simpler path: delete the session row entirely so SummaryLane's first
-    // lookup returns null → confirmProcessed + skip; that does NOT exercise
-    // the failure path. We need a different way to force failure.
-    //
-    // Best: override the mocked SDK query to throw on this call. The mock
-    // above returns a valid XML; we install a one-shot override here using
-    // a session-scoped flag. Easier: zero out the mock response for this
-    // run by temporarily swapping the getObservationsForSession helper to
-    // raise — but runFreshSummarizeQuery catches errors → status='error'.
-    // That triggers throw in processSummarize → the consume loop catch
-    // calls markFailed(retry_count=2 → 3) → final status 'failed'.
-    //
-    // To force runFreshSummarizeQuery status='error' we exploit the fact
-    // that the mocked query() yields VALID_SUMMARY_XML unconditionally, so
-    // we instead break the DB write by clearing memory_session_id after
-    // the lookup — but that introduces a TOCTOU race. Cleaner: delete the
-    // user prompt row so resolve fails? No, SummaryLane handles missing
-    // user prompt gracefully (falls back to empty).
-    //
-    // Pragmatic choice: temporarily mutate the mock's behavior via a global
-    // flag so this test gets a throw-every-call iterator.
-
-    // Swap the captured path to throw. This is pollution-safe because
-    // captured is module-local to this file.
+    // Sabotage the mocked Agent SDK query so every call throws. The mock
+    // we installed at module load time pushes to captured.options BEFORE
+    // yielding; swap that push to throw so runFreshSummarizeQuery catches
+    // it → status='error' → processSummarize throws → consume loop catch.
     const origPush = captured.options.push.bind(captured.options);
     captured.options = Object.assign([], {
       push(x: unknown) {
@@ -284,7 +344,6 @@ describe('SummaryLane: ObsCapPolicy wiring', () => {
     const policy = new ObsCapPolicy();
     const broadcasts: any[] = [];
     const markFailures: Array<number> = [];
-    // Spy on recordFailure to count
     const origRecordFailure = policy.recordFailure.bind(policy);
     policy.recordFailure = (id: number) => {
       markFailures.push(id);
@@ -300,23 +359,97 @@ describe('SummaryLane: ObsCapPolicy wiring', () => {
 
     lane.start();
 
-    // Wait for the pending row to transition to 'failed' (dead-letter)
-    const deadline = Date.now() + 4000;
+    // Wait for the pending row to fully dead-letter (either status='failed'
+    // or deleted after the full retry chain).
+    const deadline = Date.now() + 15000; // consume loop sleeps 2s between retries
     while (Date.now() < deadline) {
       const row = store.db
         .prepare(
-          `SELECT status FROM pending_messages WHERE session_db_id=? AND message_type='summarize'`,
+          `SELECT status, retry_count FROM pending_messages WHERE session_db_id=? AND message_type='summarize'`,
         )
-        .get(sessionDbId) as { status: string } | undefined;
-      if (row?.status === 'failed') break;
-      await new Promise((r) => setTimeout(r, 30));
+        .get(sessionDbId) as { status: string; retry_count: number } | undefined;
+      if (!row || row.status === 'failed') break;
+      await new Promise((r) => setTimeout(r, 50));
     }
 
     await lane.stop();
 
-    // Exactly one dead-letter event → exactly one recordFailure call
-    expect(markFailures).toEqual([sessionDbId]);
-    // Cap stepped down: 60 → 30
-    expect(policy.getCapForSession(sessionDbId)).toBe(30);
-  });
+    // 4 recordFailure calls over the life of this message. markFailed uses
+    // `retry_count < maxRetries` (strict less-than), so with maxRetries=3
+    // the sequence is: call 1 → retry_count=1 (pending), 2→2 (pending),
+    // 3→3 (pending), 4→failed (dead-letter). See tests/CLAUDE.md and
+    // rules/fixed-bugs.md § "markFailed retry semantic".
+    expect(markFailures).toEqual([
+      sessionDbId, sessionDbId, sessionDbId, sessionDbId,
+    ]);
+    // Cap stepped down 4 times along the parameterized halving sequence.
+    // sequence[4] = step after 4 failures from index 0.
+    expect(policy.getCapForSession(sessionDbId)).toBe(DEFAULT_STEP_SEQUENCE[4]);
+  }, 30000);
+
+  it('retry uses the newly-reduced cap (probes sequence[0], sequence[1], sequence[2] on successive attempts)', async () => {
+    // This is the KEY regression pin: the cap forwarded to
+    // runFreshSummarizeQuery on retry 2 must be LOWER than on retry 1.
+    // Prior design sent the same cap on every retry (identical prompt ⇒
+    // identical failure), wasting the retry budget. Critic flagged this
+    // as Not-Ready blocker; Fix #1 makes retries probe smaller caps.
+    const { sessionDbId, contentSessionId } = seedSession(store);
+    const now = Date.now();
+    store.db.prepare(`
+      INSERT INTO pending_messages (
+        session_db_id, content_session_id, message_type,
+        last_assistant_message, prompt_number,
+        status, retry_count, created_at_epoch,
+        started_processing_at_epoch
+      ) VALUES (?, ?, 'summarize', ?, ?, 'pending', 0, ?, NULL)
+    `).run(sessionDbId, contentSessionId, 'am', 1, now);
+
+    const policy = new ObsCapPolicy();
+    // Capture the cap observed at each runFreshSummarizeQuery call.
+    const seenCaps: number[] = [];
+    const origGetCap = policy.getCapForSession.bind(policy);
+    policy.getCapForSession = (id: number) => {
+      const v = origGetCap(id);
+      seenCaps.push(v);
+      return v;
+    };
+
+    const origPush = captured.options.push.bind(captured.options);
+    captured.options = Object.assign([], {
+      push(x: unknown) {
+        origPush(x);
+        throw new Error('simulated-fresh-summarize-failure');
+      },
+    }) as any;
+
+    const lane = new SummaryLane({ obsCapPolicy: policy });
+    lane.setSessionManager(makeStubSessionManager(store, pendingStore));
+    lane.setDbManager(makeStubDbManager(store, pendingStore));
+    lane.setDbPathsProvider(() => new Set([DB_PATH]));
+    lane.setBroadcastSummary(() => {});
+    lane.setBroadcastProcessingStatus(() => {});
+
+    lane.start();
+    const deadline = Date.now() + 15000;
+    while (Date.now() < deadline) {
+      const row = store.db
+        .prepare(`SELECT status FROM pending_messages WHERE session_db_id=? AND message_type='summarize'`)
+        .get(sessionDbId) as { status: string } | undefined;
+      if (!row || row.status === 'failed') break;
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    await lane.stop();
+
+    // The POLICY cap observed during processSummarize on each attempt
+    // (filter out telemetry-only reads). Compare DISTINCT decreasing values
+    // to the first three elements of the parameterized halving sequence.
+    // For default 150: [150, 75, 37]. For a custom defaultCap the sequence
+    // would be different — assertion stays valid because we derive it.
+    const distinctDecreasing = seenCaps.filter((v, i, arr) => i === 0 || v !== arr[i - 1]);
+    expect(distinctDecreasing.slice(0, 3)).toEqual([
+      DEFAULT_STEP_SEQUENCE[0],
+      DEFAULT_STEP_SEQUENCE[1],
+      DEFAULT_STEP_SEQUENCE[2],
+    ]);
+  }, 30000);
 });

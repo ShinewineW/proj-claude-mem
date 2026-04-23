@@ -80,10 +80,25 @@ export class SummaryLane {
   private state: SummaryLaneState = 'DISABLED';
   private consumerPromise: Promise<void> | null = null;
   private obsCapPolicy: ObsCapPolicy;
+  private readonly refreshObsCapFromSettings: boolean;
 
   constructor(deps?: { obsCapPolicy?: ObsCapPolicy }) {
     this.telemetry = new SummaryLaneTelemetry();
-    this.obsCapPolicy = deps?.obsCapPolicy ?? new ObsCapPolicy();
+    // Read the default cap from settings (CLAUDE_MEM_MAX_SUMMARY_OBSERVATIONS,
+    // default "150") and pass to the policy. ObsCapPolicy falls back to
+    // DEFAULT_OBS_CAP on any invalid value, so a missing / garbled setting
+    // file is safe. Test doubles can inject a custom policy to bypass this.
+    if (deps?.obsCapPolicy) {
+      this.obsCapPolicy = deps.obsCapPolicy;
+      this.refreshObsCapFromSettings = false;
+    } else {
+      const settings = SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH);
+      const configuredCap = parseInt(settings.CLAUDE_MEM_MAX_SUMMARY_OBSERVATIONS, 10);
+      this.obsCapPolicy = new ObsCapPolicy({
+        defaultCap: Number.isFinite(configuredCap) ? configuredCap : undefined,
+      });
+      this.refreshObsCapFromSettings = true;
+    }
   }
 
   setSessionManager(sm: SessionManager): void { this.sessionManager = sm; }
@@ -94,6 +109,15 @@ export class SummaryLane {
 
   getStatus(): SummaryLaneStatus {
     return { state: this.state, counters: this.telemetry.getCounters() };
+  }
+
+  private syncObsCapPolicyFromSettings(): void {
+    if (!this.refreshObsCapFromSettings) return;
+    const settings = SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH);
+    const configuredCap = parseInt(settings.CLAUDE_MEM_MAX_SUMMARY_OBSERVATIONS, 10);
+    this.obsCapPolicy.syncDefaultCap(
+      Number.isFinite(configuredCap) ? configuredCap : undefined,
+    );
   }
 
   /**
@@ -162,17 +186,20 @@ export class SummaryLane {
             });
             const result = pendingStore.markFailed(message.id);
             this.telemetry.recordFailed(message.id);
+            // INTRA-MESSAGE STEPDOWN: record the failure BEFORE branching.
+            // Every attempt that fails steps the cap down one notch so the
+            // NEXT claim of this same message (on the retry path) renders
+            // a smaller prompt. Without this, all 3 retries use the same
+            // cap ⇒ identical prompt ⇒ identical failure (a wasted retry
+            // budget on stream-json parser rejection and semantic drift
+            // cases). See docs/spec/2026-04-22-claude-mem-summarylane-fixes.md
+            // §3.4 "critic-flagged Not-Ready" → Fix #1.
+            this.obsCapPolicy.recordFailure(message.session_db_id);
             if (result.finalStatus === 'pending') {
               this.telemetry.recordRetried(message.id, result.retryCount);
               await this.abortableSleep(2000, signal);
             } else {
               this.telemetry.recordDeadLetter(message.id);
-              // Step the session's obs cap down ONE notch so the NEXT
-              // summarize on this session renders a smaller prompt. We only
-              // step down on dead-letter (not on per-retry failures) —
-              // retries within a single message reuse the same cap since the
-              // prompt content is identical.
-              this.obsCapPolicy.recordFailure(message.session_db_id);
               // Salvage fallback: synthesize a labeled summary from DB
               // observations so the turn has SOMETHING persisted (rather
               // than silently dropping the data). Only runs on dead-letter,
@@ -308,8 +335,14 @@ export class SummaryLane {
       signal,
     });
 
+    // Refresh the default cap from settings before each run so
+    // CLAUDE_MEM_MAX_SUMMARY_OBSERVATIONS changes apply on the next summarize
+    // without a worker restart. The policy keeps per-session failure depth.
+    this.syncObsCapPolicyFromSettings();
+
     // Read the session's current obs cap from the adaptive policy. Default
-    // is 60; steps down on dead-letter; resets on success. See obs-cap-policy.ts.
+    // is the configured top cap (150 by default); every failure steps down;
+    // any successful summarize resets the session to the configured default.
     const maxObservations = this.obsCapPolicy.getCapForSession(sessionDbId);
     const result = await runFreshSummarizeQuery(deps, {
       memorySessionId: sessionRow.memory_session_id,
@@ -450,8 +483,8 @@ export class SummaryLane {
     pendingStore.confirmProcessed(message.id);
     this.onBroadcastProcessingStatus!();
 
-    // Successful summarize — reset the session's obs cap to default (60).
-    // If the cap had been stepped down by an earlier dead-letter on this
+    // Successful summarize — reset the session's obs cap to the configured
+    // default. If the cap had been stepped down by earlier failures on this
     // session, this unwinds that degradation. See obs-cap-policy.ts.
     this.obsCapPolicy.recordSuccess(sessionDbId);
 
@@ -482,10 +515,31 @@ export class SummaryLane {
     const sessionRow = sessionStore.getSessionById(sessionDbId);
     if (!sessionRow || !sessionRow.memory_session_id) return;
 
-    const recentObs = sessionStore.getRecentObservationsForSession(
-      sessionRow.memory_session_id,
-      20,
-    );
+    // Load observations using the SAME window the regular summarize uses:
+    // scoped to content_session_id + prompt_number + queuedAtEpoch. Without
+    // this, observations from a LATER turn that started during our
+    // dead-letter retry window (~2 min) would leak into this turn's
+    // salvage summary (critic-flagged Fix #2). Legacy rows with no
+    // content_session_id / prompt_number fall back to the time-based path
+    // — there's no prompt_scoped alternative for NULL-keyed rows.
+    let recentObs: Array<{ type: string; title: string | null; narrative: string | null }>;
+    const contentSessionId = sessionRow.content_session_id;
+    const promptNumber = message.prompt_number;
+    if (contentSessionId && promptNumber != null) {
+      const scoped = sessionStore.getObservationsForContentSessionUpToPrompt(
+        contentSessionId,
+        promptNumber,
+        message.created_at_epoch,
+      );
+      // Result is ORDER BY id ASC — take the LAST 20 (most recent in-scope)
+      // so dense prompts don't drown the summary in early tool-reads.
+      recentObs = scoped.slice(-20);
+    } else {
+      recentObs = sessionStore.getRecentObservationsForSession(
+        sessionRow.memory_session_id,
+        20,
+      );
+    }
     if (recentObs.length === 0) return;
 
     // Build a deterministic, clearly-labeled payload from observation
@@ -494,8 +548,10 @@ export class SummaryLane {
       .map((o) => o.title || '(untitled)')
       .slice(0, 20);
     const investigated = titles.map((t) => `- ${t}`).join('\n');
-    const firstObs = recentObs[0];
-    const request = `[salvaged] ${firstObs.title ?? 'Session summary'}`.slice(0, 120);
+    // Use the MOST-RECENT in-scope obs for the summary header. With the
+    // prompt-scoped ASC-ordered result, that's recentObs[last].
+    const headerObs = recentObs[recentObs.length - 1];
+    const request = `[salvaged] ${headerObs.title ?? 'Session summary'}`.slice(0, 120);
 
     const payload = {
       request,

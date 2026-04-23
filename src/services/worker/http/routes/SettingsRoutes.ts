@@ -117,6 +117,8 @@ export class SettingsRoutes extends BaseRouteHandler {
       // SDK Token Optimization (Phase 2)
       'CLAUDE_MEM_MAX_HISTORY_LENGTH',
       'CLAUDE_MEM_MAX_HISTORY_TOKENS',
+      // SummaryLane adaptive observation cap
+      'CLAUDE_MEM_MAX_SUMMARY_OBSERVATIONS',
     ];
 
     for (const key of settingKeys) {
@@ -347,6 +349,16 @@ export class SettingsRoutes extends BaseRouteHandler {
       const val = parseInt(settings.CLAUDE_MEM_MAX_HISTORY_TOKENS, 10);
       if (isNaN(val) || val < 10000 || val > 500000) {
         return { valid: false, error: 'CLAUDE_MEM_MAX_HISTORY_TOKENS must be between 10000 and 500000' };
+      }
+    }
+
+    if (settings.CLAUDE_MEM_MAX_SUMMARY_OBSERVATIONS) {
+      const val = parseInt(settings.CLAUDE_MEM_MAX_SUMMARY_OBSERVATIONS, 10);
+      if (isNaN(val) || val < 1 || val > 2000) {
+        return {
+          valid: false,
+          error: 'CLAUDE_MEM_MAX_SUMMARY_OBSERVATIONS must be between 1 and 2000',
+        };
       }
     }
 

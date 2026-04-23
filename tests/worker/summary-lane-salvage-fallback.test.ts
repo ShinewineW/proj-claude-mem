@@ -61,7 +61,7 @@ mock.module('../../src/services/worker/ProcessRegistry.js', () => ({
 import { SessionStore } from '../../src/services/sqlite/SessionStore.js';
 import { PendingMessageStore } from '../../src/services/sqlite/PendingMessageStore.js';
 import { SummaryLane } from '../../src/services/worker/SummaryLane.js';
-import { ObsCapPolicy } from '../../src/services/worker/obs-cap-policy.js';
+import { ObsCapPolicy, DEFAULT_STEP_SEQUENCE } from '../../src/services/worker/obs-cap-policy.js';
 import { logger } from '../../src/utils/logger.js';
 import { DB_PATH } from '../../src/shared/paths.js';
 
@@ -113,6 +113,9 @@ function seedSessionWithObservations(
         files_modified: [],
       },
       1,
+      0,
+      undefined,
+      contentSessionId,  // required for prompt-scoped salvage lookup
     );
   }
   return { sessionDbId, contentSessionId, memorySessionId };
@@ -230,7 +233,111 @@ describe('SummaryLane: salvage fallback on dead-letter', () => {
     expect(row.c).toBe(0);
   });
 
-  it('still steps down cap on dead-letter even when salvage succeeds', async () => {
+  it('salvage uses PROMPT-SCOPED obs window — no cross-turn contamination', async () => {
+    // Critic-flagged Fix #2: salvage previously used
+    // getRecentObservationsForSession(memory_session_id, 20) which has no
+    // prompt_number filter and no queuedAtEpoch upper bound. If a new turn
+    // (prompt N+1) lands during the dead-letter retry window (~2 min),
+    // its observations would leak into the salvage for prompt N.
+    //
+    // This test seeds:
+    //   - prompt=1 obs written BEFORE the summarize's created_at_epoch
+    //     (these are the ones the salvage must use)
+    //   - prompt=2 obs written AFTER the summarize's created_at_epoch
+    //     (these represent a later turn that started during dead-letter
+    //     and must NOT leak into salvage for prompt=1)
+    const contentSessionId = `cs-${Math.random().toString(36).slice(2, 8)}`;
+    const sessionDbId = store.createSDKSession(contentSessionId, 'test-proj', 'Q1');
+    const memorySessionId = `mem-${sessionDbId}`;
+    store.ensureMemorySessionIdRegistered(sessionDbId, memorySessionId);
+    store.saveUserPrompt(contentSessionId, 1, 'Q1');
+    store.saveUserPrompt(contentSessionId, 2, 'Q2');
+
+    // Pre-summarize observations for prompt 1 (MUST appear in salvage)
+    for (let i = 0; i < 5; i++) {
+      store.storeObservation(
+        memorySessionId,
+        'test-proj',
+        {
+          type: 'discovery',
+          title: `prompt1-obs-${i}`,
+          subtitle: null,
+          facts: [`p1-fact-${i}`],
+          narrative: `prompt1 narrative ${i}`,
+          concepts: [],
+          files_read: [],
+          files_modified: [],
+        },
+        1,
+        0,
+        undefined,
+        contentSessionId,
+      );
+    }
+
+    const summarizeCreatedAt = Date.now();
+    // Seed dead-letter-in-one summarize for prompt 1 at epoch=summarizeCreatedAt
+    store.db.prepare(`
+      INSERT INTO pending_messages (
+        session_db_id, content_session_id, message_type,
+        last_assistant_message, prompt_number,
+        status, retry_count, created_at_epoch,
+        started_processing_at_epoch
+      ) VALUES (?, ?, 'summarize', ?, ?, 'pending', 2, ?, NULL)
+    `).run(sessionDbId, contentSessionId, 'A1', 1, summarizeCreatedAt);
+
+    // NOW inject prompt-2 observations AFTER the summarize's created_at.
+    // These represent a later turn starting during the dead-letter retry
+    // window. They MUST NOT appear in salvage for prompt 1.
+    // bun:sqlite auto-fills created_at_epoch with Date.now() when we call
+    // storeObservation, which is > summarizeCreatedAt by definition.
+    await new Promise((r) => setTimeout(r, 5));
+    for (let i = 0; i < 5; i++) {
+      store.storeObservation(
+        memorySessionId,
+        'test-proj',
+        {
+          type: 'discovery',
+          title: `prompt2-LEAK-${i}`,
+          subtitle: null,
+          facts: [`p2-leak-fact-${i}`],
+          narrative: `prompt2 narrative ${i} — MUST NOT LEAK`,
+          concepts: [],
+          files_read: [],
+          files_modified: [],
+        },
+        2,                  // higher prompt_number AND later epoch
+        0,
+        undefined,
+        contentSessionId,   // same content_session_id as prompt 1
+      );
+    }
+
+    const policy = new ObsCapPolicy();
+    const lane = new SummaryLane({ obsCapPolicy: policy });
+    lane.setSessionManager(makeStubSessionManager(store, pendingStore));
+    lane.setDbManager(makeStubDbManager(store, pendingStore));
+    lane.setDbPathsProvider(() => new Set([DB_PATH]));
+    lane.setBroadcastSummary(() => {});
+    lane.setBroadcastProcessingStatus(() => {});
+
+    lane.start();
+    await waitForDeadLetter(store, sessionDbId);
+    await lane.stop();
+
+    const row = store.db
+      .prepare(`SELECT investigated, request FROM session_summaries WHERE memory_session_id=? AND prompt_number=1`)
+      .get(memorySessionId) as { investigated: string; request: string } | undefined;
+
+    expect(row).toBeDefined();
+    // Prompt 1 obs MUST appear
+    expect(row!.investigated).toMatch(/prompt1-obs-/);
+    // Prompt 2 obs MUST NOT leak into prompt 1's salvage summary
+    expect(row!.investigated).not.toMatch(/prompt2-LEAK-/);
+    expect(row!.request).not.toMatch(/prompt2-LEAK-/);
+  }, 15000);
+
+  it('still steps down cap on every failure (intra-retry + dead-letter) even when salvage succeeds', async () => {
     const { sessionDbId, contentSessionId } = seedSessionWithObservations(store, 3);
     seedDeadLetterSummarize(store, pendingStore, sessionDbId, contentSessionId);
 
@@ -246,9 +353,12 @@ describe('SummaryLane: salvage fallback on dead-letter', () => {
     await waitForDeadLetter(store, sessionDbId);
     await lane.stop();
 
-    // Salvage succeeding does NOT undo the dead-letter degradation:
-    // we still stepped cap down because the Claude-level attempt failed.
-    // (If the next Claude call succeeds at cap=30, THAT resets to 60.)
-    expect(policy.getCapForSession(sessionDbId)).toBe(30);
-  });
+    // Salvage succeeding does NOT undo the cap degradation.
+    // Seed is retry_count=2 → markFailed uses strict less-than:
+    //   call 1: 2<3 TRUE → retry_count=3, pending, recordFailure(#1)
+    //   (consume loop re-claims after 2s sleep)
+    //   call 2: 3<3 FALSE → failed, recordFailure(#2), salvage runs
+    // Two stepdowns: sequence[0]=150 → sequence[1]=75 → sequence[2]=37.
+    expect(policy.getCapForSession(sessionDbId)).toBe(DEFAULT_STEP_SEQUENCE[2]);
+  }, 15000);
 });

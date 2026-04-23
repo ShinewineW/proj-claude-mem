@@ -84,6 +84,8 @@ export interface SettingsDefaults {
   // SDK Token Optimization (Phase 2 — Layer C)
   CLAUDE_MEM_MAX_HISTORY_LENGTH: string;    // Max conversation history messages before proactive reset
   CLAUDE_MEM_MAX_HISTORY_TOKENS: string;    // Max estimated tokens before proactive reset
+  // SummaryLane adaptive observation cap
+  CLAUDE_MEM_MAX_SUMMARY_OBSERVATIONS: string; // Default cap on obs embedded in fresh-summarize prompt (first step of adaptive sequence)
 }
 
 export class SettingsDefaultsManager {
@@ -165,6 +167,11 @@ export class SettingsDefaultsManager {
     // SDK Token Optimization (Phase 2 — Layer C)
     CLAUDE_MEM_MAX_HISTORY_LENGTH: "50",
     CLAUDE_MEM_MAX_HISTORY_TOKENS: "100000",
+    // SummaryLane: default cap at the first step of the adaptive sequence.
+    // The runtime derives the rest by repeated halving, so the default 150
+    // becomes [150, 75, 37, 18, 9, 4, 2, 1]. Setting values <= 0 or
+    // non-numeric fall back to 150 defensively.
+    CLAUDE_MEM_MAX_SUMMARY_OBSERVATIONS: "150",
   };
 
   /**

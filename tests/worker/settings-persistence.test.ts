@@ -50,3 +50,26 @@ describe('Phase 1 settings persistence', () => {
     expect(content).toMatch(/SKIP_TOOL_PATTERNS.*1000|under 1000/);
   });
 });
+
+describe('SummaryLane max-cap settings persistence', () => {
+  test('CLAUDE_MEM_MAX_SUMMARY_OBSERVATIONS exists in SettingsDefaults interface', () => {
+    const content = readFileSync(join(SRC_ROOT, 'shared/SettingsDefaultsManager.ts'), 'utf-8');
+    expect(content).toContain('CLAUDE_MEM_MAX_SUMMARY_OBSERVATIONS: string');
+  });
+
+  test('CLAUDE_MEM_MAX_SUMMARY_OBSERVATIONS has a default in DEFAULTS', () => {
+    const content = readFileSync(join(SRC_ROOT, 'shared/SettingsDefaultsManager.ts'), 'utf-8');
+    expect(content).toMatch(/CLAUDE_MEM_MAX_SUMMARY_OBSERVATIONS:\s*["']150["']/);
+  });
+
+  test('CLAUDE_MEM_MAX_SUMMARY_OBSERVATIONS is in SettingsRoutes write-back allowlist', () => {
+    const content = readFileSync(join(SRC_ROOT, 'services/worker/http/routes/SettingsRoutes.ts'), 'utf-8');
+    expect(content).toContain("'CLAUDE_MEM_MAX_SUMMARY_OBSERVATIONS'");
+  });
+
+  test('CLAUDE_MEM_MAX_SUMMARY_OBSERVATIONS has validation in SettingsRoutes', () => {
+    const content = readFileSync(join(SRC_ROOT, 'services/worker/http/routes/SettingsRoutes.ts'), 'utf-8');
+    expect(content).toContain('CLAUDE_MEM_MAX_SUMMARY_OBSERVATIONS');
+    expect(content).toMatch(/between 1 and 2000/);
+  });
+});

@@ -4,33 +4,133 @@
  * Each SDK session gets its own cap on how many observations are embedded
  * into the fresh-summarize prompt. The cap shrinks on failure and resets on
  * success. At the floor (1 obs), N consecutive failures trigger a recovery
- * jump back to RECOVERY_CAP (30) so we don't stay stuck at "1 obs" after a
- * transient failure cleared.
+ * jump back to sequence[1] (one halving below the configured default) so we
+ * don't stay stuck at "1 obs" after a transient failure cleared.
  *
  * Why adaptive instead of static: session 164 on ClaudeMem-ProjIso
- * accumulated 215 obs → the default 60-cap prompt was ~70KB and worked.
- * But other sessions may have denser per-obs content — a static cap that
- * works for one project can fail on another. Stepdown probes the right
- * size for each session rather than betting on a universal number.
+ * accumulated 215 obs. Some projects succeed comfortably at cap=150, while
+ * other sessions may have denser per-obs content. Stepdown probes the right
+ * size for each session rather than betting on a universal prompt size.
  */
 
-export const STEP_SEQUENCE = Object.freeze([60, 30, 15, 7, 3, 1] as const);
-export const DEFAULT_OBS_CAP = STEP_SEQUENCE[0]; // 60
-export const OBS_CAP_FLOOR = STEP_SEQUENCE[STEP_SEQUENCE.length - 1]; // 1
-export const RECOVERY_CAP = STEP_SEQUENCE[1]; // 30
+export const DEFAULT_OBS_CAP = 150; // aligned with spec cap=150 success samples
+export const OBS_CAP_FLOOR = 1;
 export const FAILURES_AT_FLOOR_BEFORE_RECOVERY = 5;
 
+/**
+ * Build the stepdown sequence by repeatedly halving (floor) from `defaultCap`
+ * down to 1. Parameterizing the sequence (vs. hardcoding a fixed ladder)
+ * lets operators tune a single knob (CLAUDE_MEM_MAX_SUMMARY_OBSERVATIONS)
+ * without editing magic constants spread across the code.
+ *
+ * Examples:
+ *   150 → [150, 75, 37, 18, 9, 4, 2, 1]
+ *   60  → [60, 30, 15, 7, 3, 1]
+ *   40  → [40, 20, 10, 5, 2, 1]
+ *   1   → [1]
+ *
+ * Guarantees:
+ *   - First element is the user-requested cap
+ *   - Sequence is strictly decreasing (dedup protects against edge cases)
+ *   - Last element is always 1 (the floor)
+ */
+export function generateStepSequence(defaultCap: number): readonly number[] {
+  const seq: number[] = [];
+  let cur = Math.max(1, Math.floor(defaultCap));
+  seq.push(cur);
+  while (cur > 1) {
+    cur = Math.floor(cur / 2);
+    if (cur < 1) break;
+    if (seq[seq.length - 1] !== cur) seq.push(cur);
+  }
+  return Object.freeze(seq);
+}
+
+/** Default sequence derived from DEFAULT_OBS_CAP. Exposed for tests. */
+export const DEFAULT_STEP_SEQUENCE = generateStepSequence(DEFAULT_OBS_CAP);
+
 interface SessionState {
-  stepIndex: number;         // index into STEP_SEQUENCE
+  stepIndex: number;         // index into sequence
   floorFailureCount: number; // consecutive failures at floor (stepIndex === last)
+}
+
+export interface ObsCapPolicyOptions {
+  /**
+   * Top-of-stepdown cap. All stepdown values are derived from this by
+   * repeated halving — a single knob that operators can tune without
+   * editing a magic sequence list.
+   *
+   * Defensive: invalid values (0, negative, NaN, undefined) fall back to
+   * DEFAULT_OBS_CAP. Settings files can have typos and a "cap disabled"
+   * silent fallback is not safe.
+   *
+   * Wired from CLAUDE_MEM_MAX_SUMMARY_OBSERVATIONS in SummaryLane.
+   */
+  defaultCap?: number;
+}
+
+function resolveStepSequence(defaultCap?: number): readonly number[] {
+  const validOverride =
+    typeof defaultCap === 'number' &&
+    Number.isFinite(defaultCap) &&
+    defaultCap > 0;
+  return validOverride
+    ? generateStepSequence(Math.floor(defaultCap))
+    : DEFAULT_STEP_SEQUENCE;
+}
+
+function sequencesEqual(
+  lhs: readonly number[],
+  rhs: readonly number[],
+): boolean {
+  if (lhs.length !== rhs.length) return false;
+  return lhs.every((value, index) => value === rhs[index]);
 }
 
 export class ObsCapPolicy {
   private state = new Map<number, SessionState>();
+  private sequence: readonly number[];
+
+  constructor(opts?: ObsCapPolicyOptions) {
+    this.sequence = resolveStepSequence(opts?.defaultCap);
+  }
+
+  /** The stepdown cascade in effect for this policy instance. */
+  getSequence(): readonly number[] { return this.sequence; }
+
+  /**
+   * Refresh the default cap while preserving each session's failure depth.
+   *
+   * SummaryLane calls this before every summarize so config changes applied
+   * through settings.json or /api/settings take effect without a worker
+   * restart. Existing sessions keep their stepIndex where possible; if the
+   * new sequence is shorter, the index clamps to the new floor.
+   */
+  syncDefaultCap(defaultCap?: number): void {
+    const nextSequence = resolveStepSequence(defaultCap);
+    if (sequencesEqual(this.sequence, nextSequence)) return;
+
+    this.sequence = nextSequence;
+    const lastIdx = this.sequence.length - 1;
+
+    for (const [sessionDbId, sessionState] of this.state.entries()) {
+      const stepIndex = Math.min(sessionState.stepIndex, lastIdx);
+      this.state.set(sessionDbId, {
+        stepIndex,
+        floorFailureCount:
+          stepIndex === lastIdx ? sessionState.floorFailureCount : 0,
+      });
+    }
+  }
+
+  /** The cap used for recovery jumps (second step of the sequence). */
+  getRecoveryCap(): number {
+    return this.sequence.length > 1 ? this.sequence[1] : this.sequence[0];
+  }
 
   getCapForSession(sessionDbId: number): number {
     const s = this.state.get(sessionDbId);
-    return STEP_SEQUENCE[s?.stepIndex ?? 0];
+    return this.sequence[s?.stepIndex ?? 0];
   }
 
   /**
@@ -43,7 +143,7 @@ export class ObsCapPolicy {
       stepIndex: 0,
       floorFailureCount: 0,
     };
-    const lastIdx = STEP_SEQUENCE.length - 1;
+    const lastIdx = this.sequence.length - 1;
 
     if (cur.stepIndex < lastIdx) {
       cur.stepIndex += 1;
@@ -52,15 +152,17 @@ export class ObsCapPolicy {
       // Already at floor — count toward recovery
       cur.floorFailureCount += 1;
       if (cur.floorFailureCount >= FAILURES_AT_FLOOR_BEFORE_RECOVERY) {
-        // Jump back to RECOVERY_CAP (index 1 → 30)
-        cur.stepIndex = STEP_SEQUENCE.indexOf(RECOVERY_CAP);
+        // Jump back to recovery step (index 1 = one halving below the cap).
+        // For default sequence [150, 75, 37, ...] this lands at 75.
+        // For single-element sequence (defaultCap=1), stays at 0.
+        cur.stepIndex = this.sequence.length > 1 ? 1 : 0;
         cur.floorFailureCount = 0;
       }
     }
     this.state.set(sessionDbId, cur);
   }
 
-  /** Record a successful summarize — resets cap to default (60). */
+  /** Record a successful summarize — resets cap to default. */
   recordSuccess(sessionDbId: number): void {
     this.state.delete(sessionDbId);
   }

@@ -76,7 +76,8 @@ export interface FreshSummarizeInput {
    * Why: Claude Code's `--input-format stream-json` parser rejects single
    * input lines beyond a buffer limit; on long sessions (200+ obs) the
    * full prompt exceeds it and the subprocess exits 1 with
-   * "Error parsing streaming input line". 60 is the safe default.
+   * "Error parsing streaming input line". SummaryLane supplies the current
+   * configured cap (150 by default) and adaptive retries may step it down.
    * Treated as "no cap" when undefined or 0 (defensive — never silently
    * produce an empty-obs summary from a misconfigured 0).
    */
