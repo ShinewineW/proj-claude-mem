@@ -9,7 +9,7 @@
 | `SDKAgent.ts` | Claude subprocess via Agent SDK, observer-only, PID tracking |
 | `SearchManager.ts` | Search orchestration (Chroma → SQLite fallback) |
 | `ProcessRegistry.ts` | Track spawned subprocess PIDs for zombie cleanup |
-| `BypassLane.ts` | Parallel REST consumer for observations (Gemini/OpenRouter), circuit breaker, competing consumer on same queue |
+| `BypassLane.ts` | Parallel REST consumer for observations (Gemini/OpenRouter/OpenCode Go), circuit breaker, competing consumer on same queue |
 
 ## Subdirectories
 

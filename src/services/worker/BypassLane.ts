@@ -34,6 +34,7 @@ import type { DatabaseManager } from "./DatabaseManager.js";
 // API endpoints
 const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1/models";
 const OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions";
+const OPENCODE_API_URL = "https://opencode.ai/zen/go/v1/chat/completions";
 // Must be < STALE_PROCESSING_THRESHOLD_MS (60s in PendingMessageStore) to prevent
 // the main channel's self-healing from resetting a bypass in-flight message to 'pending',
 // which would cause double-processing.
@@ -44,6 +45,72 @@ const GEMINI_RATE_LIMIT_INTERVAL_MS = 4_000;
 const DEFAULT_MAX_CONTEXT_MESSAGES = 20;
 const DEFAULT_MAX_ESTIMATED_TOKENS = 100_000;
 const CHARS_PER_TOKEN_ESTIMATE = 4;
+
+// Tiered cooldowns for failure classification (opencode-driven, applies on opencode path only).
+// `transient` reuses the configurable default (`config.cooldownMs`, 20min by default).
+// `quota`/`auth` are long-tail failures where a 20min retry is wasteful — set to 6h.
+// `client` (HTTP 400 / ModelError) is a code bug, not a provider issue, so it bypasses the breaker entirely.
+export const QUOTA_COOLDOWN_MS = 6 * 60 * 60 * 1000;
+export const AUTH_COOLDOWN_MS = 6 * 60 * 60 * 1000;
+
+export type BypassFailureCategory = "quota" | "auth" | "transient" | "client";
+
+/**
+ * Parse an error response body, handling both error envelope shapes observed
+ * in production probes against OpenCode Go:
+ *   - Anthropic-style: {type:"error", error:{type, message}}
+ *   - OpenAI-style:    {error:{type, code, message, param}}
+ * Returns an empty object for unparseable bodies.
+ */
+export function parseBypassErrorBody(body: string): {
+  type?: string;
+  code?: string;
+  message?: string;
+} {
+  if (!body) return {};
+  try {
+    const j = JSON.parse(body) as any;
+    // Anthropic-style: outer type:"error", inner error object
+    if (j?.type === "error" && j.error && typeof j.error === "object") {
+      return {
+        type: j.error.type,
+        message: j.error.message,
+      };
+    }
+    // OpenAI-style: flat error object with code field
+    if (j?.error && typeof j.error === "object") {
+      return {
+        type: j.error.type,
+        code: j.error.code,
+        message: j.error.message,
+      };
+    }
+  } catch {
+    // fall through
+  }
+  return {};
+}
+
+/**
+ * Classify a failure given HTTP status + parsed envelope. Envelope hints take
+ * priority over status because OpenCode returns 401 for unknown-model errors
+ * (a client bug, not auth), so naive status-bucketing would mis-classify.
+ */
+export function classifyBypassFailure(
+  status: number,
+  parsed: { type?: string; code?: string },
+): BypassFailureCategory {
+  // High-confidence envelope signals (don't trust status alone)
+  if (parsed.code === "insufficient_quota" || parsed.type === "insufficient_quota") return "quota";
+  if (parsed.type === "AuthError") return "auth";
+  if (parsed.type === "ModelError") return "client"; // our bug — don't trip breaker
+  // Fall back to status code
+  if (status === 429 || status === 402) return "quota";
+  if (status === 401 || status === 403) return "auth";
+  if (status >= 500) return "transient";
+  if (status >= 400) return "client"; // 400 = malformed body, our bug
+  return "transient";
+}
 
 export type BypassState = "DISABLED" | "ACTIVE" | "TRIPPED";
 
@@ -65,7 +132,7 @@ export interface BypassStatus {
 }
 
 interface BypassConfig {
-  provider: "gemini" | "openrouter";
+  provider: "gemini" | "openrouter" | "opencode";
   apiKey: string;
   model: string;
   cooldownMs: number;
@@ -139,6 +206,17 @@ export class BypassLane {
       const model =
         settings.CLAUDE_MEM_OPENROUTER_MODEL || "minimax/minimax-m2.5:free";
       return { provider: "openrouter", apiKey, model, cooldownMs };
+    }
+
+    if (provider === "opencode") {
+      const apiKey =
+        settings.CLAUDE_MEM_OPENCODE_API_KEY ||
+        getCredential("OPENCODE_API_KEY") ||
+        "";
+      if (!apiKey) return null;
+      const model =
+        settings.CLAUDE_MEM_OPENCODE_MODEL || "deepseek-v4-flash";
+      return { provider: "opencode", apiKey, model, cooldownMs };
     }
 
     return null;
@@ -280,32 +358,46 @@ export class BypassLane {
     this.counters.lastSuccessAt = new Date().toISOString();
   }
 
-  private recordFailure(): void {
+  private recordFailure(category?: BypassFailureCategory): void {
+    // `client` category = our code bug (HTTP 400 / ModelError). Retries won't help
+    // and tripping the breaker masks the bug. Don't count toward the breaker.
+    if (category === "client") {
+      this.counters.failed++;
+      this.counters.lastFailureAt = new Date().toISOString();
+      return;
+    }
     this.consecutiveFailures++;
     this.counters.failed++;
     this.counters.lastFailureAt = new Date().toISOString();
     if (this.consecutiveFailures >= this.maxFailures) {
-      this.tripCircuitBreaker();
+      this.tripCircuitBreaker(category);
     }
   }
 
-  private tripCircuitBreaker(): void {
+  private tripCircuitBreaker(category?: BypassFailureCategory): void {
     this.state = "TRIPPED";
     this.counters.trips++;
     this.counters.lastTripAt = new Date().toISOString();
+    // Pick cooldown based on failure category. Auth/quota are long-tail
+    // (config issue / monthly quota), so short 20min retries are wasteful.
+    let cooldownMs: number | undefined;
+    if (category === "quota") cooldownMs = QUOTA_COOLDOWN_MS;
+    else if (category === "auth") cooldownMs = AUTH_COOLDOWN_MS;
     logger.warn(
       "BYPASS",
       `Circuit breaker TRIPPED after ${this.consecutiveFailures} consecutive failures`,
       {
-        cooldownMs: this.config?.cooldownMs,
+        category: category ?? "unknown",
+        cooldownMs: cooldownMs ?? this.config?.cooldownMs,
       },
     );
-    this.scheduleCooldownProbe();
+    this.scheduleCooldownProbe(cooldownMs);
   }
 
-  private scheduleCooldownProbe(): void {
+  private scheduleCooldownProbe(cooldownOverrideMs?: number): void {
     if (this.cooldownTimer) clearTimeout(this.cooldownTimer);
-    const cooldownMs = this.config?.cooldownMs ?? 1200000;
+    const cooldownMs =
+      cooldownOverrideMs ?? this.config?.cooldownMs ?? 1200000;
     this.cooldownTimer = setTimeout(() => {
       this.cooldownTimer = null;
       this.attemptRecovery().catch((error) => {
@@ -366,7 +458,7 @@ export class BypassLane {
           }),
           signal,
         });
-      } else {
+      } else if (this.config.provider === "openrouter") {
         // Must include HTTP-Referer — some upstream providers (e.g. StepFun behind Alibaba WAF)
         // reject requests without it, causing the probe to always fail and bypass to stay DISABLED.
         response = await fetch(OPENROUTER_API_URL, {
@@ -381,6 +473,24 @@ export class BypassLane {
             model: this.config.model,
             messages: [{ role: "user", content: "Reply with OK" }],
             max_tokens: 10,
+          }),
+          signal,
+        });
+      } else {
+        // OpenCode Go: OpenAI-compatible probe. Must include `thinking:disabled`,
+        // otherwise reasoning models burn max_tokens=10 on internal CoT and emit
+        // empty content → probe fails. Skip OpenRouter-specific headers.
+        response = await fetch(OPENCODE_API_URL, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${this.config.apiKey}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            model: this.config.model,
+            messages: [{ role: "user", content: "Reply with OK" }],
+            max_tokens: 10,
+            thinking: { type: "disabled" },
           }),
           signal,
         });
@@ -549,8 +659,12 @@ export class BypassLane {
         }
       } catch (error) {
         if (signal.aborted) return;
+        // Extract bypassCategory if attached by callRestApi (opencode path only).
+        const category = (error as { bypassCategory?: BypassFailureCategory })
+          ?.bypassCategory;
         logger.warn("BYPASS", "Processing failed, marking for retry", {
           messageId: message.id,
+          category: category ?? "unknown",
           error: error instanceof Error ? error.message : String(error),
         });
         pendingStore.markFailed(message.id);
@@ -561,7 +675,7 @@ export class BypassLane {
         this.lastFailureReason = (
           error instanceof Error ? error.message : String(error)
         ).slice(0, 200);
-        this.recordFailure();
+        this.recordFailure(category);
         await this.abortableSleep(1000, signal);
         if (this.state === "TRIPPED") return;
       }
@@ -729,7 +843,7 @@ export class BypassLane {
 
       const data = (await response.json()) as any;
       return data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
-    } else {
+    } else if (this.config.provider === "openrouter") {
       const response = await fetch(OPENROUTER_API_URL, {
         method: "POST",
         headers: {
@@ -758,6 +872,43 @@ export class BypassLane {
         throw new Error(
           `OpenRouter API error: ${response.status} - ${errorText}`,
         );
+      }
+
+      const data = (await response.json()) as any;
+      return data?.choices?.[0]?.message?.content || "";
+    } else {
+      // OpenCode Go: OpenAI-compatible. Send thinking:disabled to keep reasoning
+      // models (deepseek-v4-flash etc.) emitting content instead of CoT-only output.
+      const response = await fetch(OPENCODE_API_URL, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${this.config.apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: this.config.model,
+          messages: [
+            { role: "system", content: systemPrompt },
+            ...history.map((m) => ({ role: m.role, content: m.content })),
+            { role: "user", content: prompt },
+          ],
+          temperature: 0.3,
+          max_tokens: 8192,
+          thinking: { type: "disabled" },
+        }),
+        signal,
+      });
+
+      if (!response.ok) {
+        // Truncate to prevent accidental credential echo
+        const errorText = (await response.text()).substring(0, 500);
+        const parsed = parseBypassErrorBody(errorText);
+        const category = classifyBypassFailure(response.status, parsed);
+        const err = new Error(
+          `OpenCode API error: ${response.status} - ${errorText}`,
+        ) as Error & { bypassCategory: BypassFailureCategory };
+        err.bypassCategory = category;
+        throw err;
       }
 
       const data = (await response.json()) as any;

@@ -12,7 +12,7 @@ Claude-mem is a Claude Code plugin providing persistent memory across sessions. 
 
 **Worker Service** (`src/services/worker-service.ts`) - Express API on port 37777, Bun-managed, handles AI processing asynchronously
 
-**Bypass Lane** (`src/services/worker/BypassLane.ts`) - Parallel REST consumer for observations (Gemini/OpenRouter), main channel always Claude SDK
+**Bypass Lane** (`src/services/worker/BypassLane.ts`) - Parallel REST consumer for observations (Gemini/OpenRouter/OpenCode Go), main channel always Claude SDK. OpenCode path sends `thinking:{type:"disabled"}` to suppress reasoning-model CoT, and classifies failures into `quota`/`auth`/`transient`/`client` buckets with tiered cooldowns (6h / 6h / 20min / no-trip).
 
 **Fresh Summarize Path** (`src/services/worker/fresh-summarize.ts`, `fresh-summarize-store.ts`, `summarize-salvage.ts`, `SDKAgent.runFreshSummarize`) - Summaries run on a fresh `query()` subprocess (no resume, no observer priming) to bypass the observer-session role conditioning that empirically produced 0% valid `<summary>` XML in production. Pre-queue salvage runs first; on fallthrough dispatches to `onRunFreshSummarizeCallback`. Atomic store re-reads `memory_session_id` inside a transaction to avoid FK race. Accept-loss-on-failure policy — pre-queue salvage catches the next trigger. Full architecture → workspace `.claude/rules/architecture-details.md` § "Fresh SDK Query Summarize".
 
