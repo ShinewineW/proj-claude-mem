@@ -554,7 +554,19 @@ export class DataRoutes extends BaseRouteHandler {
   private handleGetProcessingStatus = this.wrapHandler((req: Request, res: Response): void => {
     const isProcessing = this.sessionManager.isAnySessionProcessing();
     const queueDepth = this.sessionManager.getTotalActiveWork(); // Includes queued + actively processing
-    res.json({ isProcessing, queueDepth });
+    const bypass = this.workerService.getBypassStatus();
+    res.json({
+      isProcessing,
+      queueDepth,
+      bypass: {
+        provider: bypass.provider,
+        model: bypass.model,
+        state: bypass.state,
+        lastOpencodeCost: bypass.lastOpencodeCost,
+        lastOpencodeCostAt: bypass.lastOpencodeCostAt,
+        opencodeFreeCalls: bypass.opencodeFreeCalls,
+      },
+    });
   });
 
   /**

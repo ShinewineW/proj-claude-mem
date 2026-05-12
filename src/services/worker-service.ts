@@ -1369,10 +1369,15 @@ export class WorkerService {
   /**
    * Broadcast processing status change to SSE clients
    */
+  getBypassStatus() {
+    return this.bypassLane.getStatus();
+  }
+
   broadcastProcessingStatus(): void {
     const isProcessing = this.sessionManager.isAnySessionProcessing();
     const queueDepth = this.sessionManager.getTotalActiveWork();
     const activeSessions = this.sessionManager.getActiveSessionCount();
+    const bypass = this.bypassLane.getStatus();
 
     logger.info('WORKER', 'Broadcasting processing status', {
       isProcessing,
@@ -1383,7 +1388,15 @@ export class WorkerService {
     this.sseBroadcaster.broadcast({
       type: 'processing_status',
       isProcessing,
-      queueDepth
+      queueDepth,
+      bypass: {
+        provider: bypass.provider,
+        model: bypass.model,
+        state: bypass.state,
+        lastOpencodeCost: bypass.lastOpencodeCost,
+        lastOpencodeCostAt: bypass.lastOpencodeCostAt,
+        opencodeFreeCalls: bypass.opencodeFreeCalls,
+      },
     });
   }
 }

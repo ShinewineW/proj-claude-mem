@@ -1,14 +1,46 @@
 import React from 'react';
 import { useSpinningFavicon } from '../hooks/useSpinningFavicon';
+import type { BypassInfo } from '../hooks/useSSE';
 
 interface DashboardHeaderProps {
   isConnected: boolean;
   isProcessing: boolean;
   queueDepth: number;
+  bypassInfo?: BypassInfo | null;
   onSettingsClick: () => void;
 }
 
-export function DashboardHeader({ isConnected, isProcessing, queueDepth, onSettingsClick }: DashboardHeaderProps) {
+function formatTime(iso: string | null): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+function BypassBadge({ info }: { info: BypassInfo }) {
+  if (info.provider !== 'opencode') {
+    const label = info.provider ? `${info.provider}${info.model ? ' · ' + info.model : ''}` : 'main (claude)';
+    return <span className="bypass-badge" title={`Bypass state: ${info.state ?? 'n/a'}`}>{label}</span>;
+  }
+  const cost = info.lastOpencodeCost;
+  const isFree = cost === '0';
+  const tone = cost === null ? 'pending' : isFree ? 'subscription' : 'balance';
+  const text =
+    cost === null
+      ? `OpenCode Go · ${info.model ?? '?'} · awaiting first call`
+      : isFree
+      ? `OpenCode Go · ${info.model ?? '?'} · subscription ($0) · ${formatTime(info.lastOpencodeCostAt)}`
+      : `OpenCode Go · ${info.model ?? '?'} · balance ($${cost}) · ${formatTime(info.lastOpencodeCostAt)}`;
+  return (
+    <span
+      className={`bypass-badge bypass-${tone}`}
+      title={`State: ${info.state ?? 'n/a'} · free calls since worker start: ${info.opencodeFreeCalls}`}
+    >
+      {text}
+    </span>
+  );
+}
+
+export function DashboardHeader({ isConnected, isProcessing, queueDepth, bypassInfo, onSettingsClick }: DashboardHeaderProps) {
   useSpinningFavicon(isProcessing);
 
   return (
@@ -20,6 +52,7 @@ export function DashboardHeader({ isConnected, isProcessing, queueDepth, onSetti
         {queueDepth > 0 && (
           <span className="queue-bubble">{queueDepth} queued</span>
         )}
+        {bypassInfo && <BypassBadge info={bypassInfo} />}
       </div>
       <div className="header-right">
         <a className="header-link" href="https://github.com/ShinewineW/proj-claude-mem" target="_blank" rel="noopener noreferrer">

@@ -17,7 +17,7 @@ export function App() {
   const [logsModalOpen, setLogsModalOpen] = useState(false);
   const [selectedProject, setSelectedProject] = useState<ProjectInfo | null>(null);
 
-  const { observations, summaries, prompts, isProcessing, queueDepth, isConnected, sseSessionStatus, clearSseSessionStatus } = useSSE();
+  const { observations, summaries, prompts, isProcessing, queueDepth, bypassInfo, isConnected, sseSessionStatus, clearSseSessionStatus } = useSSE();
   const { settings, saveSettings } = useSettings();
   const { projects, isLoading: isProjectsLoading } = useProjects();
   const { items: recentItems } = useRecentActivity(observations, summaries, prompts);
@@ -43,6 +43,7 @@ export function App() {
         isConnected={isConnected}
         isProcessing={isProcessing}
         queueDepth={queueDepth}
+        bypassInfo={bypassInfo}
         onSettingsClick={toggleContextPreview}
       />
 

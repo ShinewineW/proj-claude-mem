@@ -3,6 +3,15 @@ import { Observation, Summary, UserPrompt, StreamEvent } from '../types';
 import { API_ENDPOINTS } from '../constants/api';
 import { TIMING } from '../constants/timing';
 
+export interface BypassInfo {
+  provider: string | null;
+  model: string | null;
+  state: string | null;
+  lastOpencodeCost: string | null;
+  lastOpencodeCostAt: string | null;
+  opencodeFreeCalls: number;
+}
+
 export function useSSE() {
   const [observations, setObservations] = useState<Observation[]>([]);
   const [summaries, setSummaries] = useState<Summary[]>([]);
@@ -11,6 +20,7 @@ export function useSSE() {
   const [isConnected, setIsConnected] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [queueDepth, setQueueDepth] = useState(0);
+  const [bypassInfo, setBypassInfo] = useState<BypassInfo | null>(null);
   const [sseSessionStatus, setSseSessionStatus] = useState<Map<string, boolean>>(new Map());
   const eventSourceRef = useRef<EventSource | null>(null);
   const reconnectTimeoutRef = useRef<NodeJS.Timeout>();
@@ -107,6 +117,7 @@ export function useSSE() {
               setIsProcessing(data.isProcessing);
               setQueueDepth(data.queueDepth || 0);
             }
+            if (data.bypass) setBypassInfo(data.bypass as BypassInfo);
             break;
 
           case 'session_started':
@@ -151,5 +162,5 @@ export function useSSE() {
     setSseSessionStatus(new Map());
   }, []);
 
-  return { observations, summaries, prompts, projects, isProcessing, queueDepth, isConnected, sseSessionStatus, clearSseSessionStatus };
+  return { observations, summaries, prompts, projects, isProcessing, queueDepth, bypassInfo, isConnected, sseSessionStatus, clearSseSessionStatus };
 }

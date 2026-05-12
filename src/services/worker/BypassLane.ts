@@ -129,6 +129,14 @@ export interface BypassStatus {
   lastTripAt: string | null;
   lastProbeAt: string | null;
   lastFailureReason: string | null;
+  // OpenCode Go subscription channel evidence: when cost === "0" the call
+  // was billed against subscription quota, not pay-per-token balance.
+  // Populated only on provider=opencode successful completions.
+  lastOpencodeCost: string | null;
+  lastOpencodeCostAt: string | null;
+  // Count of opencode completions with cost === "0" since worker start.
+  // Non-zero confirms subscription channel is in use.
+  opencodeFreeCalls: number;
 }
 
 interface BypassConfig {
@@ -162,6 +170,9 @@ export class BypassLane {
     lastFailureAt: null as string | null,
     lastTripAt: null as string | null,
     lastProbeAt: null as string | null,
+    lastOpencodeCost: null as string | null,
+    lastOpencodeCostAt: null as string | null,
+    opencodeFreeCalls: 0,
   };
 
   // Injected after construction (avoids circular dep with WorkerService)
@@ -277,6 +288,9 @@ export class BypassLane {
       lastTripAt: this.counters.lastTripAt,
       lastProbeAt: this.counters.lastProbeAt,
       lastFailureReason: this.lastFailureReason,
+      lastOpencodeCost: this.counters.lastOpencodeCost,
+      lastOpencodeCostAt: this.counters.lastOpencodeCostAt,
+      opencodeFreeCalls: this.counters.opencodeFreeCalls,
     };
   }
 
@@ -912,6 +926,14 @@ export class BypassLane {
       }
 
       const data = (await response.json()) as any;
+      // OpenCode Go reports `cost` as a string ("0" for subscription-billed
+      // calls, positive USD for balance-fallback). Capture it so the viewer
+      // can display evidence of the subscription channel in use.
+      if (typeof data?.cost === "string") {
+        this.counters.lastOpencodeCost = data.cost;
+        this.counters.lastOpencodeCostAt = new Date().toISOString();
+        if (data.cost === "0") this.counters.opencodeFreeCalls++;
+      }
       return data?.choices?.[0]?.message?.content || "";
     }
   }
