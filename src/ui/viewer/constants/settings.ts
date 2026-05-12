@@ -16,6 +16,8 @@ export const DEFAULT_SETTINGS = {
   CLAUDE_MEM_OPENROUTER_MODEL: 'minimax/minimax-m2.5:free',
   CLAUDE_MEM_OPENROUTER_SITE_URL: '',
   CLAUDE_MEM_OPENROUTER_APP_NAME: 'claude-mem',
+  CLAUDE_MEM_OPENCODE_API_KEY: '',
+  CLAUDE_MEM_OPENCODE_MODEL: 'deepseek-v4-flash',
   CLAUDE_MEM_GEMINI_RATE_LIMITING_ENABLED: 'true',
 
   // Token Economics — match SettingsDefaultsManager defaults

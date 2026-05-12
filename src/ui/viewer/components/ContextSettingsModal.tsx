@@ -344,6 +344,7 @@ export function ContextSettingsModal({
                   <option value="claude">Claude (uses your Claude account)</option>
                   <option value="gemini">Gemini (uses API key)</option>
                   <option value="openrouter">OpenRouter (multi-model)</option>
+                  <option value="opencode">OpenCode Go (subscription)</option>
                 </select>
               </FormField>
 
@@ -445,6 +446,33 @@ export function ContextSettingsModal({
                       value={formState.CLAUDE_MEM_OPENROUTER_APP_NAME ?? DEFAULT_SETTINGS.CLAUDE_MEM_OPENROUTER_APP_NAME}
                       onChange={(e) => updateSetting('CLAUDE_MEM_OPENROUTER_APP_NAME', e.target.value)}
                       placeholder="claude-mem"
+                    />
+                  </FormField>
+                </>
+              )}
+
+              {formState.CLAUDE_MEM_PROVIDER === 'opencode' && (
+                <>
+                  <FormField
+                    label="OpenCode API Key"
+                    tooltip="Your OpenCode Go API key from opencode.ai (or set OPENCODE_API_KEY env var)"
+                  >
+                    <input
+                      type="password"
+                      value={formState.CLAUDE_MEM_OPENCODE_API_KEY ?? DEFAULT_SETTINGS.CLAUDE_MEM_OPENCODE_API_KEY}
+                      onChange={(e) => updateSetting('CLAUDE_MEM_OPENCODE_API_KEY', e.target.value)}
+                      placeholder="Enter OpenCode API key..."
+                    />
+                  </FormField>
+                  <FormField
+                    label="OpenCode Model"
+                    tooltip="Model identifier from OpenCode Go (e.g., deepseek-v4-flash, glm-5, qwen3.5-plus). Reasoning models receive thinking:disabled automatically."
+                  >
+                    <input
+                      type="text"
+                      value={formState.CLAUDE_MEM_OPENCODE_MODEL ?? DEFAULT_SETTINGS.CLAUDE_MEM_OPENCODE_MODEL}
+                      onChange={(e) => updateSetting('CLAUDE_MEM_OPENCODE_MODEL', e.target.value)}
+                      placeholder={`e.g., ${DEFAULT_SETTINGS.CLAUDE_MEM_OPENCODE_MODEL}`}
                     />
                   </FormField>
                 </>

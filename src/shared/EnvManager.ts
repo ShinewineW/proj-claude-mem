@@ -41,6 +41,7 @@ export const MANAGED_CREDENTIAL_KEYS = [
   'ANTHROPIC_API_KEY',
   'GEMINI_API_KEY',
   'OPENROUTER_API_KEY',
+  'OPENCODE_API_KEY',
 ];
 
 export interface ClaudeMemEnv {
@@ -48,6 +49,7 @@ export interface ClaudeMemEnv {
   ANTHROPIC_API_KEY?: string;
   GEMINI_API_KEY?: string;
   OPENROUTER_API_KEY?: string;
+  OPENCODE_API_KEY?: string;
 }
 
 /**
@@ -124,6 +126,7 @@ export function loadClaudeMemEnv(): ClaudeMemEnv {
     if (parsed.ANTHROPIC_API_KEY) result.ANTHROPIC_API_KEY = parsed.ANTHROPIC_API_KEY;
     if (parsed.GEMINI_API_KEY) result.GEMINI_API_KEY = parsed.GEMINI_API_KEY;
     if (parsed.OPENROUTER_API_KEY) result.OPENROUTER_API_KEY = parsed.OPENROUTER_API_KEY;
+    if (parsed.OPENCODE_API_KEY) result.OPENCODE_API_KEY = parsed.OPENCODE_API_KEY;
 
     return result;
   } catch (error) {
@@ -172,6 +175,13 @@ export function saveClaudeMemEnv(env: ClaudeMemEnv): void {
         delete updated.OPENROUTER_API_KEY;
       }
     }
+    if (env.OPENCODE_API_KEY !== undefined) {
+      if (env.OPENCODE_API_KEY) {
+        updated.OPENCODE_API_KEY = env.OPENCODE_API_KEY;
+      } else {
+        delete updated.OPENCODE_API_KEY;
+      }
+    }
 
     writeFileSync(ENV_FILE_PATH, serializeEnvFile(updated), 'utf-8');
   } catch (error) {
@@ -218,13 +228,16 @@ export function buildIsolatedEnv(includeCredentials: boolean = true): Record<str
     if (credentials.ANTHROPIC_API_KEY) {
       isolatedEnv.ANTHROPIC_API_KEY = credentials.ANTHROPIC_API_KEY;
     }
-    // Note: GEMINI_API_KEY and OPENROUTER_API_KEY pass through from process.env,
-    // but claude-mem's .env takes precedence if configured
+    // Note: GEMINI_API_KEY / OPENROUTER_API_KEY / OPENCODE_API_KEY pass through
+    // from process.env, but claude-mem's .env takes precedence if configured
     if (credentials.GEMINI_API_KEY) {
       isolatedEnv.GEMINI_API_KEY = credentials.GEMINI_API_KEY;
     }
     if (credentials.OPENROUTER_API_KEY) {
       isolatedEnv.OPENROUTER_API_KEY = credentials.OPENROUTER_API_KEY;
+    }
+    if (credentials.OPENCODE_API_KEY) {
+      isolatedEnv.OPENCODE_API_KEY = credentials.OPENCODE_API_KEY;
     }
 
     // 4. Pass through Claude CLI's OAuth token if available (fallback for CLI subscription billing)
