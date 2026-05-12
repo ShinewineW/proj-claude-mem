@@ -58,7 +58,7 @@ Key test directories: `tests/sqlite/` (DB), `tests/hooks/` (hook structure), `te
 ## Run Commands
 
 ```bash
-/opt/homebrew/bin/bun test                    # All tests (1634 pass, 0 fail)
+/opt/homebrew/bin/bun test                    # All tests (1933 pass, 0 fail)
 /opt/homebrew/bin/bun test tests/sqlite/      # Database tests
 /opt/homebrew/bin/bun test tests/hooks/       # Hook structure tests
 ```
