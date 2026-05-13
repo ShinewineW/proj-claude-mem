@@ -55,6 +55,21 @@ import { shouldProactiveReset } from "./generator-action.js";
 // @ts-ignore - Agent SDK types may not be available
 import { query } from "@anthropic-ai/claude-agent-sdk";
 
+export function shouldPersistSDKSessionId(
+  message: { type?: string; subtype?: string; session_id?: string | null },
+  currentMemorySessionId: string | null,
+): message is { session_id: string } {
+  if (!message.session_id || message.session_id === currentMemorySessionId) {
+    return false;
+  }
+
+  return !(
+    message.type === "system" &&
+    typeof message.subtype === "string" &&
+    message.subtype.startsWith("hook_")
+  );
+}
+
 export class SDKAgent {
   private static readonly RESPONSE_WATCHDOG_MS = 5 * 60 * 1000; // 5 minutes
 
@@ -288,16 +303,7 @@ export class SDKAgent {
         // The canonical resumed id arrives on `system:init`. Persisting an ephemeral
         // id triggers ON UPDATE CASCADE on observations and opens a ~200ms
         // FK-violation window for parallel consumers (bypass lane).
-        const msgSubtypeRaw = (message as { subtype?: string }).subtype;
-        const isSystemHook =
-          (message as { type?: string }).type === "system" &&
-          typeof msgSubtypeRaw === "string" &&
-          msgSubtypeRaw.startsWith("hook_");
-        if (
-          message.session_id &&
-          message.session_id !== session.memorySessionId &&
-          !isSystemHook
-        ) {
+        if (shouldPersistSDKSessionId(message, session.memorySessionId)) {
           const previousId = session.memorySessionId;
           session.memorySessionId = message.session_id;
           // Persist to database IMMEDIATELY for FK constraint compliance

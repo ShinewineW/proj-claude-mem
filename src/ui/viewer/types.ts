@@ -67,6 +67,15 @@ export interface ProjectInfo {
   latestItems?: ProjectLatestItem[];
 }
 
+export interface BypassInfo {
+  provider: string | null;
+  model: string | null;
+  state: string | null;
+  lastOpencodeCost: string | null;
+  lastOpencodeCostAt: string | null;
+  opencodeFreeCalls: number;
+}
+
 export interface StreamEvent {
   type: 'initial_load' | 'new_observation' | 'new_summary' | 'new_prompt' | 'processing_status' | 'session_started' | 'session_completed';
   observations?: Observation[];
@@ -78,6 +87,7 @@ export interface StreamEvent {
   prompt?: UserPrompt;
   isProcessing?: boolean;
   queueDepth?: number;
+  bypass?: BypassInfo;
   sessionDbId?: number;
   project?: string;
 }
@@ -115,4 +125,3 @@ export interface Settings {
   CLAUDE_MEM_CONTEXT_SHOW_LAST_SUMMARY?: string;
   CLAUDE_MEM_CONTEXT_SHOW_LAST_MESSAGE?: string;
 }
-

@@ -1,16 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Observation, Summary, UserPrompt, StreamEvent } from '../types';
+import { Observation, Summary, UserPrompt, StreamEvent, BypassInfo } from '../types';
 import { API_ENDPOINTS } from '../constants/api';
 import { TIMING } from '../constants/timing';
-
-export interface BypassInfo {
-  provider: string | null;
-  model: string | null;
-  state: string | null;
-  lastOpencodeCost: string | null;
-  lastOpencodeCostAt: string | null;
-  opencodeFreeCalls: number;
-}
 
 export function useSSE() {
   const [observations, setObservations] = useState<Observation[]>([]);
