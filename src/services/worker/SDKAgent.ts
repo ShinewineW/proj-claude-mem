@@ -283,9 +283,20 @@ export class SDKAgent {
         // 2. It verifies the update happened (SELECT before UPDATE)
         // 3. Consistent with ResponseProcessor's usage pattern
         // This ensures FK constraint compliance BEFORE any observations are stored.
+        // Skip the entire `system:hook_*` subtype family — every hook_* message
+        // (hook_started, hook_response, ...) carries a per-run ephemeral session_id.
+        // The canonical resumed id arrives on `system:init`. Persisting an ephemeral
+        // id triggers ON UPDATE CASCADE on observations and opens a ~200ms
+        // FK-violation window for parallel consumers (bypass lane).
+        const msgSubtypeRaw = (message as { subtype?: string }).subtype;
+        const isSystemHook =
+          (message as { type?: string }).type === "system" &&
+          typeof msgSubtypeRaw === "string" &&
+          msgSubtypeRaw.startsWith("hook_");
         if (
           message.session_id &&
-          message.session_id !== session.memorySessionId
+          message.session_id !== session.memorySessionId &&
+          !isSystemHook
         ) {
           const previousId = session.memorySessionId;
           session.memorySessionId = message.session_id;
@@ -303,13 +314,17 @@ export class SDKAgent {
             .getSessionById(session.sessionDbId);
           const dbVerified =
             verification?.memory_session_id === message.session_id;
+          const msgType = (message as { type?: string }).type ?? "unknown";
+          const msgSubtype = (message as { subtype?: string }).subtype ?? "";
+          const typeTag = msgSubtype ? `${msgType}:${msgSubtype}` : msgType;
           const logMessage = previousId
-            ? `MEMORY_ID_CHANGED | sessionDbId=${session.sessionDbId} | from=${previousId} | to=${message.session_id} | dbVerified=${dbVerified}`
-            : `MEMORY_ID_CAPTURED | sessionDbId=${session.sessionDbId} | memorySessionId=${message.session_id} | dbVerified=${dbVerified}`;
+            ? `MEMORY_ID_CHANGED | sessionDbId=${session.sessionDbId} | from=${previousId} | to=${message.session_id} | dbVerified=${dbVerified} | msgType=${typeTag}`
+            : `MEMORY_ID_CAPTURED | sessionDbId=${session.sessionDbId} | memorySessionId=${message.session_id} | dbVerified=${dbVerified} | msgType=${typeTag}`;
           logger.info("SESSION", logMessage, {
             sessionId: session.sessionDbId,
             memorySessionId: message.session_id,
             previousId,
+            msgType: typeTag,
           });
           if (!dbVerified) {
             logger.error(
