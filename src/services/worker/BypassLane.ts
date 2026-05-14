@@ -30,6 +30,7 @@ import type { ActiveSession, ConversationMessage } from "../worker-types.js";
 import type { PersistentPendingMessage } from "../sqlite/PendingMessageStore.js";
 import type { SessionManager } from "./SessionManager.js";
 import type { DatabaseManager } from "./DatabaseManager.js";
+import { storeBypassObservationsForSession } from "./bypass-observation-store.js";
 
 // API endpoints
 const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1/models";
@@ -767,18 +768,34 @@ export class BypassLane {
       throw new Error("No observations parsed from bypass response");
     }
 
-    // Store observations in DB (atomic)
+    // Store observations in DB (atomic).
+    // Re-reads memory_session_id from sdk_sessions inside the transaction —
+    // see bypass-observation-store.ts for the FK-race motivation. The
+    // captured `memorySessionId` above may be stale if PROACTIVE_RESET rotated
+    // it while the bypass LLM call was in flight.
     const sessionStore = this.dbManager.getSessionStore(session.dbPath);
-    const result = sessionStore.storeObservations(
-      memorySessionId,
-      session.project,
-      observations, // ParsedObservation already has the exact 8 fields storeObservations expects
-      null, // No summary for observation messages
-      message.prompt_number || undefined,
-      0, // discoveryTokens
-      message.created_at_epoch,
-      session.contentSessionId,
+    const result = storeBypassObservationsForSession(
+      sessionStore,
+      session.sessionDbId,
+      observations,
+      {
+        promptNumber: message.prompt_number || undefined,
+        overrideTimestampEpoch: message.created_at_epoch,
+        contentSessionId: session.contentSessionId,
+      },
     );
+
+    if (!result) {
+      // sdk_sessions row gone or memory_session_id not yet set —
+      // treat as transient, let consumeLoop's catch path mark for retry.
+      throw new Error(
+        "Bypass observation insert skipped: sdk_sessions row missing or memory_session_id unset",
+      );
+    }
+
+    // Use the memory_session_id actually committed (which may differ from the
+    // T0 capture if observer rotated it mid-flight), for Chroma sync coherence.
+    const committedMemorySessionId = result.memorySessionId;
 
     // Chroma sync (fire-and-forget)
     const chromaSync = this.dbManager.getChromaSync(session.dbPath);
@@ -788,7 +805,7 @@ export class BypassLane {
         chromaSync
           .syncObservation(
             obsId,
-            memorySessionId,
+            committedMemorySessionId,
             session.project,
             observations[i],
             message.prompt_number || 0,

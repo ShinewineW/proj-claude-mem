@@ -135,11 +135,25 @@ describe('processObservation history integration', () => {
         confirmProcessed: mockConfirmProcessed,
       }),
     };
+    // db mock: storeBypassObservationsForSession opens a transaction and
+    // re-reads sdk_sessions.memory_session_id inside it before calling
+    // storeObservations. Provide a minimal fake matching that shape.
+    const fakeSessionStore: any = {
+      storeObservations: mockStoreObservations,
+      getObservationsForSession: () => [],
+      db: {
+        transaction: (fn: () => unknown) => fn,
+        prepare: () => ({
+          get: () => ({
+            memory_session_id: 'test-memory',
+            project: 'test-project',
+            content_session_id: 'test-content',
+          }),
+        }),
+      },
+    };
     (lane as any).dbManager = {
-      getSessionStore: () => ({
-        storeObservations: mockStoreObservations,
-        getObservationsForSession: () => [],
-      }),
+      getSessionStore: () => fakeSessionStore,
       getChromaSync: () => null,
     };
 
@@ -194,10 +208,21 @@ describe('processObservation history integration', () => {
     (lane as any).sessionManager = {
       getPendingMessageStore: () => ({ confirmProcessed: mock(() => {}) }),
     };
+    const fakeSessionStore2: any = {
+      storeObservations: mock(() => ({ observationIds: [1], summaryId: null, createdAtEpoch: Date.now() })),
+      db: {
+        transaction: (fn: () => unknown) => fn,
+        prepare: () => ({
+          get: () => ({
+            memory_session_id: 'new-memory',
+            project: 'test',
+            content_session_id: 'test',
+          }),
+        }),
+      },
+    };
     (lane as any).dbManager = {
-      getSessionStore: () => ({
-        storeObservations: mock(() => ({ observationIds: [1], summaryId: null, createdAtEpoch: Date.now() })),
-      }),
+      getSessionStore: () => fakeSessionStore2,
       getChromaSync: () => null,
     };
 
