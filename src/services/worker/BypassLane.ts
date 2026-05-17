@@ -610,7 +610,7 @@ export class BypassLane {
     const pendingStore = this.sessionManager.getPendingMessageStore(
       session.dbPath,
     );
-    const POLL_MS = 2000;
+    const POLL_MS = 500;
 
     while (!signal.aborted && this.state === "ACTIVE") {
       // Observation-only claim (never summarize, no self-healing — main channel handles that)
