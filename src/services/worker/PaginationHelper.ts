@@ -136,15 +136,19 @@ export class PaginationHelper {
   getPrompts(offset: number, limit: number, project?: string, dbPath?: string): PaginatedResult<UserPrompt> {
     const db = this.dbManager.getSessionStore(dbPath).db;
 
+    // Hide redacted placeholder rows from the Ask tab — they have no user-visible
+    // content (intentionally empty after migration 32) and only exist to keep the
+    // global prompt counter monotonic. Showing them clutters the feed with blanks.
     let query = `
       SELECT up.id, up.content_session_id, s.project, up.prompt_number, up.prompt_text, up.created_at, up.created_at_epoch
       FROM user_prompts up
       JOIN sdk_sessions s ON up.content_session_id = s.content_session_id
+      WHERE up.is_redacted = 0
     `;
     const params: any[] = [];
 
     if (project) {
-      query += ' WHERE s.project = ?';
+      query += ' AND s.project = ?';
       params.push(project);
     }
 

@@ -167,7 +167,9 @@ export function getTimelineAroundObservation(
     SELECT up.*, s.project, s.memory_session_id
     FROM user_prompts up
     JOIN sdk_sessions s ON up.content_session_id = s.content_session_id
-    WHERE up.created_at_epoch >= ? AND up.created_at_epoch <= ? ${projectFilter.replace('project', 's.project')}
+    WHERE up.created_at_epoch >= ? AND up.created_at_epoch <= ?
+      AND up.is_redacted = 0
+      ${projectFilter.replace('project', 's.project')}
     ORDER BY up.created_at_epoch ASC
   `;
 

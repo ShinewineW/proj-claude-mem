@@ -557,6 +557,9 @@ export class SessionSearch {
         throw new Error('Either query or filters required for search');
       }
 
+      // Search results never include redacted placeholders — they have no
+      // content to match and would surface as blanks in the viewer.
+      baseConditions.push('up.is_redacted = 0');
       const whereClause = `WHERE ${baseConditions.join(' AND ')}`;
       const orderClause = orderBy === 'date_asc'
         ? 'ORDER BY up.created_at_epoch ASC'
@@ -583,6 +586,7 @@ export class SessionSearch {
 
   /**
    * Get all prompts for a session by content_session_id
+   * Excludes redacted placeholders.
    */
   getUserPromptsBySession(contentSessionId: string): UserPromptRow[] {
     const stmt = this.db.prepare(`
@@ -595,6 +599,7 @@ export class SessionSearch {
         created_at_epoch
       FROM user_prompts
       WHERE content_session_id = ?
+        AND is_redacted = 0
       ORDER BY prompt_number ASC
     `);
 

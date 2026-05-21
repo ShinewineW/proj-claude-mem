@@ -44,6 +44,7 @@ export class MigrationRunner {
       ['backfillContentSessionIds', () => this.backfillContentSessionIds()],
       ['addSummaryTurnUniqueIndex', () => this.addSummaryTurnUniqueIndex()],
       ['addUserPromptIsRedactedColumn', () => this.addUserPromptIsRedactedColumn()],
+      ['rebindMisattributedRedactedAnchors', () => this.rebindMisattributedRedactedAnchors()],
     ];
 
     for (const [name, fn] of steps) {
@@ -1173,5 +1174,132 @@ export class MigrationRunner {
     }
 
     this.db.prepare('INSERT OR IGNORE INTO schema_versions (version, applied_at) VALUES (?, ?)').run(32, new Date().toISOString());
+  }
+
+  /**
+   * Rebind observations and session_summaries whose prompt_number points at a
+   * redacted placeholder back to the latest preceding real prompt (migration 33).
+   *
+   * Migration 32 introduced redacted placeholder rows in `user_prompts` so the
+   * global counter stays monotonic. Between migration 32 landing (2026-05-21)
+   * and this fix, attribution sites in SessionRoutes/SessionManager resolved
+   * the "current" prompt_number via COUNT(*), so any observation/summary that
+   * arrived while a `<task-notification>` / Monitor noise placeholder occupied
+   * the latest row got tied to that placeholder instead of the real user turn
+   * that initiated the work.
+   *
+   * This migration scans observations + session_summaries, finds rows whose
+   * (content_session_id, prompt_number) joins to is_redacted=1, and rewrites
+   * prompt_number to MAX(real prompt_number ≤ current) within the same session.
+   * Rows with no preceding real prompt (rare: session opened with a redacted
+   * event) are left untouched — there is no legitimate target to point them at.
+   *
+   * Idempotent: after rebind, no observation/summary references a redacted row,
+   * so a second run is a no-op.
+   */
+  private rebindMisattributedRedactedAnchors(): void {
+    const applied = this.db.prepare('SELECT version FROM schema_versions WHERE version = ?').get(33) as SchemaVersion | undefined;
+    if (applied) return;
+
+    // Safety: skip silently if is_redacted column hasn't landed yet (defensive
+    // against migration ordering surprises). Migration 32 normally runs first.
+    const cols = this.db.query('PRAGMA table_info(user_prompts)').all() as Array<{ name: string }>;
+    if (!cols.some(c => c.name === 'is_redacted')) {
+      this.db.prepare('INSERT OR IGNORE INTO schema_versions (version, applied_at) VALUES (?, ?)').run(33, new Date().toISOString());
+      return;
+    }
+
+    this.db.transaction(() => {
+      // Observations: no unique constraint on (content_session_id, prompt_number),
+      // so collisions are fine — multiple observations can legitimately share a
+      // turn anchor (one per tool invocation in that turn).
+      const obsResult = this.db.run(`
+        UPDATE observations AS o
+        SET prompt_number = (
+          SELECT MAX(up2.prompt_number)
+          FROM user_prompts up2
+          WHERE up2.content_session_id = o.content_session_id
+            AND up2.is_redacted = 0
+            AND up2.prompt_number <= o.prompt_number
+        )
+        WHERE o.content_session_id IS NOT NULL
+          AND o.prompt_number IS NOT NULL
+          AND EXISTS (
+            SELECT 1 FROM user_prompts up
+            WHERE up.content_session_id = o.content_session_id
+              AND up.prompt_number = o.prompt_number
+              AND up.is_redacted = 1
+          )
+          AND (
+            SELECT MAX(up2.prompt_number)
+            FROM user_prompts up2
+            WHERE up2.content_session_id = o.content_session_id
+              AND up2.is_redacted = 0
+              AND up2.prompt_number <= o.prompt_number
+          ) IS NOT NULL
+      `);
+
+      // Summaries: migration 31 enforces a partial unique index on
+      // `(content_session_id, prompt_number) WHERE … IS NOT NULL` (one summary
+      // per turn). When a misattributed summary would rebind onto a slot that
+      // already holds another summary, the two are distinct chunks of work that
+      // happened across a redacted system event — they cannot share an anchor.
+      // Skip the rebind for those rows so the migration is idempotent and the
+      // content survives; the row stays pointed at the placeholder pn and the
+      // viewer filters the placeholder out separately. Operators can manually
+      // triage if they care, but we never lose summary content here.
+      const sumResult = this.db.run(`
+        UPDATE session_summaries AS s
+        SET prompt_number = (
+          SELECT MAX(up2.prompt_number)
+          FROM user_prompts up2
+          WHERE up2.content_session_id = s.content_session_id
+            AND up2.is_redacted = 0
+            AND up2.prompt_number <= s.prompt_number
+        )
+        WHERE s.content_session_id IS NOT NULL
+          AND s.prompt_number IS NOT NULL
+          AND EXISTS (
+            SELECT 1 FROM user_prompts up
+            WHERE up.content_session_id = s.content_session_id
+              AND up.prompt_number = s.prompt_number
+              AND up.is_redacted = 1
+          )
+          AND (
+            SELECT MAX(up2.prompt_number)
+            FROM user_prompts up2
+            WHERE up2.content_session_id = s.content_session_id
+              AND up2.is_redacted = 0
+              AND up2.prompt_number <= s.prompt_number
+          ) IS NOT NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM session_summaries s2
+            WHERE s2.id != s.id
+              AND s2.content_session_id = s.content_session_id
+              AND s2.prompt_number = (
+                SELECT MAX(up3.prompt_number)
+                FROM user_prompts up3
+                WHERE up3.content_session_id = s.content_session_id
+                  AND up3.is_redacted = 0
+                  AND up3.prompt_number <= s.prompt_number
+              )
+          )
+      `);
+
+      const summarySkipCount = this.db.prepare(`
+        SELECT COUNT(*) AS c FROM session_summaries s
+        JOIN user_prompts up ON s.content_session_id = up.content_session_id
+                            AND s.prompt_number = up.prompt_number
+                            AND up.is_redacted = 1
+      `).get() as { c: number };
+
+      logger.info('DB', 'Rebound observations + summaries misattributed to redacted placeholders', {
+        observations: obsResult.changes,
+        summaries: sumResult.changes,
+        summariesSkippedDueToCollision: summarySkipCount.c,
+      });
+    })();
+
+    this.db.prepare('INSERT OR IGNORE INTO schema_versions (version, applied_at) VALUES (?, ?)').run(33, new Date().toISOString());
   }
 }

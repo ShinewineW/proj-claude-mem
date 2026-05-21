@@ -33,7 +33,10 @@ describe('F5: resolve-prompt-number endpoint', () => {
     const handlerBody = src.slice(idx, idx + 2000);
     expect(handlerBody).toContain('req.query');
     expect(handlerBody).toContain('contentSessionId');
-    expect(handlerBody).toContain('getPromptNumberFromUserPrompts');
+    // Migration 33 switched this endpoint to skip redacted placeholder rows
+    // (otherwise Stop hook would summarize against a synthetic noise prompt).
+    // The pin tracks the attribution helper, not the COUNT-based counter.
+    expect(handlerBody).toContain('getLatestRealPromptNumber');
     expect(handlerBody).toContain('prompt_number');
   });
 

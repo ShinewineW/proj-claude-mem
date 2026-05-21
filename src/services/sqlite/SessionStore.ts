@@ -233,6 +233,7 @@ export class SessionStore {
         up.created_at_epoch
       FROM user_prompts up
       LEFT JOIN sdk_sessions s ON up.content_session_id = s.content_session_id
+      WHERE up.is_redacted = 0
       ORDER BY up.created_at_epoch DESC
       LIMIT ?
     `);
@@ -276,6 +277,7 @@ export class SessionStore {
       FROM user_prompts up
       JOIN sdk_sessions s ON up.content_session_id = s.content_session_id
       WHERE up.content_session_id = ?
+        AND up.is_redacted = 0
       ORDER BY up.created_at_epoch DESC
       LIMIT 1
     `);
@@ -589,13 +591,32 @@ export class SessionStore {
 
   /**
    * Get current prompt number by counting user_prompts for this session
-   * Replaces the prompt_counter column which is no longer maintained
+   *
+   * Counts ALL rows (including is_redacted=1). Use only when assigning the
+   * next prompt_number to a new prompt — see `getLatestRealPromptNumber` for
+   * attribution-time lookups.
    */
   getPromptNumberFromUserPrompts(contentSessionId: string): number {
     const result = this.db.prepare(`
       SELECT COUNT(*) as count FROM user_prompts WHERE content_session_id = ?
     `).get(contentSessionId) as { count: number };
     return result.count;
+  }
+
+  /**
+   * Latest non-redacted prompt_number for attribution. Returns 0 if none.
+   *
+   * Use this when linking observations/summaries to a user turn — redacted
+   * placeholder rows advance the counter but do not represent user intent.
+   * See `prompts/get.ts: getLatestRealPromptNumber` for full rationale.
+   */
+  getLatestRealPromptNumber(contentSessionId: string): number {
+    const result = this.db.prepare(`
+      SELECT COALESCE(MAX(prompt_number), 0) AS pn
+      FROM user_prompts
+      WHERE content_session_id = ? AND is_redacted = 0
+    `).get(contentSessionId) as { pn: number };
+    return result.pn;
   }
 
   /**
@@ -1357,7 +1378,9 @@ export class SessionStore {
       SELECT up.*, s.project, s.memory_session_id
       FROM user_prompts up
       JOIN sdk_sessions s ON up.content_session_id = s.content_session_id
-      WHERE up.created_at_epoch >= ? AND up.created_at_epoch <= ? ${projectFilter.replace('project', 's.project')}
+      WHERE up.created_at_epoch >= ? AND up.created_at_epoch <= ?
+        AND up.is_redacted = 0
+        ${projectFilter.replace('project', 's.project')}
       ORDER BY up.created_at_epoch ASC
     `;
 

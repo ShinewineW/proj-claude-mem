@@ -1273,10 +1273,15 @@ export class WorkerService {
           if (typeof promptNumber !== 'number') {
             try {
               const store = this.dbManager.getSessionStore(entry.dbPath);
+              // Resolve to the latest REAL prompt (is_redacted=0) at or before
+              // the fallback timestamp. Including redacted placeholders here
+              // would mis-bind the replayed summary to a system-noise turn —
+              // the same bug fixed at the live-attribution sites in migration 33.
               const row = store.db.prepare(`
                 SELECT MAX(prompt_number) AS mx FROM user_prompts
                 WHERE content_session_id = ?
                   AND created_at_epoch <= ?
+                  AND is_redacted = 0
               `).get(entry.sessionId, entry.timestamp) as { mx: number | null } | undefined;
               promptNumber = row?.mx ?? null;
             } catch (err) {

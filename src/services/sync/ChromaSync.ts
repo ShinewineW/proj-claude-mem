@@ -727,7 +727,9 @@ export class ChromaSync {
       ? `AND up.id NOT IN (${existingPromptIds.join(',')})`
       : '';
 
-    // Get only user prompts missing from Chroma
+    // Get only user prompts missing from Chroma. Redacted placeholders carry no
+    // text — there is nothing to embed, and surfacing them in vector search
+    // would pollute results with empty hits.
     const prompts = db.prepare(`
       SELECT
         up.*,
@@ -735,7 +737,7 @@ export class ChromaSync {
         s.memory_session_id
       FROM user_prompts up
       JOIN sdk_sessions s ON up.content_session_id = s.content_session_id
-      WHERE 1=1 ${promptExclusionClause}
+      WHERE up.is_redacted = 0 ${promptExclusionClause}
       ORDER BY up.id ASC
     `).all() as StoredUserPrompt[];
 
@@ -743,7 +745,7 @@ export class ChromaSync {
       SELECT COUNT(*) as count
       FROM user_prompts up
       JOIN sdk_sessions s ON up.content_session_id = s.content_session_id
-      WHERE 1=1
+      WHERE up.is_redacted = 0
     `).get() as { count: number };
 
     logger.info('CHROMA_SYNC', 'Backfilling user prompts', {

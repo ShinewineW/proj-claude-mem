@@ -31,6 +31,15 @@ export function getUserPrompt(
 /**
  * Get current prompt number by counting user_prompts for this session
  * Replaces the prompt_counter column which is no longer maintained
+ *
+ * NOTE: counts ALL rows (including is_redacted=1). Use only when ASSIGNING
+ * the next prompt_number to a freshly arriving prompt — the redacted-row
+ * placeholders must advance the counter to keep numbering monotonic and
+ * prevent the stale-prompt skip-loop fixed in migration 32. For ATTRIBUTING
+ * downstream work (observation / summarize) to a turn, use
+ * `getLatestRealPromptNumber` instead so noise prompts (`<task-notification>`,
+ * Monitor events, etc.) don't steal credit for work belonging to the
+ * preceding real user prompt.
  */
 export function getPromptNumberFromUserPrompts(db: Database, contentSessionId: string): number {
   const result = db.prepare(`
@@ -40,8 +49,29 @@ export function getPromptNumberFromUserPrompts(db: Database, contentSessionId: s
 }
 
 /**
+ * Get the latest non-redacted prompt_number for attribution purposes.
+ *
+ * Use this when answering "which user prompt does this observation/summary
+ * belong to?". Redacted placeholder rows (is_redacted=1) advance the global
+ * counter but do not represent user intent, so work that arrives in their
+ * window should attribute back to the preceding real prompt. Returns 0 when
+ * no real prompt exists yet for the session.
+ */
+export function getLatestRealPromptNumber(db: Database, contentSessionId: string): number {
+  const result = db.prepare(`
+    SELECT COALESCE(MAX(prompt_number), 0) AS pn
+    FROM user_prompts
+    WHERE content_session_id = ? AND is_redacted = 0
+  `).get(contentSessionId) as { pn: number };
+  return result.pn;
+}
+
+/**
  * Get latest user prompt with session info for a Claude session
- * Used for syncing prompts to Chroma during session initialization
+ * Used for syncing prompts to Chroma during session initialization and for
+ * broadcasting "new prompt" SSE events. Redacted placeholder rows are skipped
+ * — they have no content to sync and would render as a blank Ask card in the
+ * viewer.
  */
 export function getLatestUserPrompt(
   db: Database,
@@ -55,6 +85,7 @@ export function getLatestUserPrompt(
     FROM user_prompts up
     JOIN sdk_sessions s ON up.content_session_id = s.content_session_id
     WHERE up.content_session_id = ?
+      AND up.is_redacted = 0
     ORDER BY up.created_at_epoch DESC
     LIMIT 1
   `);
@@ -64,6 +95,7 @@ export function getLatestUserPrompt(
 
 /**
  * Get recent user prompts across all sessions (for web UI)
+ * Excludes redacted placeholders — they carry no user-visible content.
  */
 export function getAllRecentUserPrompts(
   db: Database,
@@ -80,6 +112,7 @@ export function getAllRecentUserPrompts(
       up.created_at_epoch
     FROM user_prompts up
     LEFT JOIN sdk_sessions s ON up.content_session_id = s.content_session_id
+    WHERE up.is_redacted = 0
     ORDER BY up.created_at_epoch DESC
     LIMIT ?
   `);
