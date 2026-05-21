@@ -110,6 +110,16 @@ describe('summary-lane architectural pins', () => {
       expect(src).toContain('prompt_number');
     });
 
+    it('replayFallbackEntries excludes redacted placeholders when resolving prompt_number', () => {
+      // Without this filter the replayed summary would bind to a redacted
+      // system-event row instead of the real user turn it actually serves —
+      // same bug fixed at the live-attribution sites in migration 33.
+      const idx = src.indexOf('Fallback summarize: resolve-at-replay failed');
+      expect(idx).toBeGreaterThan(0);
+      const replaySection = src.slice(Math.max(0, idx - 1500), idx);
+      expect(replaySection).toContain('is_redacted = 0');
+    });
+
     it('instantiates SummaryLane and wires its 5 dependencies', () => {
       expect(src).toContain('new SummaryLane(');
       expect(src).toContain('this.summaryLane.setSessionManager(');
