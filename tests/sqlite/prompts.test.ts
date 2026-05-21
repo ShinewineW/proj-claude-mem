@@ -13,6 +13,9 @@ import { ClaudeMemDatabase } from '../../src/services/sqlite/Database.js';
 import {
   saveUserPrompt,
   getPromptNumberFromUserPrompts,
+  getLatestRealPromptNumber,
+  getLatestUserPrompt,
+  getAllRecentUserPrompts,
 } from '../../src/services/sqlite/Prompts.js';
 import { createSDKSession } from '../../src/services/sqlite/Sessions.js';
 import type { Database } from 'bun:sqlite';
@@ -124,6 +127,78 @@ describe('Prompts Module', () => {
       }
 
       expect(getPromptNumberFromUserPrompts(db, contentSessionId)).toBe(100);
+    });
+  });
+
+  describe('getLatestRealPromptNumber (attribution anchor)', () => {
+    it('returns 0 when session has no prompts', () => {
+      expect(getLatestRealPromptNumber(db, 'never-saved')).toBe(0);
+    });
+
+    it('returns the latest prompt_number when all rows are real', () => {
+      const sess = createSession('all-real');
+      saveUserPrompt(db, sess, 1, 'hello');
+      saveUserPrompt(db, sess, 2, 'world');
+      saveUserPrompt(db, sess, 3, 'again');
+
+      expect(getLatestRealPromptNumber(db, sess)).toBe(3);
+    });
+
+    it('ignores trailing redacted rows', () => {
+      const sess = createSession('trailing-redacted');
+      saveUserPrompt(db, sess, 1, 'real one');
+      saveUserPrompt(db, sess, 2, '', true);
+      saveUserPrompt(db, sess, 3, '', true);
+
+      // counter still advances for assignment, but attribution stays on prompt 1
+      expect(getPromptNumberFromUserPrompts(db, sess)).toBe(3);
+      expect(getLatestRealPromptNumber(db, sess)).toBe(1);
+    });
+
+    it('returns the prior real prompt when a redacted row sits in the middle', () => {
+      const sess = createSession('mid-redacted');
+      saveUserPrompt(db, sess, 1, 'first ask');
+      saveUserPrompt(db, sess, 2, '', true); // <task-notification> noise
+      saveUserPrompt(db, sess, 3, 'second ask');
+
+      // Observation arriving between pn=2 redaction and pn=3 save would
+      // mis-attribute under the old COUNT-based resolution. New helper picks
+      // the latest REAL number — pn=3 once it lands, pn=1 before then.
+      expect(getLatestRealPromptNumber(db, sess)).toBe(3);
+    });
+
+    it('isolates per session', () => {
+      const a = createSession('sess-a');
+      const b = createSession('sess-b');
+      saveUserPrompt(db, a, 1, 'a1');
+      saveUserPrompt(db, b, 1, '', true);
+
+      expect(getLatestRealPromptNumber(db, a)).toBe(1);
+      expect(getLatestRealPromptNumber(db, b)).toBe(0);
+    });
+  });
+
+  describe('viewer-facing reads exclude redacted rows', () => {
+    it('getLatestUserPrompt skips redacted placeholder', () => {
+      const sess = createSession('viewer-latest');
+      saveUserPrompt(db, sess, 1, 'real prompt body');
+      saveUserPrompt(db, sess, 2, '', true);
+
+      const latest = getLatestUserPrompt(db, sess);
+      expect(latest).toBeDefined();
+      expect(latest?.prompt_number).toBe(1);
+      expect(latest?.prompt_text).toBe('real prompt body');
+    });
+
+    it('getAllRecentUserPrompts excludes redacted rows', () => {
+      const sess = createSession('viewer-recent');
+      saveUserPrompt(db, sess, 1, 'visible one');
+      saveUserPrompt(db, sess, 2, '', true);
+      saveUserPrompt(db, sess, 3, 'visible two');
+
+      const rows = getAllRecentUserPrompts(db, 50);
+      const forSession = rows.filter(r => r.content_session_id === sess);
+      expect(forSession.map(r => r.prompt_number).sort()).toEqual([1, 3]);
     });
   });
 });

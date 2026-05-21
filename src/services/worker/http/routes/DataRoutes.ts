@@ -364,7 +364,8 @@ export class DataRoutes extends BaseRouteHandler {
           // Count queries for enrichment
           const obsCount = (projDb.prepare('SELECT COUNT(*) as count FROM observations').get() as { count: number }).count;
           const sumCount = (projDb.prepare('SELECT COUNT(*) as count FROM session_summaries').get() as { count: number }).count;
-          const promptCount = (projDb.prepare('SELECT COUNT(*) as count FROM user_prompts').get() as { count: number }).count;
+          // promptCount feeds the project chip in the viewer — count only real prompts.
+          const promptCount = (projDb.prepare('SELECT COUNT(*) as count FROM user_prompts WHERE is_redacted = 0').get() as { count: number }).count;
 
           // Query 1 latest non-ask (observation or summary) + 1 latest ask (prompt)
           const latestNonAsk = projDb.prepare(`
@@ -380,7 +381,7 @@ export class DataRoutes extends BaseRouteHandler {
             .sort((a, b) => b.created_at_epoch - a.created_at_epoch);
           const latestAsk = projDb.prepare(`
             SELECT 'prompt' as itemType, id, prompt_text, created_at_epoch
-            FROM user_prompts ORDER BY created_at_epoch DESC LIMIT 1
+            FROM user_prompts WHERE is_redacted = 0 ORDER BY created_at_epoch DESC LIMIT 1
           `).all() as Array<{ itemType: string; id: number; prompt_text: string; created_at_epoch: number }>;
           const latestItems = [
             ...(nonAskCandidates.length > 0 ? [nonAskCandidates[0]] : []),
@@ -461,6 +462,7 @@ export class DataRoutes extends BaseRouteHandler {
                  up.prompt_text, up.created_at, up.created_at_epoch
           FROM user_prompts up
           JOIN sdk_sessions s ON up.content_session_id = s.content_session_id
+          WHERE up.is_redacted = 0
           ORDER BY up.created_at_epoch DESC LIMIT ?
         `).all(limit) as Array<{ itemType: string; project: string; created_at_epoch: number }>;
 

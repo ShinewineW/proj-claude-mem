@@ -634,7 +634,9 @@ export class SessionRoutes extends BaseRouteHandler {
         const session = this.sessionManager.getSession(sessionDbId, dbPath);
         if (session?.contentSessionId) {
           const store = this.dbManager.getSessionStore(dbPath);
-          resolvedPromptNumber = store.getPromptNumberFromUserPrompts(session.contentSessionId);
+          // Attribute summarize to the latest real user prompt — skip redacted placeholders.
+          const pn = store.getLatestRealPromptNumber(session.contentSessionId);
+          resolvedPromptNumber = pn > 0 ? pn : null;
         }
       } catch {
         // Best-effort resolution; falls through to 400 if still null.
@@ -793,7 +795,11 @@ export class SessionRoutes extends BaseRouteHandler {
     // even if UserPromptSubmit hook never fires (worker restart, race condition)
     const project = cwd ? getProjectName(cwd) : '';
     const sessionDbId = store.createSDKSession(contentSessionId, project, '');
-    const promptNumber = store.getPromptNumberFromUserPrompts(contentSessionId);
+    // Attribute observation to the latest REAL user prompt. Redacted placeholders
+    // (system notifications, Monitor noise) advance the global counter but their
+    // prompt_number must not steal credit for tool-use that belongs to the
+    // preceding real turn — they were never the user's intent.
+    const promptNumber = store.getLatestRealPromptNumber(contentSessionId);
 
     // Privacy check: skip if user prompt was entirely private
     const userPrompt = PrivacyCheckValidator.checkUserPromptPrivacy(
@@ -868,7 +874,8 @@ export class SessionRoutes extends BaseRouteHandler {
     if (typeof prompt_number === 'number' && Number.isFinite(prompt_number)) {
       resolvedPromptNumber = prompt_number;
     } else {
-      resolvedPromptNumber = store.getPromptNumberFromUserPrompts(contentSessionId);
+      // Attribute summarize to the latest real user prompt — skip redacted placeholders.
+      resolvedPromptNumber = store.getLatestRealPromptNumber(contentSessionId);
     }
 
     // Use the resolved prompt_number as the privacy anchor for THIS turn.
@@ -941,7 +948,10 @@ export class SessionRoutes extends BaseRouteHandler {
     }
 
     const store = this.dbManager.getSessionStore(dbPath);
-    const promptNumber = store.getPromptNumberFromUserPrompts(contentSessionId);
+    // Hook callers (Stop hook → summarize POST) need the turn key of the latest
+    // REAL user prompt — never a redacted placeholder, otherwise the summary is
+    // attributed to a synthetic noise event instead of the user's actual ask.
+    const promptNumber = store.getLatestRealPromptNumber(contentSessionId);
     if (typeof promptNumber !== 'number' || promptNumber <= 0) {
       res.status(404).json({ error: 'No prompt recorded for contentSessionId yet' });
       return;
