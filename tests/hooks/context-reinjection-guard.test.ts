@@ -27,6 +27,7 @@ mock.module('../../src/shared/SettingsDefaultsManager.js', () => ({
 mock.module('../../src/shared/worker-utils.js', () => ({
   ensureWorkerRunning: () => Promise.resolve(true),
   getWorkerPort: () => 37777,
+  fetchWithTimeout: async (url: string | URL | Request, init?: RequestInit, _timeoutMs?: number) => fetch(url, init),
 }));
 
 mock.module('../../src/utils/project-name.js', () => ({
@@ -116,6 +117,70 @@ describe('Context Re-Injection Guard (#1079)', () => {
         expect(sdkInitCalls.length).toBe(0);
       } finally {
         globalThis.fetch = originalFetch;
+      }
+    });
+
+    it('should skip SDK agent init for worker-level skipped results', async () => {
+      const { sessionInitHandler } = await import('../../src/cli/handlers/session-init.js');
+      const skippedResults = [
+        { reason: 'redacted', redactionReason: 'private', prompt: '<private>secret</private>' },
+        { reason: 'system_noise', prompt: 'Monitor event: background task completed' },
+      ];
+
+      for (const skippedResult of skippedResults) {
+        const fetchedUrls: string[] = [];
+
+        const mockFetch = mock((url: string | URL | Request) => {
+          const urlStr = typeof url === 'string' ? url : url.toString();
+          fetchedUrls.push(urlStr);
+
+          if (urlStr.includes('/api/sessions/init')) {
+            return Promise.resolve({
+              ok: true,
+              json: () => Promise.resolve({
+                sessionDbId: 42,
+                promptNumber: 1,
+                skipped: true,
+                reason: skippedResult.reason,
+                redactionReason: skippedResult.redactionReason,
+                contextInjected: false
+              })
+            });
+          }
+
+          return Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve({ status: 'initialized' })
+          });
+        });
+
+        const originalFetch = globalThis.fetch;
+        globalThis.fetch = mockFetch as any;
+
+        try {
+          const result = await sessionInitHandler.execute({
+            sessionId: `test-session-${skippedResult.reason}`,
+            cwd: '/test/project',
+            prompt: skippedResult.prompt,
+            platform: 'claude-code',
+            _projectContext: {
+              projectRoot: '/test/project',
+              dbPath: '/test/project/.claude/mem.db',
+              projectName: 'test-project',
+            },
+          });
+
+          expect(result.continue).toBe(true);
+          expect(result.suppressOutput).toBe(true);
+
+          const apiInitCalls = fetchedUrls.filter(u => u.includes('/api/sessions/init'));
+          const sdkInitCalls = fetchedUrls.filter(u => u.includes('/sessions/42/init'));
+
+          expect(apiInitCalls.length).toBe(1);
+          expect(sdkInitCalls.length).toBe(0);
+        } finally {
+          globalThis.fetch = originalFetch;
+        }
       }
     });
 

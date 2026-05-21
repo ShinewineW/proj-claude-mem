@@ -90,6 +90,7 @@ mock.module('../../src/utils/logger.js', () => ({
 mock.module('../../src/shared/worker-utils.js', () => ({
   getWorkerPort: () => 37777,
   ensureWorkerRunning: async () => true,
+  fetchWithTimeout: async (url: string | URL | Request, init?: RequestInit, _timeoutMs?: number) => fetch(url, init),
 }));
 
 // ---------------------------------------------------------------------------

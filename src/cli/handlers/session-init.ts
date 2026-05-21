@@ -74,20 +74,31 @@ export const sessionInitHandler: EventHandler = {
       promptNumber: number;
       skipped?: boolean;
       reason?: string;
+      redactionReason?: string;
       contextInjected?: boolean;
     };
     const sessionDbId = initResult.sessionDbId;
     const promptNumber = initResult.promptNumber;
 
-    logger.debug('HOOK', 'session-init: Received from /api/sessions/init', { sessionDbId, promptNumber, skipped: initResult.skipped, contextInjected: initResult.contextInjected });
+    logger.debug('HOOK', 'session-init: Received from /api/sessions/init', {
+      sessionDbId,
+      promptNumber,
+      skipped: initResult.skipped,
+      reason: initResult.reason,
+      redactionReason: initResult.redactionReason,
+      contextInjected: initResult.contextInjected
+    });
 
     // Debug-level alignment log for detailed tracing
     logger.debug('HOOK', `[ALIGNMENT] Hook Entry | contentSessionId=${sessionId} | prompt#=${promptNumber} | sessionDbId=${sessionDbId}`);
 
-    // Check if prompt was entirely private (worker performs privacy check)
-    if (initResult.skipped && initResult.reason === 'private') {
-      logger.info('HOOK', `INIT_COMPLETE | sessionDbId=${sessionDbId} | promptNumber=${promptNumber} | skipped=true | reason=private`, {
-        sessionId: sessionDbId
+    // Worker-level skips mean /api/sessions/init already handled persistence and
+    // decided this turn should not start the SDK agent.
+    if (initResult.skipped) {
+      const skipReason = initResult.reason || 'unknown';
+      logger.info('HOOK', `INIT_COMPLETE | sessionDbId=${sessionDbId} | promptNumber=${promptNumber} | skipped=true | reason=${skipReason}`, {
+        sessionId: sessionDbId,
+        redactionReason: initResult.redactionReason
       });
       return { continue: true, suppressOutput: true };
     }

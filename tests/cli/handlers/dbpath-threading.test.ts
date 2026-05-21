@@ -51,6 +51,7 @@ function restoreFetch() {
 mock.module("../../../src/shared/worker-utils.js", () => ({
   ensureWorkerRunning: async () => true,
   getWorkerPort: () => 37777,
+  fetchWithTimeout: async (url: string | URL | Request, init?: RequestInit, _timeoutMs?: number) => fetch(url, init),
 }));
 
 mock.module("../../../src/utils/project-name.js", () => ({

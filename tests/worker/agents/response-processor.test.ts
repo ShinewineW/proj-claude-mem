@@ -9,6 +9,7 @@ mock.module('../../../src/services/worker-service.js', () => ({
 
 mock.module('../../../src/shared/worker-utils.js', () => ({
   getWorkerPort: () => 37777,
+  fetchWithTimeout: async (url: string | URL | Request, init?: RequestInit, _timeoutMs?: number) => fetch(url, init),
 }));
 
 // Mock the ModeManager

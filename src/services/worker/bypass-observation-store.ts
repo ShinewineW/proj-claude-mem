@@ -16,6 +16,7 @@
  */
 
 import type { SessionStore } from '../sqlite/SessionStore.js';
+import { logger } from '../../utils/logger.js';
 
 export interface BypassObservationPayload {
   type: string;
@@ -62,8 +63,21 @@ export function storeBypassObservationsForSession(
       | { memory_session_id: string | null; project: string; content_session_id: string | null }
       | undefined;
 
-    if (!row) return null;
-    if (!row.memory_session_id) return null;
+    if (!row) {
+      logger.warn('BYPASS', 'Bypass observation insert skipped: session row missing', {
+        sessionDbId,
+        observationCount: observations.length,
+      });
+      return null;
+    }
+    if (!row.memory_session_id) {
+      logger.debug('BYPASS', 'Bypass observation insert waiting for memorySessionId', {
+        sessionDbId,
+        contentSessionId: row.content_session_id,
+        observationCount: observations.length,
+      });
+      return null;
+    }
 
     const contentSessionId = opts.contentSessionId ?? row.content_session_id ?? null;
 
@@ -77,6 +91,14 @@ export function storeBypassObservationsForSession(
       opts.overrideTimestampEpoch,
       contentSessionId,
     );
+
+    logger.debug('BYPASS', 'Bypass observations stored atomically', {
+      sessionDbId,
+      memorySessionId: row.memory_session_id,
+      observationCount: observations.length,
+      storedCount: stored.observationIds.length,
+      promptNumber: opts.promptNumber,
+    });
 
     return {
       observationIds: stored.observationIds,

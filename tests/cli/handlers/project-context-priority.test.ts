@@ -12,6 +12,7 @@ afterAll(() => { globalThis.fetch = originalFetch; });
 mock.module('../../../src/shared/worker-utils.js', () => ({
   ensureWorkerRunning: mock(() => Promise.resolve(true)),
   getWorkerPort: mock(() => 37777),
+  fetchWithTimeout: async (url: string | URL | Request, init?: RequestInit, _timeoutMs?: number) => fetch(url, init),
 }));
 
 mock.module('../../../src/utils/logger.js', () => ({

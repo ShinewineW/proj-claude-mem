@@ -39,6 +39,7 @@ mock.module('../../src/utils/logger.js', () => ({
 // Mock worker-utils
 mock.module('../../src/shared/worker-utils.js', () => ({
   getWorkerPort: () => 37777,
+  fetchWithTimeout: async (url: string | URL | Request, init?: RequestInit, _timeoutMs?: number) => fetch(url, init),
 }));
 
 // Mock paths - must include ALL exports since mock.module is global in bun:test
