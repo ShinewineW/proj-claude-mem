@@ -41,9 +41,10 @@ describe('PrivacyCheckValidator', () => {
     expect(result).toBe('What is the weather?');
   });
 
-  test('returns null when prompt was entirely private (empty after tag stripping)', () => {
-    // Save an empty prompt (privacy tags were stripped, leaving nothing)
-    store.saveUserPrompt('test-session-1', 1, '');
+  test('returns null when prompt was explicitly marked redacted at save time', () => {
+    // Save an empty prompt with the redacted flag — this is what the route does
+    // when tag stripping reduces a fully-wrapped prompt to empty.
+    store.saveUserPrompt('test-session-1', 1, '', true);
 
     const result = PrivacyCheckValidator.checkUserPromptPrivacy(
       store, 'test-session-1', 1, 'observation', 1
@@ -52,14 +53,30 @@ describe('PrivacyCheckValidator', () => {
     expect(result).toBeNull();
   });
 
-  test('returns null when prompt is whitespace-only (entirely private)', () => {
-    store.saveUserPrompt('test-session-1', 1, '   \n  ');
+  test('returns placeholder (NOT null) when prompt is empty but is_redacted=0 — race condition, not privacy', () => {
+    // Pre-migration-32 behaviour conflated this with privacy and dropped data.
+    // Post-fix: treated as race/legacy → proceed with placeholder.
+    store.saveUserPrompt('test-session-1', 1, '', false);
 
     const result = PrivacyCheckValidator.checkUserPromptPrivacy(
       store, 'test-session-1', 1, 'observation', 1
     );
 
-    expect(result).toBeNull();
+    expect(result).not.toBeNull();
+    expect(result).toBe(PrivacyCheckValidator.PROMPT_NOT_FOUND_PLACEHOLDER);
+  });
+
+  test('returns placeholder when prompt is whitespace-only but not flagged — race, not privacy', () => {
+    store.saveUserPrompt('test-session-1', 1, '   \n  ', false);
+
+    const result = PrivacyCheckValidator.checkUserPromptPrivacy(
+      store, 'test-session-1', 1, 'observation', 1
+    );
+
+    // Whitespace-only without flag is treated the same as empty + no flag —
+    // not a privacy signal, proceed.
+    expect(result).not.toBeNull();
+    expect(result).toBe(PrivacyCheckValidator.PROMPT_NOT_FOUND_PLACEHOLDER);
   });
 
   test('returns placeholder when prompt not found — NOT treated as private (compaction fix)', () => {

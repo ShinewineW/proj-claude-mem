@@ -43,6 +43,7 @@ export class MigrationRunner {
       ['addSummaryContentSessionIdColumn', () => this.addSummaryContentSessionIdColumn()],
       ['backfillContentSessionIds', () => this.backfillContentSessionIds()],
       ['addSummaryTurnUniqueIndex', () => this.addSummaryTurnUniqueIndex()],
+      ['addUserPromptIsRedactedColumn', () => this.addUserPromptIsRedactedColumn()],
     ];
 
     for (const [name, fn] of steps) {
@@ -1143,5 +1144,34 @@ export class MigrationRunner {
     logger.debug('DB', 'Deduped session_summaries and added partial unique index on (content_session_id, prompt_number)');
 
     this.db.prepare('INSERT OR IGNORE INTO schema_versions (version, applied_at) VALUES (?, ?)').run(31, new Date().toISOString());
+  }
+
+  /**
+   * Add `is_redacted` flag column to `user_prompts` (migration 32).
+   *
+   * Replaces the legacy heuristic of "prompt_text is empty string => privacy event".
+   * That heuristic conflated three distinct states:
+   *   1. User intentionally redacted via `<private>` tag (privacy event)
+   *   2. System-injected content wrapped entire prompt (`<system-instruction>`, `<task-notification>`)
+   *   3. INSERT failure / write race (DB locked, worker restart) — NOT a privacy event
+   * Treating all three as private caused session-wide skip-loops where every
+   * downstream observation/summary for the affected promptNumber was silently dropped.
+   *
+   * After this migration, save paths explicitly set is_redacted=1 only when tag
+   * stripping reduced a non-empty prompt to empty. PrivacyCheckValidator switches
+   * to checking this flag; an empty prompt_text without the flag is treated as
+   * a race condition and processing proceeds.
+   */
+  private addUserPromptIsRedactedColumn(): void {
+    const applied = this.db.prepare('SELECT version FROM schema_versions WHERE version = ?').get(32) as SchemaVersion | undefined;
+    if (applied) return;
+
+    const cols = this.db.query('PRAGMA table_info(user_prompts)').all() as Array<{ name: string }>;
+    if (!cols.some(c => c.name === 'is_redacted')) {
+      this.db.run('ALTER TABLE user_prompts ADD COLUMN is_redacted INTEGER NOT NULL DEFAULT 0');
+      logger.debug('DB', 'Added is_redacted column to user_prompts');
+    }
+
+    this.db.prepare('INSERT OR IGNORE INTO schema_versions (version, applied_at) VALUES (?, ?)').run(32, new Date().toISOString());
   }
 }

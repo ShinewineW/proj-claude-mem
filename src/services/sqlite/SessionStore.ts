@@ -664,20 +664,46 @@ export class SessionStore {
 
 
   /**
-   * Save a user prompt
+   * Save a user prompt.
+   *
+   * @param isRedacted When true, marks the row so PrivacyCheckValidator skips
+   *   downstream processing. Set by callers that detected the original prompt
+   *   was fully wrapped in a recognized tag (e.g. `<private>`). Must NOT be set
+   *   when prompt_text is empty for unrelated reasons (race condition, failed
+   *   strip) — that's exactly the conflation this flag was added to fix.
    */
-  saveUserPrompt(contentSessionId: string, promptNumber: number, promptText: string): number {
+  saveUserPrompt(
+    contentSessionId: string,
+    promptNumber: number,
+    promptText: string,
+    isRedacted: boolean = false
+  ): number {
     const now = new Date();
     const nowEpoch = now.getTime();
 
     const stmt = this.db.prepare(`
       INSERT INTO user_prompts
-      (content_session_id, prompt_number, prompt_text, created_at, created_at_epoch)
-      VALUES (?, ?, ?, ?, ?)
+      (content_session_id, prompt_number, prompt_text, created_at, created_at_epoch, is_redacted)
+      VALUES (?, ?, ?, ?, ?, ?)
     `);
 
-    const result = stmt.run(contentSessionId, promptNumber, promptText, now.toISOString(), nowEpoch);
+    const result = stmt.run(contentSessionId, promptNumber, promptText, now.toISOString(), nowEpoch, isRedacted ? 1 : 0);
     return result.lastInsertRowid as number;
+  }
+
+  /**
+   * Returns true iff the prompt was explicitly marked redacted at save time.
+   * False for non-existent rows, race-condition empties, and normal prompts.
+   */
+  isUserPromptRedacted(contentSessionId: string, promptNumber: number): boolean {
+    const stmt = this.db.prepare(`
+      SELECT is_redacted
+      FROM user_prompts
+      WHERE content_session_id = ? AND prompt_number = ?
+      LIMIT 1
+    `);
+    const result = stmt.get(contentSessionId, promptNumber) as { is_redacted: number } | undefined;
+    return result?.is_redacted === 1;
   }
 
   /**

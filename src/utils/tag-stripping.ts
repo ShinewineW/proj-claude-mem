@@ -77,3 +77,59 @@ export function stripMemoryTagsFromJson(content: string): string {
 export function stripMemoryTagsFromPrompt(content: string): string {
   return stripTagsInternal(content);
 }
+
+/**
+ * Possible reasons a prompt ended up fully redacted (i.e., emptied) by tag stripping.
+ *
+ * Distinguishes user-intentional redaction (`<private>`) from system-injected noise
+ * (`<system-instruction>`, `<task-notification>`, `<claude-mem-context>`). Legacy code
+ * conflated all of these as "private" by checking for empty strings, which caused
+ * session-wide skip-loops when Conductor or background-task notifications wrapped an
+ * entire prompt — and also misclassified DB race conditions (failed inserts, worker
+ * restart) as privacy events.
+ */
+export type RedactionReason =
+  | 'private'
+  | 'system_instruction'
+  | 'task_notification'
+  | 'claude_mem_context'
+  | 'unknown';
+
+export interface StripResult {
+  /** Content after tag stripping (may be ''). */
+  stripped: string;
+  /** True iff original was non-empty but stripping reduced it to empty — i.e. some recognized tag wrapped the entire prompt. */
+  wasRedacted: boolean;
+  /** Which tag dominated the redaction. Only meaningful when wasRedacted=true. */
+  redactionReason?: RedactionReason;
+}
+
+/**
+ * Strip memory tags from a user prompt and report whether the content was
+ * entirely redacted, plus which tag caused it. Save paths use the flag to
+ * mark redacted prompts explicitly instead of letting downstream code re-infer
+ * "is this private?" from an empty string (which is ambiguous with race
+ * conditions and failed inserts).
+ */
+export function stripMemoryTagsFromPromptDetailed(content: string): StripResult {
+  const originalNonEmpty = content.trim().length > 0;
+  const stripped = stripTagsInternal(content);
+  const wasRedacted = originalNonEmpty && stripped.length === 0;
+
+  let redactionReason: RedactionReason | undefined;
+  if (wasRedacted) {
+    if (/<private>[\s\S]*?<\/private>/.test(content)) {
+      redactionReason = 'private';
+    } else if (/<system[-_]instruction>[\s\S]*?<\/system[-_]instruction>/i.test(content)) {
+      redactionReason = 'system_instruction';
+    } else if (/<task-notification>[\s\S]*?<\/task-notification>/.test(content)) {
+      redactionReason = 'task_notification';
+    } else if (/<claude-mem-context>[\s\S]*?<\/claude-mem-context>/.test(content)) {
+      redactionReason = 'claude_mem_context';
+    } else {
+      redactionReason = 'unknown';
+    }
+  }
+
+  return { stripped, wasRedacted, redactionReason };
+}

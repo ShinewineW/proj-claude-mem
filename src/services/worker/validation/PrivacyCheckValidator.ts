@@ -48,15 +48,35 @@ export class PrivacyCheckValidator {
       return PrivacyCheckValidator.PROMPT_NOT_FOUND_PLACEHOLDER;
     }
 
-    // Prompt exists but was stripped to empty by privacy tag removal.
-    // This IS a genuine privacy signal — skip the operation.
-    if (userPrompt.trim() === '') {
-      logger.debug('HOOK', `Skipping ${operationType} - user prompt was entirely private`, {
+    // Privacy is signalled by the explicit `is_redacted` flag set at save time
+    // (migration 32). The legacy heuristic of "prompt_text is empty => private"
+    // conflated three other states that aren't privacy events:
+    //   - INSERT race (worker restart, DB lock retry failed silently)
+    //   - Bulk import that didn't carry prompt text
+    //   - System-injected tag wrapping a synthetic prompt that we still want to record
+    // Treating those as privacy caused session-wide skip-loops where every
+    // downstream observation/summary for the affected promptNumber was dropped.
+    // Now: only skip when the save-side explicitly recorded redaction intent.
+    if (store.isUserPromptRedacted(contentSessionId, promptNumber)) {
+      logger.debug('HOOK', `Skipping ${operationType} - user prompt was explicitly redacted at save time`, {
         sessionId: sessionDbId,
         promptNumber,
         ...additionalContext
       });
       return null;
+    }
+
+    // Prompt is empty but not flagged — likely race / failed insert / legacy data.
+    // Proceed with placeholder so we don't drop the observation, but surface as
+    // warn so this can be investigated rather than silently lost.
+    if (userPrompt.trim() === '') {
+      logger.warn('HOOK', `${operationType}: user prompt #${promptNumber} empty but is_redacted=0 — likely race/legacy, proceeding with placeholder`, {
+        sessionId: sessionDbId,
+        promptNumber,
+        contentSessionId,
+        ...additionalContext
+      });
+      return PrivacyCheckValidator.PROMPT_NOT_FOUND_PLACEHOLDER;
     }
 
     return userPrompt;

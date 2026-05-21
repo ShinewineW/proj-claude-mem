@@ -8,7 +8,7 @@
 import express, { Request, Response } from 'express';
 import { getWorkerPort } from '../../../../shared/worker-utils.js';
 import { logger } from '../../../../utils/logger.js';
-import { stripMemoryTagsFromPrompt } from '../../../../utils/tag-stripping.js';
+import { stripMemoryTagsFromPrompt, stripMemoryTagsFromPromptDetailed } from '../../../../utils/tag-stripping.js';
 import { cleanToolField } from './observation-utils.js';
 import { parseSkipPatterns, shouldSkipObservation, type ToolPattern } from './observation-filter.js';
 import { SessionManager } from '../../SessionManager.js';
@@ -1054,22 +1054,34 @@ export class SessionRoutes extends BaseRouteHandler {
       logger.debug('HTTP', `[ALIGNMENT] New Session | contentSessionId=${contentSessionId} | prompt#=${promptNumber} | memorySessionId will be captured on first SDK response`);
     }
 
-    // Step 3: Strip privacy tags from prompt
-    const cleanedPrompt = stripMemoryTagsFromPrompt(prompt);
+    // Step 3: Strip privacy tags + detect intentional redaction.
+    // We persist the prompt row in all cases below (Step 5) so that prompt
+    // numbering stays monotonic in `user_prompts` even when a turn is fully
+    // redacted/noise — otherwise `getPromptNumberFromUserPrompts()` returns
+    // a stale count and subsequent turns get the wrong promptNumber, causing
+    // a session-wide skip-loop (issue surfaced 2026-05-20).
+    const stripResult = stripMemoryTagsFromPromptDetailed(prompt);
+    const cleanedPrompt = stripResult.stripped;
 
-    // Step 4: Check if prompt is entirely private or system noise
-    if (!cleanedPrompt || cleanedPrompt.trim() === '') {
-      logger.debug('HOOK', 'Session init - prompt entirely private', {
+    // Step 4: Fully redacted (some recognized tag wrapped the whole prompt).
+    // Persist the empty row with is_redacted=1 so PrivacyCheckValidator can
+    // skip downstream work without confusing this with race-condition empties.
+    if (stripResult.wasRedacted) {
+      logger.debug('HOOK', 'Session init - prompt fully redacted', {
         sessionId: sessionDbId,
         promptNumber,
-        originalLength: prompt.length
+        originalLength: prompt.length,
+        redactionReason: stripResult.redactionReason
       });
+
+      store.saveUserPrompt(contentSessionId, promptNumber, '', true);
 
       res.json({
         sessionDbId,
         promptNumber,
         skipped: true,
-        reason: 'private'
+        reason: 'redacted',
+        redactionReason: stripResult.redactionReason
       });
       return;
     }
@@ -1077,6 +1089,8 @@ export class SessionRoutes extends BaseRouteHandler {
     // Step 4b: Skip system-injected noise prompts
     // - Monitor event / Monitor permission denied: platform task notifications
     // - <Role_Definition>: skill system prompts echoed back as user input
+    // Persist with is_redacted=1 so PrivacyCheckValidator skips downstream work
+    // AND so the prompt counter advances (preventing the stale-promptNumber loop).
     if (
       cleanedPrompt.includes('Monitor event') ||
       cleanedPrompt.includes('Permission to use Monitor has been denied') ||
@@ -1087,6 +1101,8 @@ export class SessionRoutes extends BaseRouteHandler {
         promptNumber,
         reason: cleanedPrompt.startsWith('<Role_Definition>') ? 'skill_system_prompt' : 'monitor_noise'
       });
+
+      store.saveUserPrompt(contentSessionId, promptNumber, cleanedPrompt, true);
 
       res.json({
         sessionDbId,
