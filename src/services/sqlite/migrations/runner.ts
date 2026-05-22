@@ -1241,15 +1241,19 @@ export class MigrationRunner {
 
       // Summaries: migration 31 enforces a partial unique index on
       // `(content_session_id, prompt_number) WHERE … IS NOT NULL` (one summary
-      // per turn). When a misattributed summary would rebind onto a slot that
-      // already holds another summary, the two are distinct chunks of work that
-      // happened across a redacted system event — they cannot share an anchor.
-      // Skip the rebind for those rows so the migration is idempotent and the
-      // content survives; the row stays pointed at the placeholder pn and the
-      // viewer filters the placeholder out separately. Operators can manually
-      // triage if they care, but we never lose summary content here.
+      // per turn), so two distinct summaries can never share an anchor. A
+      // misattributed summary that would rebind onto an occupied slot must be
+      // left where it is. `UPDATE OR IGNORE` skips exactly those rows and rebinds
+      // the rest — covering BOTH collision shapes: (a) rebinding onto a slot that
+      // already holds a real summary, and (b) two misattributed summaries on
+      // separate redacted placeholders that resolve to the same real anchor.
+      // A hand-rolled `NOT EXISTS` guard only catches (a): SQLite evaluates the
+      // UPDATE's WHERE against pre-update state, so in case (b) both rows pass
+      // the guard and the second rewrite aborts the whole migration on a UNIQUE
+      // violation. Skipped rows keep their placeholder pn — content survives and
+      // the viewer filters the placeholder row out independently.
       const sumResult = this.db.run(`
-        UPDATE session_summaries AS s
+        UPDATE OR IGNORE session_summaries AS s
         SET prompt_number = (
           SELECT MAX(up2.prompt_number)
           FROM user_prompts up2
@@ -1272,18 +1276,6 @@ export class MigrationRunner {
               AND up2.is_redacted = 0
               AND up2.prompt_number <= s.prompt_number
           ) IS NOT NULL
-          AND NOT EXISTS (
-            SELECT 1 FROM session_summaries s2
-            WHERE s2.id != s.id
-              AND s2.content_session_id = s.content_session_id
-              AND s2.prompt_number = (
-                SELECT MAX(up3.prompt_number)
-                FROM user_prompts up3
-                WHERE up3.content_session_id = s.content_session_id
-                  AND up3.is_redacted = 0
-                  AND up3.prompt_number <= s.prompt_number
-              )
-          )
       `);
 
       const summarySkipCount = this.db.prepare(`

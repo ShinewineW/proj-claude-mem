@@ -199,6 +199,36 @@ describe('migration 33: rebindMisattributedRedactedAnchors', () => {
     db.close();
   });
 
+  it('skips one of two misattributed summaries resolving to the same anchor (no pre-existing real summary)', () => {
+    const db = buildDb();
+    const sess = 'c-double';
+    createSDKSession(db, sess, 'test', 'first');
+    db.prepare('UPDATE sdk_sessions SET memory_session_id = ? WHERE content_session_id = ?').run('m-double', sess);
+
+    // One real prompt, then two redacted placeholders (system noise).
+    saveUserPrompt(db, sess, 1, 'real one');
+    saveUserPrompt(db, sess, 2, '', true);
+    saveUserPrompt(db, sess, 3, '', true);
+
+    // Two summaries, each misattributed to a distinct redacted placeholder.
+    // Legal under migration-31's unique index (pn 2 != pn 3), but both resolve
+    // to real pn=1 — they cannot both rebind. A hand-rolled NOT EXISTS guard
+    // evaluates against pre-update state, lets both through, and aborts the
+    // whole migration on a UNIQUE violation. UPDATE OR IGNORE must skip one.
+    const sumA = insertSummary(db, sess, 'm-double', 2, 'phase A');
+    const sumB = insertSummary(db, sess, 'm-double', 3, 'phase B');
+
+    arm33Rebind(db);
+    new MigrationRunner(db).runAllMigrations(); // must NOT throw on intra-statement collision
+
+    // Exactly one rebinds to the real anchor; the other is preserved on its
+    // placeholder pn (content survives, viewer filters the placeholder out).
+    const pns = [getSummaryPromptNumber(db, sumA), getSummaryPromptNumber(db, sumB)];
+    expect(pns.filter(pn => pn === 1).length).toBe(1);
+    expect(pns.filter(pn => pn === 2 || pn === 3).length).toBe(1);
+    db.close();
+  });
+
   it('is idempotent — second run is a no-op', () => {
     const db = buildDb();
     const sess = 'c-idem';
