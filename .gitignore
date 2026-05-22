@@ -33,9 +33,10 @@ src/ui/viewer.html
 # Prevent literal tilde directories (path validation bug artifacts)
 ~*/
 
-# Prevent other malformed path directories
-http*/
-https*/
+# Prevent other malformed path directories (root-anchored — must not match
+# nested legit dirs like src/services/worker/http/ or tests/worker/http/)
+/http*/
+/https*/
 
 # Ignore WebStorm project files (for dinosaur IDE users)
 .idea/
