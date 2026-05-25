@@ -924,7 +924,10 @@ export class BypassLane {
             { role: "user", content: prompt },
           ],
           temperature: 0.3,
-          max_tokens: 8192,
+          // 16384 (2x default): deepseek-v4-flash truncated long observations at
+          // 8192 (finish_reason=length), leaving unclosed <observation> tags that
+          // parseObservations() drops → "No observations parsed". See bypass parse-fail analysis.
+          max_tokens: 16384,
           thinking: { type: "disabled" },
         }),
         signal,
