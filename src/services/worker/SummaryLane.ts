@@ -342,7 +342,8 @@ export class SummaryLane {
 
     // Read the session's current obs cap from the adaptive policy. Default
     // is the configured top cap (150 by default); every failure steps down;
-    // any successful summarize resets the session to the configured default.
+    // a successful summarize holds the session at its current cap (no reset to
+    // default) so dense sessions don't re-fail at the top every summary.
     const maxObservations = this.obsCapPolicy.getCapForSession(sessionDbId);
     const result = await runFreshSummarizeQuery(deps, {
       memorySessionId: sessionRow.memory_session_id,

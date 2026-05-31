@@ -2,10 +2,17 @@
  * Per-session adaptive observation-cap policy.
  *
  * Each SDK session gets its own cap on how many observations are embedded
- * into the fresh-summarize prompt. The cap shrinks on failure and resets on
- * success. At the floor (1 obs), N consecutive failures trigger a recovery
- * jump back to sequence[1] (one halving below the configured default) so we
- * don't stay stuck at "1 obs" after a transient failure cleared.
+ * into the fresh-summarize prompt. The cap shrinks on failure and HOLDS on
+ * success — a dense session that only summarizes at a reduced cap stays there
+ * for its lifetime instead of resetting to the top, re-failing, and stepping
+ * down again on every single summary (the 150→fail→75→reset→150 oscillation
+ * that burned one subprocess crash per summary on long sessions). Capacity is
+ * reclaimed structurally rather than by probing up: the cap is per-session
+ * (every new session starts at the top) and the in-memory state clears on
+ * worker restart, so a reduced cap never leaks across sessions. At the floor
+ * (1 obs), N consecutive failures trigger a recovery jump back to sequence[1]
+ * (one halving below the configured default) so we don't stay stuck at
+ * "1 obs" after a transient failure cleared.
  *
  * Why adaptive instead of static: session 164 on ClaudeMem-ProjIso
  * accumulated 215 obs. Some projects succeed comfortably at cap=150, while
@@ -162,9 +169,16 @@ export class ObsCapPolicy {
     this.state.set(sessionDbId, cur);
   }
 
-  /** Record a successful summarize — resets cap to default. */
+  /**
+   * Record a successful summarize. Holds the session at its current (possibly
+   * reduced) cap rather than resetting to the top — see the class header for
+   * why the old reset-to-default caused per-summary oscillation on dense
+   * sessions. Clears floorFailureCount so a later failure starts a fresh
+   * stepdown streak from the held level rather than carrying a stale counter.
+   */
   recordSuccess(sessionDbId: number): void {
-    this.state.delete(sessionDbId);
+    const cur = this.state.get(sessionDbId);
+    if (cur) cur.floorFailureCount = 0;
   }
 
   /** Forget one session (or all, if id omitted). */

@@ -280,7 +280,7 @@ describe('SummaryLane: ObsCapPolicy wiring', () => {
     expect(captured.collected[1]).toContain('<observations count="40" total_this_session="200">');
   });
 
-  it('recordSuccess is called after a successful store (cap stays at default)', async () => {
+  it('recordSuccess is called after a successful store (cap holds at reduced level)', async () => {
     const { sessionDbId, contentSessionId } = seedSession(store);
     pendingStore.enqueue(sessionDbId, contentSessionId, {
       type: 'summarize',
@@ -289,7 +289,7 @@ describe('SummaryLane: ObsCapPolicy wiring', () => {
     });
 
     const policy = new ObsCapPolicy();
-    // Pre-set cap lower than default to assert success resets it.
+    // Pre-set cap lower than default to assert success HOLDS it (no reset).
     // sequence[1] = 150 halved = 75.
     policy.recordFailure(sessionDbId);
     expect(policy.getCapForSession(sessionDbId)).toBe(DEFAULT_STEP_SEQUENCE[1]);
@@ -307,7 +307,8 @@ describe('SummaryLane: ObsCapPolicy wiring', () => {
     await lane.stop();
 
     expect(broadcasts.length).toBe(1);
-    expect(policy.getCapForSession(sessionDbId)).toBe(DEFAULT_OBS_CAP);
+    // Held at the reduced cap after success (no reset to DEFAULT_OBS_CAP).
+    expect(policy.getCapForSession(sessionDbId)).toBe(DEFAULT_STEP_SEQUENCE[1]);
   });
 
   // Timeout bumped to 30s: full retry chain is 3×2s abortableSleep + claim

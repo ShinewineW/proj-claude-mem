@@ -10,8 +10,10 @@
  *   - recordFailure: step cap to next smaller value; at floor (1), stays
  *     until FAILURES_AT_FLOOR_BEFORE_RECOVERY consecutive floor failures
  *     trigger a jump back to sequence[1] (halved from cap).
- *   - recordSuccess: reset to default — the whole sequence unwinds on any
- *     Claude-authored summary.
+ *   - recordSuccess: holds the session at its current cap (no reset to the
+ *     top) so a dense session that only summarizes at a reduced cap doesn't
+ *     reset, re-fail, and step down again on every summary. Clears the floor
+ *     failure counter. Per-session state + worker restart reclaim capacity.
  *   - reset(id) / reset(): per-session or global state drop.
  *
  * Why adaptive vs. static cap: static 150 works on many sessions but
@@ -226,31 +228,41 @@ describe('ObsCapPolicy.recordFailure: step down sequence', () => {
   });
 });
 
-describe('ObsCapPolicy.recordSuccess: reset to default', () => {
+describe('ObsCapPolicy.recordSuccess: holds current cap', () => {
   let policy: ObsCapPolicy;
   beforeEach(() => { policy = new ObsCapPolicy(); });
 
-  it('resets cap to default (150) after success at any level', () => {
+  it('holds cap at current level after success (no reset to default)', () => {
     policy.recordFailure(1);
     policy.recordFailure(1);
     expect(policy.getCapForSession(1)).toBe(DEFAULT_STEP_SEQUENCE[2]);
     policy.recordSuccess(1);
-    expect(policy.getCapForSession(1)).toBe(DEFAULT_OBS_CAP);
+    // Held at the reduced level, NOT reset to DEFAULT_OBS_CAP — this is what
+    // stops the 150→fail→75→reset→150 per-summary oscillation on dense sessions.
+    expect(policy.getCapForSession(1)).toBe(DEFAULT_STEP_SEQUENCE[2]);
   });
 
-  it('resets floor-counter too — next failure starts from index 1', () => {
+  it('clears floor-counter on success — recovery needs a fresh failure streak', () => {
+    const floorCap = DEFAULT_STEP_SEQUENCE[DEFAULT_STEP_SEQUENCE.length - 1];
+    // Step down to floor, then a success holds at floor and clears the counter.
     for (let i = 1; i < DEFAULT_STEP_SEQUENCE.length; i++) policy.recordFailure(1);
+    expect(policy.getCapForSession(1)).toBe(floorCap);
     policy.recordSuccess(1);
-    expect(policy.getCapForSession(1)).toBe(DEFAULT_OBS_CAP);
+    expect(policy.getCapForSession(1)).toBe(floorCap);
+    // With the counter cleared it takes the FULL threshold to trigger the
+    // floor-recovery jump — fewer-than-threshold failures stay at floor.
+    for (let i = 0; i < FAILURES_AT_FLOOR_BEFORE_RECOVERY - 1; i++) policy.recordFailure(1);
+    expect(policy.getCapForSession(1)).toBe(floorCap);
     policy.recordFailure(1);
     expect(policy.getCapForSession(1)).toBe(DEFAULT_STEP_SEQUENCE[1]);
   });
 
   it('success on one session does not affect another', () => {
     policy.recordFailure(1);
-    policy.recordFailure(2);
-    policy.recordSuccess(1);
-    expect(policy.getCapForSession(1)).toBe(DEFAULT_OBS_CAP);
+    policy.recordFailure(1);   // session 1 → index 2
+    policy.recordFailure(2);   // session 2 → index 1
+    policy.recordSuccess(1);   // session 1 holds at index 2
+    expect(policy.getCapForSession(1)).toBe(DEFAULT_STEP_SEQUENCE[2]);
     expect(policy.getCapForSession(2)).toBe(DEFAULT_STEP_SEQUENCE[1]);
   });
 });
