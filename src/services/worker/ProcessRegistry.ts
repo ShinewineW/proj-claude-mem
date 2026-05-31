@@ -31,6 +31,14 @@ interface TrackedProcess {
   dbPath?: string;  // Per-project DB path for composite key session lookup
 }
 
+interface ClaudeSpawnOptions {
+  command: string;
+  args: string[];
+  cwd?: string;
+  env?: NodeJS.ProcessEnv;
+  signal?: AbortSignal;
+}
+
 // PID Registry - tracks spawned Claude subprocesses
 export const processRegistry = new Map<number, TrackedProcess>();
 
@@ -345,6 +353,87 @@ export async function reapOrphanedProcesses(activeSessionIds: Set<number>): Prom
   return killed;
 }
 
+function spawnClaudeChild(spawnOptions: ClaudeSpawnOptions): ChildProcess {
+  // On Windows, use cmd.exe wrapper for .cmd files to properly handle paths with spaces.
+  const useCmdWrapper = process.platform === 'win32' && spawnOptions.command.endsWith('.cmd');
+
+  // Pair-aware filter: when the SDK emits `["--setting-sources", ""]`
+  // (happens when settingSources defaults to []), dropping only the empty
+  // string leaves --setting-sources orphaned and Claude consumes the next flag
+  // as its value. See tests/worker/spawn-args-filter.test.ts.
+  const args = filterEmptyFlagPairs(spawnOptions.args);
+
+  return useCmdWrapper
+    ? spawn('cmd.exe', ['/d', '/c', spawnOptions.command, ...args], {
+        cwd: spawnOptions.cwd,
+        env: spawnOptions.env,
+        stdio: ['pipe', 'pipe', 'pipe'],
+        signal: spawnOptions.signal,
+        windowsHide: true
+      })
+    : spawn(spawnOptions.command, args, {
+        cwd: spawnOptions.cwd,
+        env: spawnOptions.env,
+        stdio: ['pipe', 'pipe', 'pipe'],
+        signal: spawnOptions.signal, // CRITICAL: Pass signal for AbortController integration
+        windowsHide: true
+      });
+}
+
+function captureStderrTail(child: ChildProcess, label: string): () => string | undefined {
+  let stderrTail = '';
+  if (child.stderr) {
+    child.stderr.on('data', (data: Buffer) => {
+      const chunk = data.toString();
+      logger.debug('SDK_SPAWN', `[${label}] stderr: ${chunk.trim()}`);
+      stderrTail = (stderrTail + chunk).slice(-2048);
+    });
+  }
+  return () => stderrTail.trim() || undefined;
+}
+
+function toSdkProcess(child: ChildProcess) {
+  return {
+    stdin: child.stdin,
+    stdout: child.stdout,
+    stderr: child.stderr,
+    get killed() { return child.killed; },
+    get exitCode() { return child.exitCode; },
+    kill: child.kill.bind(child),
+    on: child.on.bind(child),
+    once: child.once.bind(child),
+    off: child.off.bind(child)
+  };
+}
+
+/**
+ * Create a custom SDK spawn function that surfaces a bounded stderr tail on
+ * non-zero exit WITHOUT registering the process in ProcessRegistry.
+ *
+ * SummaryLane uses this for fresh-summarize: we want crash diagnostics, but
+ * registering the fresh subprocess under the host session lets observer pool
+ * stale-session reclamation SIGKILL it while it is still running.
+ */
+export function createUntrackedStderrTailSpawn(label: string) {
+  return (spawnOptions: ClaudeSpawnOptions) => {
+    const child = spawnClaudeChild(spawnOptions);
+    const getStderrTail = captureStderrTail(child, label);
+
+    child.on('exit', (code: number | null, signal: string | null) => {
+      if (code !== 0) {
+        logger.warn('SDK_SPAWN', `[${label}] Claude process exited`, {
+          code,
+          signal,
+          pid: child.pid,
+          stderrTail: getStderrTail(),
+        });
+      }
+    });
+
+    return toSdkProcess(child);
+  };
+}
+
 /**
  * Create a custom spawn function for SDK that captures PIDs
  *
@@ -355,54 +444,15 @@ export async function reapOrphanedProcesses(activeSessionIds: Set<number>): Prom
  * NOT via CLAUDE_CONFIG_DIR (which breaks authentication).
  */
 export function createPidCapturingSpawn(sessionDbId: number, dbPath?: string) {
-  return (spawnOptions: {
-    command: string;
-    args: string[];
-    cwd?: string;
-    env?: NodeJS.ProcessEnv;
-    signal?: AbortSignal;
-  }) => {
-    // On Windows, use cmd.exe wrapper for .cmd files to properly handle paths with spaces
-    const useCmdWrapper = process.platform === 'win32' && spawnOptions.command.endsWith('.cmd');
-
-    // Pair-aware filter: when the SDK emits `["--setting-sources", ""]`
-    // (happens when settingSources defaults to []), dropping only the
-    // empty string leaves the --setting-sources flag orphaned — CLI argparse
-    // then consumes the NEXT flag (--permission-mode) as its value and
-    // Claude exits with code 1 at startup:
-    //   Error processing --setting-sources: Invalid setting source: --permission-mode
-    // See tests/worker/spawn-args-filter.test.ts for the specific scenario.
-    const args = filterEmptyFlagPairs(spawnOptions.args);
-
-    const child = useCmdWrapper
-      ? spawn('cmd.exe', ['/d', '/c', spawnOptions.command, ...args], {
-          cwd: spawnOptions.cwd,
-          env: spawnOptions.env,
-          stdio: ['pipe', 'pipe', 'pipe'],
-          signal: spawnOptions.signal,
-          windowsHide: true
-        })
-      : spawn(spawnOptions.command, args, {
-          cwd: spawnOptions.cwd,
-          env: spawnOptions.env,
-          stdio: ['pipe', 'pipe', 'pipe'],
-          signal: spawnOptions.signal, // CRITICAL: Pass signal for AbortController integration
-          windowsHide: true
-        });
+  return (spawnOptions: ClaudeSpawnOptions) => {
+    const child = spawnClaudeChild(spawnOptions);
 
     // Capture stderr for debugging spawn failures. The per-chunk DEBUG line is
     // gated out at INFO level, so we also retain a bounded tail of recent stderr
     // and surface it on non-zero exit (where the CLI prints WHY it bailed —
     // e.g. usage limit, auth, arg errors). 2KB is enough for the final message
     // without unbounded growth on long-lived observer subprocesses.
-    let stderrTail = '';
-    if (child.stderr) {
-      child.stderr.on('data', (data: Buffer) => {
-        const chunk = data.toString();
-        logger.debug('SDK_SPAWN', `[session-${sessionDbId}] stderr: ${chunk.trim()}`);
-        stderrTail = (stderrTail + chunk).slice(-2048);
-      });
-    }
+    const getStderrTail = captureStderrTail(child, `session-${sessionDbId}`);
 
     // Register PID
     if (child.pid) {
@@ -415,7 +465,7 @@ export function createPidCapturingSpawn(sessionDbId: number, dbPath?: string) {
             code,
             signal,
             pid: child.pid,
-            stderrTail: stderrTail.trim() || undefined,
+            stderrTail: getStderrTail(),
           });
         }
         if (child.pid) {
@@ -425,17 +475,7 @@ export function createPidCapturingSpawn(sessionDbId: number, dbPath?: string) {
     }
 
     // Return SDK-compatible interface
-    return {
-      stdin: child.stdin,
-      stdout: child.stdout,
-      stderr: child.stderr,
-      get killed() { return child.killed; },
-      get exitCode() { return child.exitCode; },
-      kill: child.kill.bind(child),
-      on: child.on.bind(child),
-      once: child.once.bind(child),
-      off: child.off.bind(child)
-    };
+    return toSdkProcess(child);
   };
 }
 

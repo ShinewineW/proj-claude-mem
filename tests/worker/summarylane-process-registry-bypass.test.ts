@@ -12,10 +12,11 @@
  *   hook triggered summarize at session close), so "observer idle" is the
  *   steady-state — every fresh subprocess would be killed within 30s.
  *
- *   Fix: pass `spawnClaudeCodeProcess: undefined` so the Agent SDK uses its
- *   built-in spawn (no PID tracking). Shutdown cancellation still works via
- *   `input.signal → buildFreshSummarizeDeps` → AbortController. The 5-min
- *   orphan reaper remains as the ultimate safety net.
+ *   Fix: use an untracked stderr-tail spawn wrapper instead of
+ *   createPidCapturingSpawn. That keeps fresh-summarize out of ProcessRegistry
+ *   while still surfacing child stderr on non-zero exit. Shutdown cancellation
+ *   still works via `input.signal → buildFreshSummarizeDeps` →
+ *   AbortController. The 5-min orphan reaper remains as the ultimate safety net.
  *
  * This bug was observed on this local machine too — tests/worker logs
  * 2026-04-22 09:05 show `signal=SIGKILL` on session-164 subprocesses during
@@ -37,17 +38,18 @@ describe('SummaryLane: fresh subprocess is NOT registered in ProcessRegistry', (
     // Regression guard: if you re-wire createPidCapturingSpawn into the
     // fresh summarize deps, the observer pool's stale-slot reclaim will
     // SIGKILL the fresh subprocess within 30s of the host session closing.
-    // Use `spawnClaudeCodeProcess: undefined` (or omit the key) to keep
-    // fresh subprocesses out of ProcessRegistry.
+    // Use the untracked stderr-tail spawn wrapper to keep fresh subprocesses
+    // out of ProcessRegistry while preserving crash diagnostics.
     expect(src).not.toMatch(
       /spawnClaudeCodeProcess:\s*createPidCapturingSpawn\s*\(/,
     );
   });
 
-  it('buildDeps explicitly sets spawnClaudeCodeProcess to undefined', () => {
+  it('buildDeps uses the untracked stderr-tail spawn wrapper', () => {
     // Positive pin: the current mitigation must remain in place. Any future
     // refactor that removes this line without replacing the protection will
     // trip this test — forcing the author to read the comment above.
-    expect(src).toMatch(/spawnClaudeCodeProcess:\s*undefined/);
+    expect(src).toContain('createUntrackedStderrTailSpawn');
+    expect(src).toMatch(/spawnClaudeCodeProcess:\s*createUntrackedStderrTailSpawn\(/);
   });
 });

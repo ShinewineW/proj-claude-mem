@@ -25,7 +25,7 @@ export interface BuildFreshSummarizeDepsInput {
   isolatedEnv: NodeJS.ProcessEnv;
   cwd: string;
   pathToClaudeCodeExecutable: string;
-  /** Optional pid-capturing spawn wrapper; omitted for test doubles. */
+  /** Optional SDK spawn wrapper; fresh-summarize uses an untracked stderr-tail wrapper. */
   spawnClaudeCodeProcess?: FreshSummarizeDeps['spawnClaudeCodeProcess'];
 }
 

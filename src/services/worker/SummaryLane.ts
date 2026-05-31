@@ -26,7 +26,7 @@ import { buildFreshSummarizeDeps } from './fresh-summarize-deps.js';
 import { runFreshSummarizeQuery } from './fresh-summarize.js';
 import { storeFreshSummaryForSession, type StoreFreshSummaryResult } from './fresh-summarize-store.js';
 import { findClaudeExecutable } from './claude-exec.js';
-import { createPidCapturingSpawn } from './ProcessRegistry.js';
+import { createUntrackedStderrTailSpawn } from './ProcessRegistry.js';
 import { ModeManager } from '../domain/ModeManager.js';
 import { getWorkerPort } from '../../shared/worker-utils.js';
 import { updateCursorContextForProject } from '../integrations/CursorHooksInstaller.js';
@@ -627,14 +627,15 @@ export class SummaryLane {
       cwd: OBSERVER_SESSIONS_DIR,
       pathToClaudeCodeExecutable: findClaudeExecutable(),
       // Fresh-query subprocess is intentionally NOT registered into
-      // ProcessRegistry. Registering under input.sessionDbId lets the
-      // observer pool's `waitForSlot → isProcessStale` reclaim it as
+      // ProcessRegistry. This untracked wrapper only preserves stderr-tail
+      // diagnostics for non-zero exits. Registering under input.sessionDbId
+      // lets the observer pool's `waitForSlot -> isProcessStale` reclaim it as
       // "stale" when the host session has been idle >30s, SIGKILLing
       // an in-flight summary subprocess and producing status=no_text.
       // The AbortController plumbing (input.signal → buildFreshSummarizeDeps)
       // still cancels on shutdown; the 5-min orphan reaper remains as a
       // safety net. See docs/spec/2026-04-22-claude-mem-summarylane-fixes.md §2.
-      spawnClaudeCodeProcess: undefined,
+      spawnClaudeCodeProcess: createUntrackedStderrTailSpawn(`fresh-summarize-session-${input.sessionDbId}`),
     });
   }
 

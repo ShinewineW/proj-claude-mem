@@ -53,8 +53,9 @@ export interface FreshSummarizeDeps {
   /** Path to the `claude` executable (from findClaudeExecutable). */
   pathToClaudeCodeExecutable: string;
   /**
-   * Optional: pid-capturing spawn wrapper. When present, the SDK uses it so
-   * ProcessRegistry can track/kill the fresh subprocess. Omitted in tests.
+   * Optional SDK spawn wrapper. SummaryLane supplies an untracked wrapper so
+   * fresh-summarize can log stderr-tail diagnostics without entering
+   * ProcessRegistry.
    */
   spawnClaudeCodeProcess?: (spawnOptions: unknown) => unknown;
 }

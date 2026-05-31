@@ -4,8 +4,8 @@
  * Wires the adaptive cap policy into the summarize pipeline:
  *   - Before each runFreshSummarizeQuery call, read `getCapForSession(id)`
  *     and pass it as `maxObservations`.
- *   - On successful store, call `recordSuccess(id)` so the cap resets to
- *     the configured default (150 by default).
+ *   - On successful store, call `recordSuccess(id)` so the cap holds at the
+ *     current successful level and avoids per-summary top-cap oscillation.
  *   - On every failure, call `recordFailure(id)` so retries within the same
  *     message probe progressively smaller caps instead of repeating the same
  *     oversized prompt.
