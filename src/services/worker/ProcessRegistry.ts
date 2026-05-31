@@ -390,10 +390,17 @@ export function createPidCapturingSpawn(sessionDbId: number, dbPath?: string) {
           windowsHide: true
         });
 
-    // Capture stderr for debugging spawn failures
+    // Capture stderr for debugging spawn failures. The per-chunk DEBUG line is
+    // gated out at INFO level, so we also retain a bounded tail of recent stderr
+    // and surface it on non-zero exit (where the CLI prints WHY it bailed —
+    // e.g. usage limit, auth, arg errors). 2KB is enough for the final message
+    // without unbounded growth on long-lived observer subprocesses.
+    let stderrTail = '';
     if (child.stderr) {
       child.stderr.on('data', (data: Buffer) => {
-        logger.debug('SDK_SPAWN', `[session-${sessionDbId}] stderr: ${data.toString().trim()}`);
+        const chunk = data.toString();
+        logger.debug('SDK_SPAWN', `[session-${sessionDbId}] stderr: ${chunk.trim()}`);
+        stderrTail = (stderrTail + chunk).slice(-2048);
       });
     }
 
@@ -404,7 +411,12 @@ export function createPidCapturingSpawn(sessionDbId: number, dbPath?: string) {
       // Auto-unregister on exit
       child.on('exit', (code: number | null, signal: string | null) => {
         if (code !== 0) {
-          logger.warn('SDK_SPAWN', `[session-${sessionDbId}] Claude process exited`, { code, signal, pid: child.pid });
+          logger.warn('SDK_SPAWN', `[session-${sessionDbId}] Claude process exited`, {
+            code,
+            signal,
+            pid: child.pid,
+            stderrTail: stderrTail.trim() || undefined,
+          });
         }
         if (child.pid) {
           unregisterProcess(child.pid);
