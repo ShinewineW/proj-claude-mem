@@ -33,6 +33,9 @@ class Logger {
   private useColor: boolean;
   private logFilePath: string | null = null;
   private logFileInitialized: boolean = false;
+  // Date (YYYY-MM-DD) the current logFilePath was opened for. Used to roll to a
+  // new dated file when a long-running process crosses midnight.
+  private logFileDate: string | null = null;
 
   constructor() {
     // Disable colors when output is not a TTY (e.g., PM2 logs)
@@ -44,8 +47,16 @@ class Logger {
    * Initialize log file path and ensure directory exists (lazy initialization)
    */
   private ensureLogFileInitialized(): void {
-    if (this.logFileInitialized) return;
+    // Re-evaluate the date every call so a long-running process (e.g. the
+    // worker daemon, up for days) rolls to a fresh dated file at midnight
+    // instead of appending every line into its startup-day log forever.
+    const date = new Date().toISOString().split('T')[0];
+    if (this.logFileInitialized && this.logFileDate === date) return;
+    // Mark attempted for this date before the side-effecting work below: on
+    // failure we keep falling back to stderr (logFilePath=null) and won't retry
+    // until the date changes — preserving the original "no retry storm" intent.
     this.logFileInitialized = true;
+    this.logFileDate = date;
 
     try {
       // Use default data directory to avoid circular dependency with SettingsDefaultsManager
@@ -57,11 +68,10 @@ class Logger {
         mkdirSync(logsDir, { recursive: true });
       }
 
-      // Clean up old log files (> 7 days)
+      // Clean up old log files (> 7 days) — runs on first init and on each roll
       cleanupOldLogs(logsDir);
 
       // Create log file path with date
-      const date = new Date().toISOString().split('T')[0];
       this.logFilePath = join(logsDir, `claude-mem-${date}.log`);
     } catch (error) {
       // If log file initialization fails, just log to console
