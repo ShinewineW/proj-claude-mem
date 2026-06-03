@@ -385,6 +385,9 @@ export async function generateClaudeMd(dryRun: boolean): Promise<number> {
     }
 
     const db = new Database(dbPath, { readonly: true, create: false });
+    // Even a reader can hit SQLITE_BUSY during a WAL checkpoint/recovery; wait
+    // rather than fail fast (see SessionStore ctor for the shared-file rationale).
+    db.run('PRAGMA busy_timeout = 5000');
 
     let successCount = 0;
     let skipCount = 0;

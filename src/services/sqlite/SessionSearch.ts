@@ -31,6 +31,9 @@ export class SessionSearch {
       ensureDir(dirname(dbPath));
     }
     this.db = new Database(dbPath);
+    // Wait for contended locks instead of failing fast with SQLITE_BUSY — see
+    // SessionStore constructor for the shared-file rationale.
+    this.db.run('PRAGMA busy_timeout = 5000');
     this.db.run('PRAGMA journal_mode = WAL');
 
     // Ensure FTS tables exist

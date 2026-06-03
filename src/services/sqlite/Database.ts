@@ -186,6 +186,9 @@ export class ClaudeMemDatabase {
    */
   private openAndConfigure(dbPath: string): Database {
     const db = new Database(dbPath, { create: true, readwrite: true });
+    // busy_timeout first: wait for contended locks rather than failing fast
+    // with SQLITE_BUSY — see SessionStore constructor for the rationale.
+    db.run('PRAGMA busy_timeout = 5000');
     db.run('PRAGMA journal_mode = WAL');
     db.run('PRAGMA synchronous = NORMAL');
     db.run('PRAGMA foreign_keys = ON');
@@ -241,7 +244,9 @@ export class DatabaseManager {
 
     this.db = new Database(DB_PATH, { create: true, readwrite: true });
 
-    // Apply optimized SQLite settings
+    // Apply optimized SQLite settings. busy_timeout first: wait for contended
+    // locks rather than failing fast with SQLITE_BUSY (see SessionStore ctor).
+    this.db.run('PRAGMA busy_timeout = 5000');
     this.db.run('PRAGMA journal_mode = WAL');
     this.db.run('PRAGMA synchronous = NORMAL');
     this.db.run('PRAGMA foreign_keys = ON');

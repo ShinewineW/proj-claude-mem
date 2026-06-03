@@ -28,6 +28,13 @@ export class SessionStore {
     }
     this.db = new Database(dbPath);
 
+    // Set busy_timeout FIRST so the WAL switch, migrations, and every later
+    // write wait up to 5s for a contended lock instead of failing fast with
+    // SQLITE_BUSY ("database is locked"). Multiple processes share this file
+    // (worker daemon + per-hook node processes + MCP search server), so brief
+    // write collisions are normal; without a busy timeout they surface as hard
+    // errors that crash the observer generator / strand summarize rows.
+    this.db.run('PRAGMA busy_timeout = 5000');
     // Ensure optimized settings
     this.db.run('PRAGMA journal_mode = WAL');
     this.db.run('PRAGMA synchronous = NORMAL');
