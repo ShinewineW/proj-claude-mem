@@ -359,8 +359,18 @@ export class SDKAgent {
           ) {
             logger.error(
               "SDK",
-              "Context overflow detected - terminating session",
+              "Context overflow detected - terminating session and forcing fresh start",
+              { sessionDbId: session.sessionDbId },
             );
+            // Resuming this SDK session would overflow forever. Null the memory
+            // session id and force a fresh init so the next spawn drains the
+            // remaining pending messages successfully (#2088). Complementary to
+            // Layer-C proactive reset (which fires preemptively by thresholds).
+            this.dbManager
+              .getSessionStore(session.dbPath)
+              .updateMemorySessionId(session.sessionDbId, null);
+            session.memorySessionId = null;
+            session.forceInit = true;
             session.abortController.abort();
             return;
           }
