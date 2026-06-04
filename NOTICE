@@ -1,0 +1,16 @@
+proj-claude-mem
+Copyright (C) 2024–2026 ShinewineW and contributors
+
+This fork incorporates code from claude-mem (https://github.com/thedotmack/claude-mem),
+Copyright (C) 2024 Alex Newman, licensed under the Apache License, Version 2.0.
+
+Portions of this software derived from Apache-2.0-licensed upstream commits are identified
+per-file via SPDX-License-Identifier: AGPL-3.0 headers for AGPL-3.0 portions (the fork's
+primary license) and are indexed in docs/PROVENANCE.md by fork commit, upstream hash, and
+source license.
+
+Apache-2.0 licensed portions remain sublicensable under Apache-2.0 as permitted by that
+license. The combined work as distributed by this repository is licensed under the
+GNU Affero General Public License, Version 3.0 (AGPL-3.0).
+
+SPDX-License-Identifier: AGPL-3.0
