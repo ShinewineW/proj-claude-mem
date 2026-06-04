@@ -7,7 +7,7 @@
 
 import express, { Request, Response } from 'express';
 import path from 'path';
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, chmodSync } from 'fs';
 import { homedir } from 'os';
 import { logger } from '../../../../utils/logger.js';
 import { BaseRouteHandler } from '../BaseRouteHandler.js';
@@ -132,8 +132,12 @@ export class SettingsRoutes extends BaseRouteHandler {
       }
     }
 
-    // Write back
-    writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf-8');
+    // Write back. settings.json holds CLAUDE_MEM_*_API_KEY values, so restrict
+    // to owner-only (same policy as ~/.claude-mem/.env). The writeFileSync mode
+    // only applies on creation; chmodSync fixes pre-existing files. No-op on
+    // Windows (ACL-controlled).
+    writeFileSync(settingsPath, JSON.stringify(settings, null, 2), { encoding: 'utf-8', mode: 0o600 });
+    chmodSync(settingsPath, 0o600);
 
     // Clear port cache to force re-reading from updated settings
     clearPortCache();

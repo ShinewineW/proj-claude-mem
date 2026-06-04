@@ -9,7 +9,7 @@
  * causing memory operations to bill personal API accounts instead of CLI subscription.
  */
 
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync, chmodSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 import { logger } from '../utils/logger.js';
@@ -140,10 +140,16 @@ export function loadClaudeMemEnv(): ClaudeMemEnv {
  */
 export function saveClaudeMemEnv(env: ClaudeMemEnv): void {
   try {
-    // Ensure directory exists
+    // Ensure directory exists with restricted permissions (owner only).
     if (!existsSync(DATA_DIR)) {
-      mkdirSync(DATA_DIR, { recursive: true });
+      mkdirSync(DATA_DIR, { recursive: true, mode: 0o700 });
     }
+    // The mkdirSync `mode` option only applies at creation time; if DATA_DIR
+    // already exists, that mode param is silently ignored. chmodSync therefore
+    // explicitly tightens pre-existing dirs. Do NOT remove it thinking
+    // mkdirSync's mode covers the existing-dir case — it does not.
+    // No-op on Windows (permissions are ACL-controlled, not POSIX).
+    chmodSync(DATA_DIR, 0o700);
 
     // Load existing to preserve any extra keys
     const existing = existsSync(ENV_FILE_PATH)
@@ -183,7 +189,12 @@ export function saveClaudeMemEnv(env: ClaudeMemEnv): void {
       }
     }
 
-    writeFileSync(ENV_FILE_PATH, serializeEnvFile(updated), 'utf-8');
+    writeFileSync(ENV_FILE_PATH, serializeEnvFile(updated), { encoding: 'utf-8', mode: 0o600 });
+    // writeFileSync's `mode` only applies when the file is newly created
+    // (O_CREAT); for a pre-existing .env it is silently ignored, so chmodSync
+    // explicitly fixes pre-existing files. Required — do not drop. No-op on
+    // Windows (ACL-controlled).
+    chmodSync(ENV_FILE_PATH, 0o600);
   } catch (error) {
     logger.error('ENV', 'Failed to save .env file', { path: ENV_FILE_PATH }, error as Error);
     throw error;

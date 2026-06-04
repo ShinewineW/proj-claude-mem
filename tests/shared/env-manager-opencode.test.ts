@@ -34,7 +34,7 @@ describe('EnvManager — OPENCODE_API_KEY support', () => {
   it('saveClaudeMemEnv source mentions OPENCODE_API_KEY (so updates persist to file)', () => {
     const src = readFileSync('src/shared/EnvManager.ts', 'utf-8');
     const saveStart = src.indexOf('export function saveClaudeMemEnv');
-    const saveBody = src.slice(saveStart, saveStart + 1500);
+    const saveBody = src.slice(saveStart, saveStart + 2000);
     expect(saveBody).toContain('OPENCODE_API_KEY');
   });
 });
