@@ -86,6 +86,35 @@ export class SessionRoutes extends BaseRouteHandler {
 
     const key = this.spawnKey(sessionDbId, dbPath);
 
+    // Wall-clock age guard: refuse new generators for sessions alive too long, to
+    // cap runaway API spend (#1590). Use persisted started_at_epoch (milliseconds
+    // since epoch — same unit as Date.now()) so the guard survives worker restarts
+    // (session.startTime resets on every re-activation).
+    const settingsForAge = SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH);
+    const maxAgeMs = parseInt(settingsForAge.CLAUDE_MEM_SESSION_MAX_AGE_MS, 10) || 14400000;
+    const dbSessionRecord = this.dbManager.getSessionStore(session.dbPath).db
+      .prepare('SELECT started_at_epoch FROM sdk_sessions WHERE id = ? LIMIT 1')
+      .get(sessionDbId) as { started_at_epoch: number } | undefined;
+    // started_at_epoch and session.startTime are BOTH milliseconds — no conversion.
+    const sessionOriginMs = dbSessionRecord?.started_at_epoch ?? session.startTime;
+    const sessionAgeMs = Date.now() - sessionOriginMs;
+    if (sessionAgeMs > maxAgeMs) {
+      logger.warn('SESSION', 'Session exceeded wall-clock age limit — aborting to prevent runaway spend', {
+        sessionId: sessionDbId,
+        ageHours: Math.round(sessionAgeMs / 3_600_000 * 10) / 10,
+        limitHours: maxAgeMs / 3_600_000,
+        source
+      });
+      if (!session.abortController.signal.aborted) {
+        session.abortController.abort();
+      }
+      this.bypassLane?.stopForSession(sessionDbId); // Mirror stale-recovery teardown ordering (line 139)
+      const pendingStore = this.sessionManager.getPendingMessageStore(session.dbPath);
+      pendingStore.markAllSessionMessagesAbandoned(sessionDbId);
+      this.sessionManager.removeSessionImmediate(sessionDbId, session.dbPath);
+      return;
+    }
+
     // GUARD: Prevent duplicate spawns
     if (this.spawnInProgress.get(key)) {
       logger.debug('SESSION', 'Spawn already in progress, skipping', { sessionDbId, source });

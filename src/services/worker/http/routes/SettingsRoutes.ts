@@ -124,6 +124,8 @@ export class SettingsRoutes extends BaseRouteHandler {
       'CLAUDE_MEM_MAX_HISTORY_TOKENS',
       // SummaryLane adaptive observation cap
       'CLAUDE_MEM_MAX_SUMMARY_OBSERVATIONS',
+      // Session lifecycle guard
+      'CLAUDE_MEM_SESSION_MAX_AGE_MS',
     ];
 
     for (const key of settingKeys) {

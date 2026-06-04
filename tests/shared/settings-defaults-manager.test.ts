@@ -496,3 +496,13 @@ describe('SettingsDefaultsManager', () => {
     });
   });
 });
+
+describe('CLAUDE_MEM_SESSION_MAX_AGE_MS default', () => {
+  const SRC = readFileSync(join(import.meta.dir, '../../src/shared/SettingsDefaultsManager.ts'), 'utf-8');
+  it('declares the setting in the SettingsDefaults interface', () => {
+    expect(SRC).toContain('CLAUDE_MEM_SESSION_MAX_AGE_MS: string;');
+  });
+  it('defaults to 4 hours (14400000 ms)', () => {
+    expect(SRC).toContain('CLAUDE_MEM_SESSION_MAX_AGE_MS: "14400000"');
+  });
+});

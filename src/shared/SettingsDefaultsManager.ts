@@ -90,6 +90,8 @@ export interface SettingsDefaults {
   CLAUDE_MEM_MAX_HISTORY_TOKENS: string;    // Max estimated tokens before proactive reset
   // SummaryLane adaptive observation cap
   CLAUDE_MEM_MAX_SUMMARY_OBSERVATIONS: string; // Default cap on obs embedded in fresh-summarize prompt (first step of adaptive sequence)
+  // Session lifecycle guard
+  CLAUDE_MEM_SESSION_MAX_AGE_MS: string; // Wall-clock age (ms) after which a session refuses new generators (#1590)
 }
 
 export class SettingsDefaultsManager {
@@ -180,6 +182,9 @@ export class SettingsDefaultsManager {
     // becomes [150, 75, 37, 18, 9, 4, 2, 1]. Setting values <= 0 or
     // non-numeric fall back to 150 defensively.
     CLAUDE_MEM_MAX_SUMMARY_OBSERVATIONS: "150",
+    // Session lifecycle guard: 4 hours. Sessions older than this refuse new
+    // generators and drain their queue, capping runaway API spend (#1590).
+    CLAUDE_MEM_SESSION_MAX_AGE_MS: "14400000",
   };
 
   /**

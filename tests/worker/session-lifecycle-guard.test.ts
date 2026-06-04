@@ -98,3 +98,31 @@ describe('ProcessRegistry kill-duplicate-before-spawn (source)', () => {
     expect(SRC).toContain('Killing duplicate process PID');
   });
 });
+
+describe('Wall-clock age cap (#1590)', () => {
+  const MAX = 14_400_000; // 4h default
+  it('does NOT terminate a session younger than the cap', () => {
+    const origin = Date.now() - 30 * 60 * 1000; // 30m
+    expect(Date.now() - origin).toBeLessThan(MAX);
+  });
+  it('uses strict > so exactly the cap is still alive', () => {
+    const origin = Date.now() - MAX;
+    expect(Date.now() - origin).toBeLessThanOrEqual(MAX);
+  });
+  it('terminates a session older than the cap', () => {
+    const origin = Date.now() - MAX - 1;
+    expect(Date.now() - origin).toBeGreaterThan(MAX);
+  });
+
+  // Source guard tying the production wiring to a RED:
+  const SRC = readFileSync(join(import.meta.dir, '../../src/services/worker/http/routes/SessionRoutes.ts'), 'utf-8');
+  it('reads CLAUDE_MEM_SESSION_MAX_AGE_MS for the cap', () => {
+    expect(SRC).toContain('CLAUDE_MEM_SESSION_MAX_AGE_MS');
+  });
+  it('queries persisted started_at_epoch for the age', () => {
+    expect(SRC).toContain('started_at_epoch FROM sdk_sessions');
+  });
+  it('drains the queue via markAllSessionMessagesAbandoned on cap breach', () => {
+    expect(SRC).toContain('markAllSessionMessagesAbandoned(sessionDbId)');
+  });
+});
