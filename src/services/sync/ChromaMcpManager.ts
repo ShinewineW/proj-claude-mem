@@ -642,6 +642,12 @@ export class ChromaMcpManager {
       }
     }
 
+    // Disable Chroma's anonymous telemetry — it issues background HTTP from
+    // the embedding subprocess on every collection touch. Only set if the
+    // user hasn't pinned it explicitly. Must be set BEFORE the combinedCertPath
+    // early-return below so it applies to both the cert and no-cert paths.
+    if (!baseEnv.ANONYMIZED_TELEMETRY) baseEnv.ANONYMIZED_TELEMETRY = 'false';
+
     const combinedCertPath = this.getCombinedCertPath();
     if (!combinedCertPath) {
       return baseEnv;
