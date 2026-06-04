@@ -757,9 +757,27 @@ export class BypassLane {
     }
 
     // Parse observations from XML response
-    const observations = parseObservations(
+    const parsedObservations = parseObservations(
       responseText,
       session.contentSessionId,
+    );
+
+    // Ghost filter (parity with the main Claude SDK channel, ResponseProcessor.ts):
+    // drop observations whose every content field is null/empty. A true ghost is a
+    // context-overflow artifact (<observation><type>X</type></observation>) that would
+    // otherwise store as an "Untitled" row. Observations with ANY content are kept.
+    // Intentionally reuses ResponseProcessor's stricter predicate (also checks subtitle,
+    // files_read, files_modified) rather than upstream's narrower title+narrative+facts+concepts
+    // check — this is a conscious fork choice for tighter ghost rejection.
+    const observations = parsedObservations.filter(
+      (obs) =>
+        obs.title !== null ||
+        obs.narrative !== null ||
+        obs.subtitle !== null ||
+        obs.facts.length > 0 ||
+        obs.concepts.length > 0 ||
+        obs.files_read.length > 0 ||
+        obs.files_modified.length > 0,
     );
 
     // F1 fix: Throw on empty observations — consumeLoop catch calls markFailed + recordFailure.
