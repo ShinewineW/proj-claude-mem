@@ -332,4 +332,80 @@ finish`;
       expect(cleanedPrompt.trim()).toBe('Please help me with my code');
     });
   });
+
+  // NOTE (C2-F4): the tests below intentionally call BOTH stripMemoryTagsFromJson
+  // and stripMemoryTagsFromPrompt on the same kinds of content. The two names
+  // label the CALLER context (JSON-serialized payload vs. plain prompt text),
+  // NOT a behavioral difference — both wrappers delegate to the identical
+  // stripTagsInternal. Do not add divergent logic to one without the other.
+  describe('system-reminder tag stripping', () => {
+    it('should strip single <system-reminder> tag from prompt', () => {
+      const input = 'user content <system-reminder>CLAUDE.md contents here</system-reminder> more content';
+      const result = stripMemoryTagsFromPrompt(input);
+      expect(result).toBe('user content  more content');
+    });
+
+    it('should strip <system-reminder> mixed with other tag types', () => {
+      const input = '<system-reminder>reminder</system-reminder> public <private>secret</private> <claude-mem-context>ctx</claude-mem-context> end';
+      const result = stripMemoryTagsFromPrompt(input);
+      expect(result).toBe('public   end');
+    });
+
+    it('should return empty string for entirely <system-reminder> content', () => {
+      const input = '<system-reminder>entire content is a system reminder</system-reminder>';
+      const result = stripMemoryTagsFromPrompt(input);
+      expect(result).toBe('');
+    });
+
+    it('should strip <system-reminder> tags from JSON content', () => {
+      const jsonContent = JSON.stringify({
+        data: '<system-reminder>injected reminder</system-reminder> real data'
+      });
+      const result = stripMemoryTagsFromJson(jsonContent);
+      const parsed = JSON.parse(result);
+      expect(parsed.data).toBe(' real data');
+    });
+
+    it('should strip multiline content within <system-reminder> tags', () => {
+// IMPORTANT: this template literal is FLUSH-LEFT (no indentation on the
+// <system-reminder>/inner/after lines) so the expected output is the
+// upstream form 'before\n\nafter'. Do NOT indent the inner lines — that
+// would leave leading whitespace after `before\n` and the expectation
+// would no longer match. The de-indentation here is intentional.
+      const input = `before
+<system-reminder>
+Contents of /path/to/CLAUDE.md:
+
+<claude-mem-context>
+# Recent Activity
+- Item 1
+</claude-mem-context>
+</system-reminder>
+after`;
+      const result = stripMemoryTagsFromPrompt(input);
+      expect(result).toBe('before\n\nafter');
+    });
+
+    it('exports SYSTEM_REMINDER_REGEX matching the tag', () => {
+      const { SYSTEM_REMINDER_REGEX } = require('../../src/utils/tag-stripping.js');
+      expect('<system-reminder>x</system-reminder>'.replace(SYSTEM_REMINDER_REGEX, '')).toBe('');
+    });
+  });
+
+  describe('persisted-output tag stripping', () => {
+    it('should strip <persisted-output> tags from prompt', () => {
+      const input = 'public <persisted-output>large output</persisted-output> after';
+      const result = stripMemoryTagsFromPrompt(input);
+      expect(result).toBe('public  after');
+    });
+
+    it('should strip persisted-output tags from JSON', () => {
+      const jsonContent = JSON.stringify({
+        output: '<persisted-output>big output</persisted-output> keep'
+      });
+      const result = stripMemoryTagsFromJson(jsonContent);
+      const parsed = JSON.parse(result);
+      expect(parsed.output).toBe(' keep');
+    });
+  });
 });

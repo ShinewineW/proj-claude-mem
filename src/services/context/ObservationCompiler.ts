@@ -18,6 +18,7 @@ import type {
   PriorMessages,
 } from './types.js';
 import { SUMMARY_LOOKAHEAD } from './types.js';
+import { SYSTEM_REMINDER_REGEX } from '../../utils/tag-stripping.js';
 
 /**
  * Query observations from database with type and concept filtering
@@ -164,7 +165,7 @@ export function extractPriorMessages(transcriptPath: string): PriorMessages {
               text += block.text;
             }
           }
-          text = text.replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, '').trim();
+          text = text.replace(SYSTEM_REMINDER_REGEX, '').trim();
           if (text) {
             lastAssistantMessage = text;
             break;
