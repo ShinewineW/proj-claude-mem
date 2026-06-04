@@ -624,4 +624,28 @@ describe('ProcessManager', () => {
       expect(fs.existsSync(path.join(testDataDir, '.chroma-cleaned-v10.3'))).toBe(true);
     });
   });
+
+  describe('aggressiveStartupCleanup protected PIDs (#1426)', () => {
+    const SOURCE = fs.readFileSync(
+      path.join(import.meta.dir, '../../src/services/infrastructure/ProcessManager.ts'),
+      'utf-8'
+    );
+
+    it('builds a protectedPids set seeded with currentPid', () => {
+      expect(SOURCE).toContain('const protectedPids = new Set<number>([currentPid]);');
+    });
+
+    it('adds process.ppid to protectedPids', () => {
+      expect(SOURCE).toContain('protectedPids.add(process.ppid);');
+    });
+
+    it('adds the PID-file worker PID to protectedPids', () => {
+      expect(SOURCE).toContain('protectedPids.add(pidFileInfo.pid);');
+    });
+
+    it('skips protected PIDs in both kill loops', () => {
+      const occurrences = SOURCE.split('protectedPids.has(pid)').length - 1;
+      expect(occurrences).toBe(2); // Windows loop + POSIX loop
+    });
+  });
 });
