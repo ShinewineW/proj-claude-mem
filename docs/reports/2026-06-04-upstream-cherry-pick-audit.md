@@ -261,17 +261,17 @@
   1. 移植**重新授权之前**（≤`36b0929f^`，即 v12.7.5 及更早）的代码为 AGPL-3.0，与我方现状一致；本报告**绝大多数候选来自 v10.x–v12.x（AGPL 期）**。
   2. 移植**重新授权之后**（≥v13.0.0）的代码为 Apache-2.0；将 Apache-2.0 代码并入 AGPL 项目方向上被许可（Apache-2.0 → AGPLv3 单向兼容），但需登记来源出处。
   3. 若维护者希望整体采纳 Apache-2.0 立场，须由版权持有者/贡献者**主动重新授权**并添加 NOTICE。
-- **建议**：本项属决策而非机械移植，**交由人类维护者裁定**。本报告中标注来自 v13.x 的少量候选（如 `d13fc437` OpenRouter base URL、`0b4611e8` plan-11、`a8cf67164` schema 自愈、部分 chroma pin）若采纳，应记录其 Apache-2.0 出处。
+- **建议**：本项属决策而非机械移植，**交由人类维护者裁定**。本报告中标注来自 v13.x 的少量候选（如 `d13fc437` provider-agnostic base-url resolver、`0b4611e8` plan-11、`a8cf67164` schema 自愈、部分 chroma pin）若采纳，应记录其 Apache-2.0 出处。
 
 ---
 
 ## 七、建议的分批移植路线
 
-> 移植均为"按语义重做"（见约束 1），每批后跑 `bun test` 验证。
+> 移植均为"按语义重做"（见约束 1）。每批后跑 impl plan 定义的**根测试集**验证；在本地保留 ignored `attn_sink/` 上游克隆时，不使用会扫入 reference clone 的裸 `bun test` 结果作为验收口径。
 
-- **P0 批（安全 + 数据完整性，约 1 个工作日）**：§6.1 全部 10 项。多为 S 级、CLEAN/低风险；优先做 content_hash、parseFileList、observer 工具锁死、query() 隔离、.env 0600、三类 tag/隐私剥离、非 XML markFailed、effort 变量阻断。涉及 schema 的均**不涉及**（这批无迁移），可快速合入。
-- **P1 批（可靠性 + 成本，约 2–3 个工作日）**：§6.2。先做 darwin 直接相关项（POST_SPAWN_WAIT、chroma cwd=homedir、onnx/protobuf pin、isPortInUse、protected-PID cleanup、context-overflow 重置），再做语义搜索质量（relevance 排序、FTS5 回退、ghost 过滤、anchor 强转）与 WAL/日志/MCP schema 小修。其中"会话生命周期防失控"为 M 级、需按 fork 的 generator-action 重表达，单独成 PR。
-- **P2 批（功能增强，按需排期）**：优先 context 输出压缩（高价值 token 节省）与 OpenRouter base URL（BypassLane 能力补齐）；文件读取决策门、tier 路由、weekly-digests、smart-explore 24 语言依需求与开关策略推进。
+- **P0 批（安全 + 数据完整性，约 1 个工作日）**：§0 A 类全部 9 项,外加与非 XML 失败路径同点位完成的 200 字 preview-log,以及按 impl plan 标为 Optional 的 agent_id 诊断探针。多为 S 级、CLEAN/低风险；优先做 content_hash、parseFileList、observer 工具锁死、.env/settings 0600、三类 tag/隐私剥离、非 XML markFailed、effort 变量阻断。涉及 schema 的均**不涉及**（这批无迁移），可快速合入。
+- **P1 批（可靠性 + 成本，约 2–3 个工作日）**：§6.2。先做 darwin 直接相关项（POST_SPAWN_WAIT、chroma cwd=homedir、onnx/protobuf pin、isPortInUse、protected-PID cleanup、context-overflow 重置），再做语义搜索质量（relevance 排序、FTS5 回退、ghost 过滤、singular `concept` 参数归一化）与 WAL/日志/MCP schema 小修。其中"会话生命周期防失控"为 M 级、需按 fork 的 generator-action 重表达，单独成 PR。
+- **P2 批（功能增强，按需排期）**：优先 context 输出压缩（高价值 token 节省）与 OpenAI-compatible base URL 泛化；同时全量移除已弃用的 OpenRouter 路径。文件读取决策门、tier 路由、smart-explore 24 语言已在本轮决策中 defer/skip；weekly-digests 属 Optional 功能,按产品取舍推进。
 - **持续排除**：§6.4 全部维持不移植；§6.5 许可证待维护者决策。
 
 ---

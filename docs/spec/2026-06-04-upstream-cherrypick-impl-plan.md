@@ -14,12 +14,19 @@
 >
 > **配套文档**: 决策与取舍见 `docs/reports/2026-06-04-upstream-cherry-pick-audit.md`(§0 本轮 Catch 确认清单)。
 
-**Goal:** 将 41 项经审计+逐项 grill 确认的上游变更(安全/数据完整性 9、可靠性/成本 23、功能 5、探针/便宜赢 4)移植进 fork,保持 1933 测试基线全绿、不新增数据库迁移(schema 维持 v33)。**计数沿革**:原审计 41 项 → spec-review 移出已具备的 anchor-coercion → 40 → codex 交叉审计补回首版 §0 遗漏的 chroma-cwd-homedir → **41**。这 41 项实现为 **42 个 `### Task` 标题**(item↔task 非 1:1:session-lifecycle 1 项=2 Task;markFailed+preview-log 与 system-reminder+persisted-output 各 2 项=1 Task;base-url 通用化+OpenRouter 移除 1 项=2 Task;另加 1 个 `docs/PROVENANCE.md` 收尾 Task)。
+**Goal:** 将 41 项经审计+逐项 grill 确认的上游变更(安全/数据完整性 9、可靠性/成本 23、功能 5、探针/便宜赢 4)移植进 fork,让**实施后的**根测试集保持 0 fail,并且不新增数据库迁移(schema 维持 v33)。`1933 pass` 只是 CLAUDE.md 记录的既有参考基线,不是硬编码目标;最终 pass 数应以实施当日的根测试集实际 pass 数 + 本轮净新增用例为准。**计数沿革**:原审计 41 项 → spec-review 移出已具备的 anchor-coercion → 40 → codex 交叉审计补回首版 §0 遗漏的 chroma-cwd-homedir → **41**。这 41 项实现为 **42 个 `### Task` 标题**(item↔task 非 1:1:session-lifecycle 1 项=2 Task;markFailed+preview-log 与 system-reminder+persisted-output 各 2 项=1 Task;base-url 通用化+OpenRouter 移除 1 项=2 Task;另加 1 个 `docs/PROVENANCE.md` 收尾 Task)。
 
 **Architecture:** 本 fork 与上游无共享 git 历史,所有移植为"按 diff 语义手工重做"(非 git cherry-pick)。按 P0(安全/完整性)→P1(可靠性/成本)→P2(功能)三批,每批一个 PR、批内按子系统聚焦提交;行为变更项独立 commit + 回归测试;每个移植 commit 带 `Upstream: thedotmack/claude-mem@<hash> (<license>)` provenance trailer。
 
 **Tech Stack:** TypeScript(ESM)→ Bun;SQLite3(better-sqlite3 风格 per-project 池);@anthropic-ai/claude-agent-sdk 0.1.77;Chroma via uvx chroma-mcp;Express worker(:37777)。
-- 测试: `bun test <path>` ；构建: `npm run build`(类型+bundle)/ `npm run build-and-sync`(含 worker 重启)。
+- 目标测试: `bun test <path>`。
+- 根测试集:在 clean checkout 可用 `bun test`。若本地保留 ignored 审计素材 `attn_sink/upstream-claude-mem/tests`,裸 `bun test` 会扫入上游克隆并污染结果;此时根测试集命令为:
+  ```bash
+  find "$PWD/tests" -type f \( -name '*.test.ts' -o -name '*test.ts' \) -print0 | xargs -0 bun test
+  ```
+  下文所有"full suite/根测试集/`bun test` 全绿"均指**本 fork 根目录 tests**,不包含 `attn_sink/`、node_modules 或其他 ignored reference clone。
+- 构建: `npm run build`(bundle/resolution/syntax)/ `npm run build-and-sync`(含 worker 重启)。
+- 草稿状态说明:本文件是实施计划,不是已实施变更。当前未实施时的测试红灯只用于暴露验证命令或既有基线口径问题,不能作为"移植项不成立"的证据;每个任务必须在实施 commit 中按本计划跑 RED→GREEN 目标测试。
 
 ---
 
@@ -28,20 +35,77 @@
 - **Chunk 1 = P0 数据完整性** → **Chunk 2 = P0 安全/隐私** →(P0 批 PR,先合)
 - **Chunk 3 = P1 worker 生命周期** → **Chunk 4 = P1 chroma&mcp** → **Chunk 5 = P1 搜索质量** → **Chunk 6 = P1 sqlite&杂项**(P1 批 PR)
 - **Chunk 7 = P2 功能/增强**(P2 批 PR)
-- 每批合入前:`bun test` 全绿 + `npm run build-and-sync`;P0/P1 关键行为变更项合入前跑一次真实 observe/summarize 冒烟。
+- 每批合入前:根测试集 0 fail + `npm run build-and-sync`;P0/P1 关键行为变更项合入前跑一次真实 observe/summarize 冒烟。
 
 ## 执行加固(sim-review 结论 — 实施时遵守)
 
 经 sim-review 多角度对抗评审后追加的执行约束:
 
-1. **PR 粒度:P1 拆出 "P1-risky" 子 PR。** P1 批内,将 4 个**行为变更项**——observer SDK 锁死(C2)、非 XML `markFailed`(C1)、会话防失控 guards(C3)、context-overflow 重置(C3)——单独归入一个 **`P1-risky` PR**(便于二分定位/整体回退);其余 P1 项走常规 P1 PR。P0、P2 仍为单批 PR。
-2. **typecheck gate = 行号无关的"错误集 diff"(非清零)。** 本仓库 `tsc --noEmit` 基线**本就有 336 个存量错误**(esbuild-only,从不跑 tsc),参照集存于 `attn_sink/tsc-baseline-set.txt`(120 条去重、行号无关)。每批结束跑 `bun x tsc --noEmit`,对**我们触及的文件**做"错误集"diff,**不得新增** baseline 之外的错误。**注意**:`SearchManager.ts`(63 存量错误)、`BypassLane.ts`(16)本就深红,对这两文件 tsc 信号弱,**以 `bun test` + 实测冒烟为主**。
+1. **PR 粒度:风险子 PR 不改变优先级。** P0 中的两个高风险行为变更——非 XML `markFailed`(C1)与 observer SDK 锁死(C2)——归入 **`P0-risky` 子 PR**(仍先于 P1 合入)。P1 中的两个高风险行为变更——context-overflow 重置(C3)与会话防失控 guards(C3)——归入 **`P1-risky` 子 PR**。其余 P0/P1/P2 项按原 chunk 顺序执行。风险子 PR 的目的只是便于二分定位/整体回退,**不得把 P0 项降级为 P1**。
+2. **typecheck gate = 行号无关的"错误集 diff"(非清零)。** 本仓库 `tsc --noEmit` 基线**本就有 336 个存量错误**(esbuild-only,从不跑 tsc),参照集存于 `attn_sink/tsc-baseline-set.txt`(120 条去重、行号无关;若 clean checkout 缺少该 ignored 文件,先从最新基线重新生成再比较,不要把缺文件解释为类型全绿)。每批结束跑 `bun x tsc --noEmit`,对**我们触及的文件**做"错误集"diff,**不得新增** baseline 之外的错误。**注意**:`SearchManager.ts`(63 存量错误)、`BypassLane.ts`(16)本就深红,对这两文件 tsc 信号弱,**以根测试集 + 实测冒烟为主**。
 3. **行号即 t0 定位符,内容锚为准。** 计划中所有 `file:line` 仅为撰写时(HEAD `4c032ffa`)定位;**同一文件被多任务连续编辑**(ChromaMcpManager 4 次、BypassLane 3 次、EnvManager/SessionStore/parser 等 2–4 次),行号会漂移。**以 OLD→NEW 内容块匹配为权威**,每个同文件后续任务**编辑前重新 grep 锚点**。
 4. **改共享代码前先扫受影响测试。** 行为变更项编辑前,`grep -rl "<符号/选项>" tests/` 列出受影响 spec,在**同一 commit**内更新/删除它们,而非等批末全量跑才被动发现。
 5. **删除过时/不泛用的测试(维护者指令)。** 凡测试的是**本轮移除的代码面**(OpenRouter 路径及其 test、`USER_MESSAGE_ONLY` 断言、C5 bypass-ghost-filter 测试里 `provider:'openrouter'` 占位)或**已失效契约**的测试,**随对应移除任务一并删除/改写**;不保留死测试。判断依据:该测试因其覆盖的代码已被删而失败 → 删,而非 skip。广义"过时测试"清理在执行时凭实际失败信号判断。
 6. **双许可证 provenance(单 commit + 双 trailer)。** tree-kill(C4)源自 `d384d3c5`(AGPL,静态助手 `killProcessTree`/`collectDescendantPids`)+ `55334129`(Apache,`disposeCurrentSubprocess` 路由),两部分**相互依赖**——助手无路由即死代码、路由无助手不可编译。**故不拆分**(强行拆会制造"只含死代码的 commit",违反反过度工程);采用**单 commit 同时携带两条 `Upstream:` trailer**(d384d3c5 AGPL + 55334129 Apache),provenance 由双 trailer + `docs/PROVENANCE.md` 索引共同承载。其余移植项**多为**单 hash 单 trailer;少数任务合并多个上游 hash(如 observer 锁死 = `ce13c887`+`703c64c7`/`46d204ee9`;tag 剥离 = `a66b98bcd`+`f81684c61`),此时**同一 commit 内每个来源 hash 各列一条 `Upstream:` trailer**。(C4 tree-kill 同此惯例,二者一致。)
 7. **实测冒烟是唯一非同模型校验,load-bearing。** 全链由同一模型产出,关联盲点风险高;P0/P1 合入前的真实 observe/summarize 冒烟**必须实跑**(尤其 observer 锁死后仍正常产出 observation),不可省。
 8. **合入前跨模型 gate。** 至少对 **P0 批**跑一次 `oh-my-codex`(Codex 跨模型质疑)再合,作为缺失的"独立第二评审"。
+
+## 必要性分层与 Go/Stop 口径
+
+本计划不是"上游有就全搬"。42 个任务按必要性分为三类:
+
+- **Must**:当前 fork 存在明确安全、隐私、数据完整性、错误状态或治理风险;不移植会保留真实缺陷。
+- **Should**:当前 fork 有明确可靠性、成本、可维护性或兼容性收益;不移植不一定立即破坏,但会保留已知脆弱点。
+- **Optional**:功能/体验/诊断增强;可按维护者产品取舍延后,但若延后必须同步更新 41 项审计决策记录。
+
+| Chunk/Task | Necessity | 本地移植理由 |
+| --- | --- | --- |
+| C1-T1 content-hash delimiter | Must | 去掉合法 observation 的 hash 碰撞/误去重风险。 |
+| C1-T2 parseFileList bare paths | Must | 防止 summary 文件列表解析崩溃或静默丢文件。 |
+| C1-T3 non-XML markFailed + preview log | Must | 防止 pending message 卡死并保留失败上下文。 |
+| C2-T1 agent-id probe | Optional | 诊断 Q23;只应短期存在,不属于永久功能。 |
+| C2-T2 observer SDK lockdown | Must | 工具权限边界;防止 SDK 新内置工具绕过 blacklist。 |
+| C2-T3 env/settings 0600 | Must | 本地凭据/配置权限硬化。 |
+| C2-T4 system-reminder/persisted-output strip | Must | 持久化边缘隐私脱敏。 |
+| C2-T5 summarize last_assistant strip | Must | summarize hook 隐私脱敏。 |
+| C2-T6 effort env block | Must | SDK 子进程配置边界;避免无意继承高成本/错模型指令。 |
+| C3-T1 atomic isPortInUse | Should | 降低 daemon 端口探测 TOCTOU。 |
+| C3-T2 port-race graceful exit | Should | 消除 duplicate daemon 输掉 bind race 后的假 ERROR。 |
+| C3-T3 startup cleanup PID protection | Must | 防止 cleanup 误杀父 hook 或当前 worker。 |
+| C3-T4 POST_SPAWN_WAIT 15s | Should | macOS ARM64 + Chroma 冷启动可靠性。 |
+| C3-T5 context-overflow reset | Must | 防止 overflow 后继续复用坏 memorySessionId。 |
+| C3-T6 lifecycle guards A | Must | stale controller/SIGTERM/duplicate spawn 生命周期正确性。 |
+| C3-T7 lifecycle guards B | Must | 会话 wall-clock 上限,防止失控长跑。 |
+| C3-T8 MCP self-check nonfatal | Should | MCP loopback 异常不应饿死 reaper/SummaryLane。 |
+| C4-T1 chroma pin | Should | Chroma/onnx/protobuf 依赖可复现。 |
+| C4-T2 chroma tree-kill | Must | 防止 worker 重启后残留 chroma 子树。 |
+| C4-T3 chroma cwd homedir | Should | 绕过 pydantic 误读项目 `.env`。 |
+| C4-T4 reconcile dupid | Should | Chroma 批冲突恢复能力。 |
+| C4-T5 anon telemetry false | Should | 第三方工具 telemetry 默认关闭。 |
+| C4-T6 inputSchema props | Should | MCP tool schema 正确性/客户端兼容。 |
+| C5-T1 relevance ranking | Should | 保留 Chroma 语义顺序,搜索质量。 |
+| C5-T2 FTS5 fallback | Should | Chroma 不可用时仍有文本搜索降级。 |
+| C5-T3 concept param normalization | Should | API 兼容 singular/plural query。 |
+| C5-T4 bypass ghost filter | Should | 过滤空内容 observation,提升数据质量。 |
+| C6-T1 journal size limit | Should | 控制 WAL 膨胀。 |
+| C6-T2 changes assertion | Must | 防止 phantom completion 静默吞数据。 |
+| C6-T3 schema readability probe | Should | 早发现 schema 损坏/不可读。 |
+| C6-T4 parseSummary all-null | Should | 避免空 summary 被误当有效。 |
+| C6-T5 concept log debug | Should | 降低噪音,不把正常清理记成 error。 |
+| C6-T6 cwdToDashed dot | Should | 项目名编码更稳定。 |
+| C6-T7 logger stringify guard | Should | 日志 debug 路径不因循环 JSON 崩溃。 |
+| C6-T8 remove dead exitcode | Should | 移除过期 hook 契约。 |
+| C6-T9 trusted deps treesitter | Should | plugin install/build 依赖可用性。 |
+| C7-T1 markdown compression | Optional | 输出体验/可读性增强。 |
+| C7-T2 generic base URL | Should | OpenAI-compatible endpoint 灵活性。 |
+| C7-T3 OpenRouter removal | Should | 删除已弃用 provider 路径,统一到 OpenCode/Gemini。 |
+| C7-T4 atomic JSON writer | Should | settings/config 写入耐久性与 symlink safety。 |
+| C7-T5 weekly digests skill | Optional | 新 skill 功能,可按产品取舍延后。 |
+| C7-T6 PROVENANCE index | Must | 治理与许可证审计索引;本轮收尾必需。 |
+
+**Go criteria:**每个任务进入实施前必须有(1)本地 OLD 锚点,(2)上游来源/许可证或 fork-original 说明,(3)RED→GREEN 目标测试,(4)触及共享符号时的 caller/test sweep。每个 chunk 合入前必须有根测试集 0 fail、`npm run build` 或 `npm run build-and-sync`、必要的 live smoke、无新增 schema migration、无新增 `git diff --check` 问题。
+
+**Stop criteria:**若某任务的本地 OLD 锚点不存在、SDK/依赖预检否定计划假设、目标测试无法证明该任务契约、或 Optional 项被维护者决定延后,必须暂停该任务并同步更新审计决策记录/计数映射;不得机械继续。
 
 ## 文件改动总览（本轮触及）
 
@@ -855,9 +919,9 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 
 - [ ] Run the full suite to confirm no cross-file regression:
   ```bash
-  bun test
+  find "$PWD/tests" -type f \( -name '*.test.ts' -o -name '*test.ts' \) -print0 | xargs -0 bun test
   ```
-  Expected: `0 fail` (baseline per CLAUDE.md is 1933 pass; expect that count plus the net new cases: +1 collision (Task 1), +9 parseFileList (Task 2), +3 non-XML (Task 3); the Task 3 existing-test rewrite is a replacement, not an addition).
+  Expected: root tests 0 fail. Pass count should equal the implementation-day root-test baseline plus the net new cases: +1 collision (Task 1), +9 parseFileList (Task 2), +3 non-XML (Task 3); the Task 3 existing-test rewrite is a replacement, not an addition.
 
 
 ---
@@ -865,7 +929,7 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ## Chunk 2: P0 安全/隐私 (security-privacy)
 
 > Provenance license per item determined via `git -C attn_sink/upstream-claude-mem merge-base --is-ancestor 36b0929f <hash>` (exit 0 → Apache-2.0, else AGPL-3.0). Results: `ce13c887`→Apache, `9c56dda79`→Apache; `703c64c7`/`46d204ee9`/`31ee1024c`/`a66b98bcd`/`f81684c61`→AGPL.
-> Fork pins `@anthropic-ai/claude-agent-sdk@^0.1.76`, resolved to **0.1.77** (bun.lock). `node_modules` is read-restricted in this environment, so one SDK-type detail (`permissionMode` enum value `'dontAsk'`) MUST be re-verified at implement time — see Task 2 Step 0.
+> Fork pins `@anthropic-ai/claude-agent-sdk@^0.1.76`, resolved to **0.1.77** (bun.lock). Current-local verification found the required fields under `node_modules/@anthropic-ai/claude-agent-sdk/entrypoints/sdk/runtimeTypes.d.ts` and `coreTypes.d.ts`; `sdk.d.ts` is only a re-export and MUST NOT be used as the grep target. Re-run Task 2 Step 0 at implement time because SDK patch versions may drift.
 > Task ordering rationale (grill-confirmed): agent-id-probe ships FIRST (deploy early to collect pod evidence); observer-sdk-lockdown is its own commit (riskiest behavior change); .env + settings 0600 share a commit; the two tag strips share a commit.
 > Build note: `npm run build` runs esbuild (transpile + bundle), not `tsc` — it catches unresolved imports, syntax errors, and duplicate identifiers, but NOT pure type errors. "build OK" below means the bundle resolves and emits cleanly; type-level mistakes surface when `bun test` loads the modules.
 
@@ -991,10 +1055,12 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 - Test: `tests/security/observer-tool-enforcement.test.ts` (new; adapted from `ce13c887`, audit assertions removed)
 
 **Steps**
-- [ ] Step 0 — VERIFY SDK field/value support before coding (node_modules was read-blocked during planning). Run:
+- [ ] Step 0 — VERIFY SDK field/value support before coding. Run the package-wide entrypoint grep (do not grep top-level `sdk.d.ts`; in this fork it only re-exports):
   ```
-  grep -rn "permissionMode\|dontAsk\|settingSources\|strictMcpConfig\|allowedTools\|canUseTool\|additionalDirectories" node_modules/@anthropic-ai/claude-agent-sdk/sdk.d.ts
+  rg -n "permissionMode|dontAsk|settingSources|strictMcpConfig|allowedTools|canUseTool|additionalDirectories" \
+    node_modules/@anthropic-ai/claude-agent-sdk/entrypoints
   ```
+  Expected on current local 0.1.77: `runtimeTypes.d.ts` contains `additionalDirectories`, `allowedTools`, `canUseTool`, `permissionMode`, `settingSources`, and `strictMcpConfig`; `coreTypes.d.ts` contains `PermissionMode = ... | 'dontAsk'`.
   - If `'dontAsk'` is a valid `PermissionMode` literal → use it in Step 3.
   - If 0.1.77's `PermissionMode` does NOT include `'dontAsk'` (it post-dates the upstream v0.2.141 verification) → OMIT the `permissionMode` line entirely. The load-bearing enforcement is `tools:[]` + `disallowedTools` + deny-all `canUseTool`; `permissionMode` is the redundant "braces" layer. The Step 1 test already tolerates both (`permissionMode === undefined || 'dontAsk'`), so no test edit is needed in that case.
   - The helper return type is `Record<string, unknown>` (NOT the SDK `Options` type) precisely to avoid a hard compile dependency on this enum across SDK versions. (Upstream `ce13c887` returned `Options` against v0.2.141; the fork deliberately loosens this.)
@@ -1396,9 +1462,9 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 - [ ] Step 11 — SMOKE NOTE (manual, record result in commit body): after `build-and-sync`, run one real observe cycle (trigger a PostToolUse in a real session or the project's smoke harness) and confirm at least one observation is still produced (the lockdown must NOT break legitimate observation extraction — the agent uses zero tools, so denying tools is expected to be a no-op for it). If zero observations appear, STOP and investigate before committing.
 - [ ] Step 12 — Run full suite (lockdown touches hot paths):
   ```
-  bun test
+  find "$PWD/tests" -type f \( -name '*.test.ts' -o -name '*test.ts' \) -print0 | xargs -0 bun test
   ```
-  Expected: all pass (baseline 1933 pass + new security tests; the one updated fresh-summarize test keeps the count stable).
+  Expected: all pass. Pass count should equal the implementation-day root-test baseline plus new security tests; the one updated fresh-summarize test keeps the count stable.
 - [ ] Step 13 — Commit (AGPL-3.0 — combines Apache `ce13c887` with AGPL isolation fields from `703c64c7`/`46d204ee9`; use the more-restrictive license):
   ```
   git add src/sdk/hardened-options.ts src/services/worker/SDKAgent.ts src/services/worker/fresh-summarize.ts tests/security/observer-tool-enforcement.test.ts tests/worker/fresh-summarize.test.ts
@@ -2045,7 +2111,7 @@ after`;
 
 ---
 
-> Final chunk verification (after all 6 tasks): run `bun test` and confirm the full suite passes (baseline 1933 + the new tests added here; Task 2 updates — not adds — one existing fresh-summarize test, so the net count rises by the new files only), then `npm run build-and-sync` to deploy and restart the worker for the Task 2 observe smoke check. Commit order in this chunk is the deploy order: Task 1 (probe) → Task 2 (lockdown) → Task 3 (perms) → Task 4 (tag strips) → Task 5 (summarize strip) → Task 6 (effort vars).
+> Final chunk verification (after all 6 tasks): run the root-test command from the Tech Stack section and confirm 0 fail (implementation-day baseline + the new tests added here; Task 2 updates — not adds — one existing fresh-summarize test, so the net count rises by the new files only), then `npm run build-and-sync` to deploy and restart the worker for the Task 2 observe smoke check. Commit order in this chunk is the deploy order: Task 1 (probe) → Task 2 (lockdown) → Task 3 (perms) → Task 4 (tag strips) → Task 5 (summarize strip) → Task 6 (effort vars).
 
 
 ---
@@ -2220,8 +2286,8 @@ Steps:
 - [ ] **Step 6 — Run it, see GREEN.** `bun test tests/infrastructure/health-monitor.test.ts`
   Expected: all `isPortInUse` and `waitForPortFree` cases PASS. `0 fail`.
 
-- [ ] **Step 7 — Full suite + build (no regression elsewhere depends on fetch-based isPortInUse).** `bun test` then `npm run build`
-  Expected: `bun test` → `0 fail`. `npm run build` → exits 0, no TS errors.
+- [ ] **Step 7 — Full suite + build (no regression elsewhere depends on fetch-based isPortInUse).** Run the root-test command from the Tech Stack section, then `npm run build`.
+  Expected: root tests 0 fail; `npm run build` exits 0 with no esbuild resolution/syntax errors.
 
 - [ ] **Step 8 — Commit.**
   ```
@@ -2327,8 +2393,8 @@ Steps:
 - [ ] **Step 4 — Run it, see GREEN.** `bun test tests/services/worker-daemon-port-race.test.ts`
   Expected: 5 pass, 0 fail.
 
-- [ ] **Step 5 — Type check.** `npm run build`
-  Expected: exits 0, no TS errors (`port` and `waitForHealth` already in scope — verified at worker-service.ts:1572 (`const port = getWorkerPort()`, same `main()` scope) and import line 95; the `async` keyword is required for the `await` inside the catch).
+- [ ] **Step 5 — Build check.** `npm run build`
+  Expected: exits 0, no esbuild resolution/syntax errors (`port` and `waitForHealth` already in scope — verified at worker-service.ts:1572 (`const port = getWorkerPort()`, same `main()` scope) and import line 95; the `async` keyword is required for the `await` inside the catch).
 
 - [ ] **Step 6 — Commit.**
   ```
@@ -2442,8 +2508,8 @@ Steps:
 - [ ] **Step 6 — Run it, see GREEN.** `bun test tests/infrastructure/process-manager.test.ts`
   Expected: all cases pass; new block reports 4 pass.
 
-- [ ] **Step 7 — Type check.** `npm run build`
-  Expected: exits 0, no TS errors.
+- [ ] **Step 7 — Build check.** `npm run build`
+  Expected: exits 0, no esbuild resolution/syntax errors.
 
 - [ ] **Step 8 — Commit.**
   ```
@@ -3063,8 +3129,8 @@ Steps:
 - [ ] **Step 8 — Run it, see GREEN.** `bun test tests/worker/session-lifecycle-guard.test.ts tests/shared/settings-defaults-manager.test.ts`
   Expected: all cases pass.
 
-- [ ] **Step 9 — Full build + suite.** `npm run build` then `bun test`
-  Expected: build exits 0; full suite `0 fail`. (Watch SettingsRoutes tests — the added allowlist key is additive. The settings-defaults-manager `getAllDefaults()` comparisons are relative, unaffected by the +1 key.)
+- [ ] **Step 9 — Full build + suite.** `npm run build` then the root-test command from the Tech Stack section.
+  Expected: build exits 0; root tests 0 fail. (Watch SettingsRoutes tests — the added allowlist key is additive. The settings-defaults-manager `getAllDefaults()` comparisons are relative, unaffected by the +1 key.)
 
 - [ ] **Step 10 — Commit.**
   ```
@@ -3184,8 +3250,8 @@ Steps:
 - [ ] **Step 4 — Run it, see GREEN.** `bun test tests/services/worker-mcp-nonfatal.test.ts`
   Expected: 4 pass, 0 fail.
 
-- [ ] **Step 5 — Full build + suite (verify no caller asserts the old "MCP server connected" log or the throw).** `grep -rn "MCP server connected" src tests` then `npm run build` then `bun test`
-  Expected: no test pins the old log string (verified at authoring time — only worker-service.ts:568 referenced it); build exits 0; full suite `0 fail`.
+- [ ] **Step 5 — Full build + suite (verify no caller asserts the old "MCP server connected" log or the throw).** `grep -rn "MCP server connected" src tests` then `npm run build` then the root-test command from the Tech Stack section.
+  Expected: no test pins the old log string (verified at authoring time — only worker-service.ts:568 referenced it); build exits 0; root tests 0 fail.
 
 - [ ] **Step 6 — Commit.**
   ```
@@ -3204,8 +3270,8 @@ Steps:
 
 ### Build-and-sync at chunk end
 
-- [ ] After all 8 commits: `npm run build-and-sync` then `bun test`
-  Expected: build deploys to cache + marketplace and restarts the worker without error; full suite `0 fail` (baseline 1933 pass, +new cases from Tasks 1-3,5-8).
+- [ ] After all 8 commits: `npm run build-and-sync` then the root-test command from the Tech Stack section
+  Expected: build deploys to cache + marketplace and restarts the worker without error; root tests 0 fail (implementation-day baseline + new cases from Tasks 1-3,5-8).
 
 
 ---
@@ -4447,8 +4513,8 @@ Upstream: thedotmack/claude-mem@8cdabe63 (AGPL-3.0)"
 ### Chunk 4 final verification
 
 - [ ] **Build the full plugin and run the whole suite.**
-  `npm run build-and-sync && bun test`
-  Expected: build completes (build → sync-to-cache → worker restart) with exit 0; test suite reports all existing tests plus the 4 new test files passing (≥1933 + new pass, 0 fail, 0 skip).
+  `npm run build-and-sync` then the root-test command from the Tech Stack section.
+  Expected: build completes (build → sync-to-cache → worker restart) with exit 0; root tests report all existing tests plus the 4 new test files passing, with 0 fail. Skip count should not increase unless an intentional skip is documented in the task commit.
 
 
 ---
@@ -5322,8 +5388,8 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ### Chunk 5 final verification
 
 - [ ] Run the full suite to confirm no cross-file regressions:
-  - Command: `bun test`
-  - Expected: pass count = previous baseline (CLAUDE.md cites 1933 pass, 0 fail) **plus** the new tests added in this chunk; 0 fail, 0 skip.
+  - Command: root-test command from the Tech Stack section.
+  - Expected: pass count = implementation-day root-test baseline **plus** the new tests added in this chunk; 0 fail. Skip count should not increase unless intentionally documented.
 - [ ] `npm run build-and-sync` once at the end to deploy + restart worker (only if a live smoke check is desired; CI verification uses `npm run build`).
 
 
@@ -5737,7 +5803,7 @@ Expected: the "no sub-tags" / "bare <summary> plain text" tests FAIL (received a
     );
   }
 
-  // NOTE FROM THEDOTMACK: 100% of the time we must SAVE the summary, even if fields are missing. 10/24/2025 
+  // NOTE FROM THEDOTMACK: 100% of the time we must SAVE the summary, even if fields are missing. 10/24/2025
 ```
 NEW block:
 ```ts
@@ -5756,7 +5822,7 @@ NEW block:
     return null;
   }
 
-  // NOTE FROM THEDOTMACK: 100% of the time we must SAVE the summary, even if fields are missing. 10/24/2025 
+  // NOTE FROM THEDOTMACK: 100% of the time we must SAVE the summary, even if fields are missing. 10/24/2025
 ```
 
 - [ ] 4. Run the test, see it PASS:
@@ -6133,9 +6199,9 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 
 - [ ] After all 9 commits, run the full suite once to confirm the chunk introduced no cross-file regression:
 ```
-bun test
+find "$PWD/tests" -type f \( -name '*.test.ts' -o -name '*test.ts' \) -print0 | xargs -0 bun test
 ```
-Expected: all tests pass, 0 fail (baseline was 1933 pass / 0 fail; this chunk adds the parse-summary, dot-path, schema-probe, and one transactions test, plus is net-neutral or net-positive on counts).
+Expected: all root tests pass, 0 fail (implementation-day baseline + this chunk's parse-summary, dot-path, schema-probe, and one transactions test, plus is net-neutral or net-positive on counts).
 
 
 ---
@@ -7593,7 +7659,7 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 - Task 3 Why/CRITICAL/callers notes: expanded the empty-ob-detection 'unaffected' justification to also state the processingMessageIds:[] reason (markFailed loop never runs), and pointed those notes at step 3.0 for the trace.
 - No DB migration introduced (schema stays v33). All provenance trailers and AGPL-3.0 determinations preserved unchanged (commit hashes 9cfa57d49 / 2a304d59e / be99a5d69 / 92f800d4 verified to exist in the upstream clone).
 
-  备注: No OpenRouter references in Chunk 1 — nothing to flag for the C7 sweep. No observer-privacy (C2-F3) surface here. No anchor-coercion (C5) or settings.json 0600 (C2) content here. All verification was read-only against the fork; no fork files were modified. The predicate regex and all four upstream commit hashes were verified directly in the upstream clone (be99a5d69 ships the byte-identical predicate `!/<observation>|<summary>|<skip_summary\\b/.test(text)`). One cross-cutting observation for the assembler: the global baseline count '1933 pass' appears in this chunk's final-verification step and likely in other chunks — if any earlier chunk's net-new tests change the running baseline, the expected counts in later chunks' full-suite steps should be reconciled at assembly time (this chunk adds net +13 cases: +1, +9, +3).
+  备注: No OpenRouter references in Chunk 1 — nothing to flag for the C7 sweep. No observer-privacy (C2-F3) surface here. No anchor-coercion (C5) or settings.json 0600 (C2) content here. All verification was read-only against the fork; no fork files were modified. The predicate regex and all four upstream commit hashes were verified directly in the upstream clone (be99a5d69 ships the byte-identical predicate `!/<observation>|<summary>|<skip_summary\\b/.test(text)`). One cross-cutting observation for the assembler: historical pass counts must not be hard-coded across chunks; reconcile against the implementation-day root-test baseline (this chunk adds net +13 cases: +1, +9, +3).
 
 ### Chunk 2
 - C2-F6 (MEDIUM, real correctness): Task 2 Step 3 — changed the logger component from 'SECURITY' to 'SYSTEM' in buildHardenedSdkOptions' canUseTool WARN log, plus an explanatory inline comment. 'SECURITY' is not in the logger Component union (verified src/utils/logger.ts:18); 'SYSTEM' is. Updated the post-code NOTE to mandate 'SYSTEM' (was 'offer it as an alternative'). Updated Task 2 commit body to say component 'SYSTEM'.
@@ -7609,7 +7675,7 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 
   备注: OpenRouter sweep (Global decision 1 / C7): Task 3's **Why** still lists "OPENROUTER" among the .env keys ("ANTHROPIC/GEMINI/OPENROUTER/OPENCODE keys"). I left it as-is because it is a descriptive enumeration of what currently lands in ~/.claude-mem/.env, not a code change, and C7 owns the full OpenRouter removal sweep. Flagging it here so the C7 sweep / assembler can decide whether to scrub the word "OPENROUTER" from this Task 3 description once the provider is removed (it would then read "ANTHROPIC/GEMINI/OPENCODE keys"). No other OpenRouter references exist in Chunk 2.
 
-C2-F1 deferred type-test: I deliberately did NOT add the "unit test asserting SDK version supports required fields via typeof on sdk.d.ts" that the finding recommended — node_modules is read-restricted and DECISIONS says add a concise verify sub-step, not new test scaffolding. The existing Step 1 behavioral test (permissionMode === undefined || 'dontAsk', never 'bypassPermissions') already catches enum drift at CI time; I noted this inline.
+C2-F1 deferred type-test: I deliberately did NOT add the "unit test asserting SDK version supports required fields via typeof on sdk.d.ts" that the finding recommended — top-level `sdk.d.ts` is only a re-export in this fork, so the authoritative implement-time check is the package-wide `rg` over `entrypoints/` in C2-T2 Step 0. The existing Step 1 behavioral test (permissionMode === undefined || 'dontAsk', never 'bypassPermissions') already catches enum drift at CI time; I noted this inline.
 
 No DB migration introduced; schema stays v33. Verified at write-time against the fork: observation-utils.ts:46, SessionRoutes.ts:819-820 + :1073, logger.ts:18 Component union, logger.warn signature (logger.ts:325).
 
@@ -7711,20 +7777,21 @@ Test-count delta after the chunk: json-utils +5, openai-compatible-base-url +6 (
 - **python3 依赖(C6 schema 修复)**:为既有代码(非本轮引入);C6 新增的可读性探测为纯 SQL 无此依赖。提醒:pod/CI 上确保 python3 可用,否则既有 malformed-schema 修复路径会受限。
 - **OpenRouter 清扫范围(C7)**:本轮**全量清扫且全部本轮完成** —— BypassLane 路径 + SettingsDefaults/EnvManager/SettingsRoutes/viewer UI/worker-types。viewer UI 在 `src/` 下,而 Task 3.6 要求 `grep -i openrouter src/ tests/ == 0`,故 viewer UI **必须一并清除,不可延后**(无"文档说明 + 后续 sweep"降级选项)。
 
-其余 spec-review 提出的 scope gaps(**以下为原始 findings 原文存档;凡与上方决策冲突者,一律以上方决策为准** —— 特别是:(a) PROVENANCE 我方**决定创建 `docs/PROVENANCE.md` 索引表**,非"仅 trailers";(b) bypass base-url 我方**只新增 `CLAUDE_MEM_OPENCODE_BASE_URL`,绝不新增 `CLAUDE_MEM_OPENROUTER_BASE_URL`**,OpenRouter 整体移除):
-- PROVENANCE.md file creation: The plan does not create a separate PROVENANCE.md document to track upstream license/commit lineage. Provenance is embedded in commit trailers only. If future audits require a historical record of which commits came from which upstream hashes, a separate index file may be needed.
-- Agent_id probe post-verification: Item 38 (agent-id-probe) is instrumentation for investigating whether 'child agent triggers excess summary'. Plan notes 'with后续验证义务' but does NOT specify how/when to review the collected logs or what action triggers removing the probe once evidence is collected.
-- Settings.json + OneDrive sync interaction: Chunk 2 Task 3 and Chunk 7 Task 4 both harden settings.json writes, but the plan does not address whether the fork's OneDrive sync workflow (if any) is compatible with the new atomic-write and symlink-safe patterns. The appendix flags symlink-safety as important but does not verify the sync workflow's assumptions.
-- Rollback/revert strategy per batch: Plan states PRs are per-batch (P0, P1, P2) but does NOT specify rollback procedures if a batch PR is reverted. For example, if P1 Chunk 3 (worker-lifecycle) is reverted mid-roll, what is the correct state for P1 Chunk 4 (chroma) which depends on some P1 Chunk 3 changes (e.g., ProcessRegistry patterns)?
-- Weekly-digests skill import path: The plan defers the weekly-digests backend endpoint routing to an existing 'full=true' API that was 'adopted in a prior cherry-pick', but does NOT verify that endpoint actually exists or is tested in the current fork.
-- Chunk 6 Task 3 (schema-readability-probe) Python3 dependency: The plan notes '保留我方 Python3 修复' but does NOT verify that python3 is guaranteed to be available in the execution environment (worker/pod/CI).
-- FileSystem hygiene for test cleanup: Plan notes tmpdir cleanup but does NOT explicitly verify that all 9 new test files in Chunk 6-7 comply with tests/CLAUDE.md filesystem-hygiene gate (rmSync in afterAll for every mkdirSync).
-- Weekly-digests step-count: Appendix notes 'Step 1.5' added but the original step count was '7 numbered steps + Step 1.5'. This ambiguity could cause implementers to miss or duplicate steps.
-- BypassLane base-url settings integration: Chunk 7 Task 2 adds CLAUDE_MEM_OPENCODE_BASE_URL and _OPENROUTER_BASE_URL to SettingsDefaultsManager but DOES NOT verify that the frontend UI (viewer) offers UI controls to set these new override URLs, or if they are backend-only settings.
+以下为 spec-review 原始 findings 的**resolved archive**。这些不再是 open blockers;若后续重新打开,必须同步改正文任务与治理约束:
+
+- **PROVENANCE.md file creation — RESOLVED.** C7-T6 创建 `docs/PROVENANCE.md`;commit trailers + index file 双轨保留来源/许可证。
+- **Agent_id probe post-verification — RESOLVED.** C2-T1 的代码注释含 `TEMPORARY PROBE` + `TODO(Q23)` + 删除条件;附录 B 规定由维护者观察 pod 日志后关闭 Q23 并删除探针。
+- **Settings.json + OneDrive sync interaction — RESOLVED.** 维护者决策:仓库走 git 同步,无 OneDrive 验证步骤;0600 + atomic write 保留。
+- **Rollback/revert strategy per batch — RESOLVED.** solo 维护采用 revert 整个批次/风险子 PR + 后续重做;P0/P1 风险子 PR 不改变优先级。
+- **Weekly-digests skill import path — RESOLVED.** C7-T5 已验证 fork 现有 `SearchRoutes.ts:265` 与 `ContextBuilder.ts:143` 支持 `/api/context/inject?full=true`;任务只导入 markdown skill 并做 endpoint smoke。
+- **Chunk 6 Task 3 Python3 dependency — RESOLVED AS PRE-EXISTING RISK.** C6 schema-readability-probe 本身纯 SQL;python3 只是既有 malformed-schema 修复路径依赖,附录 B 保留环境提醒。
+- **FileSystem hygiene for test cleanup — RESOLVED BY GATE.** Go criteria 要求共享符号/test sweep;执行时所有新增 tmpdir/mkdirSync 测试必须遵守 `tests/CLAUDE.md` afterAll cleanup,否则 chunk 不得合入。
+- **Weekly-digests step-count — RESOLVED.** C7-T5 当前步骤以正文编号为准;不要从 appendix 的历史 step-count 推断执行顺序。
+- **BypassLane base-url settings integration — RESOLVED.** C7-T2 只新增 `CLAUDE_MEM_OPENCODE_BASE_URL`;绝不新增 `CLAUDE_MEM_OPENROUTER_BASE_URL`。C7-T3 的 zero-match grep 覆盖 `src/` 下 viewer UI/settings/routes/types,因此 UI 清扫必须随任务完成;是否给 base-url 加 viewer 控件是产品选择,不是本轮 OpenRouter 清扫 blocker。
 
 ## 附录 C:治理约束(governance,实施全程遵守)
 
-- TEST BASELINE MAINTENANCE: Plan enforces 1933 pass / 0 fail baseline (per CLAUDE.md:45). Each chunk is expected to maintain this or increase it with new test additions (counted at final full-suite run). Chunks 1-5 add new tests; Chunks 6-7 add more. Final count should be >=1933 with 0 fail.
+- TEST BASELINE MAINTENANCE: Plan enforces **0 fail** on the implementation-day root-test baseline. CLAUDE.md's `1933 pass` is historical context only; do not hard-code it as the expected final count. Each chunk is expected to maintain the then-current root-test pass set and add its net-new cases. When `attn_sink/` exists locally, use the root-test command from the Tech Stack section instead of bare `bun test` so ignored upstream clones are excluded.
 - SCHEMA VERSION LOCK: Plan explicitly maintains schema v33 (per CLAUDE.md / fork baseline). NO migration items are permitted in this round. Every chunk appendix verifies 'no DB migration introduced'. If a future requirement necessitates schema changes, a NEW migration (v34+) must be created separately.
 - BUILD COMMAND DISCIPLINE: Plan enforces `npm run build` (esbuild, type+bundle) for verification of bundle resolution and syntax. Does NOT perform full type checking (use IDE/CI for that). P0/P1 batches use `npm run build-and-sync` (deploy+restart) before final PR merge to verify worker integration.
 - PROVENANCE TRAILER REQUIREMENT: Every upstream-derived commit MUST carry a `Upstream: thedotmack/claude-mem@<hash> (<license>)` trailer. License is determined via `git merge-base --is-ancestor 36b0929f <hash>`: exit 0 = Apache-2.0, else = AGPL-3.0. Only genuinely **fork-original** work MUST NOT have a trailer — namely the `agent_id` probe (C2) and the OpenRouter removal (C7 Task 3, our own cleanup). **`writeJsonFileAtomic` (C7 Task 4) is upstream-DERIVED** (ports `65607897`, AGPL-3.0) and therefore DOES carry an `Upstream:` trailer — do not strip it.
