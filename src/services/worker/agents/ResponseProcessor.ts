@@ -44,7 +44,7 @@ import { cleanupProcessedMessages } from './SessionCleanupHelper.js';
  * @param worker - Worker reference for SSE broadcasting (optional)
  * @param discoveryTokens - Token cost delta for this response
  * @param originalTimestamp - Original epoch when message was queued (for accurate timestamps)
- * @param agentName - Name of the agent for logging (e.g., 'SDK', 'Gemini', 'OpenRouter')
+ * @param agentName - Name of the agent for logging (e.g., 'SDK', 'Gemini', 'OpenCode')
  */
 export async function processAgentResponse(
   text: string,

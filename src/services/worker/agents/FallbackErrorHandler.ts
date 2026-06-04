@@ -3,7 +3,7 @@
  *
  * Responsibility:
  * - Determine if an error should trigger fallback to Claude SDK
- * - Provide consistent error classification across Gemini and OpenRouter
+ * - Provide consistent error classification across Gemini and OpenCode
  */
 
 import { FALLBACK_ERROR_PATTERNS } from './types.js';

@@ -46,7 +46,6 @@ const BLOCKED_ENV_PREFIXES = ['CLAUDECODE_'];
 export const MANAGED_CREDENTIAL_KEYS = [
   'ANTHROPIC_API_KEY',
   'GEMINI_API_KEY',
-  'OPENROUTER_API_KEY',
   'OPENCODE_API_KEY',
 ];
 
@@ -54,7 +53,6 @@ export interface ClaudeMemEnv {
   // Credentials (optional - empty means use CLI billing for Claude)
   ANTHROPIC_API_KEY?: string;
   GEMINI_API_KEY?: string;
-  OPENROUTER_API_KEY?: string;
   OPENCODE_API_KEY?: string;
 }
 
@@ -131,7 +129,6 @@ export function loadClaudeMemEnv(): ClaudeMemEnv {
     const result: ClaudeMemEnv = {};
     if (parsed.ANTHROPIC_API_KEY) result.ANTHROPIC_API_KEY = parsed.ANTHROPIC_API_KEY;
     if (parsed.GEMINI_API_KEY) result.GEMINI_API_KEY = parsed.GEMINI_API_KEY;
-    if (parsed.OPENROUTER_API_KEY) result.OPENROUTER_API_KEY = parsed.OPENROUTER_API_KEY;
     if (parsed.OPENCODE_API_KEY) result.OPENCODE_API_KEY = parsed.OPENCODE_API_KEY;
 
     return result;
@@ -178,13 +175,6 @@ export function saveClaudeMemEnv(env: ClaudeMemEnv): void {
         updated.GEMINI_API_KEY = env.GEMINI_API_KEY;
       } else {
         delete updated.GEMINI_API_KEY;
-      }
-    }
-    if (env.OPENROUTER_API_KEY !== undefined) {
-      if (env.OPENROUTER_API_KEY) {
-        updated.OPENROUTER_API_KEY = env.OPENROUTER_API_KEY;
-      } else {
-        delete updated.OPENROUTER_API_KEY;
       }
     }
     if (env.OPENCODE_API_KEY !== undefined) {
@@ -245,13 +235,10 @@ export function buildIsolatedEnv(includeCredentials: boolean = true): Record<str
     if (credentials.ANTHROPIC_API_KEY) {
       isolatedEnv.ANTHROPIC_API_KEY = credentials.ANTHROPIC_API_KEY;
     }
-    // Note: GEMINI_API_KEY / OPENROUTER_API_KEY / OPENCODE_API_KEY pass through
+    // Note: GEMINI_API_KEY / OPENCODE_API_KEY pass through
     // from process.env, but claude-mem's .env takes precedence if configured
     if (credentials.GEMINI_API_KEY) {
       isolatedEnv.GEMINI_API_KEY = credentials.GEMINI_API_KEY;
-    }
-    if (credentials.OPENROUTER_API_KEY) {
-      isolatedEnv.OPENROUTER_API_KEY = credentials.OPENROUTER_API_KEY;
     }
     if (credentials.OPENCODE_API_KEY) {
       isolatedEnv.OPENCODE_API_KEY = credentials.OPENCODE_API_KEY;

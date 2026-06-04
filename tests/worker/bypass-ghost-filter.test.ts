@@ -31,9 +31,9 @@ mock.module('../../src/utils/logger.js', () => ({
 mock.module('../../src/shared/SettingsDefaultsManager.js', () => ({
   SettingsDefaultsManager: {
     loadFromFile: () => ({
-      CLAUDE_MEM_PROVIDER: 'openrouter',
-      CLAUDE_MEM_OPENROUTER_API_KEY: 'test-key',
-      CLAUDE_MEM_OPENROUTER_MODEL: 'test/model',
+      CLAUDE_MEM_PROVIDER: 'opencode',
+      CLAUDE_MEM_OPENCODE_API_KEY: 'test-key',
+      CLAUDE_MEM_OPENCODE_MODEL: 'deepseek-v4-flash',
       CLAUDE_MEM_BYPASS_COOLDOWN_MS: '5000',
       CLAUDE_MEM_CHROMA_ENABLED: 'false',
     }),
@@ -73,9 +73,7 @@ import { BypassLane } from '../../src/services/worker/BypassLane.js';
 function makeLane() {
   const lane = new BypassLane();
   (lane as any).state = 'ACTIVE';
-  // NOTE: provider 'openrouter' is a placeholder config to build an ACTIVE lane.
-  // After the Chunk 7 OpenRouter removal sweep, switch to a generic/Gemini/OpenCode value.
-  (lane as any).config = { provider: 'openrouter', apiKey: 'test', model: 'test', cooldownMs: 5000 };
+  (lane as any).config = { provider: 'opencode', apiKey: 'test', model: 'test', cooldownMs: 5000 };
   const storeSpy = mock(() => ({ observationIds: [1] }));
   (lane as any).sessionManager = {
     getPendingMessageStore: () => ({

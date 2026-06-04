@@ -167,7 +167,7 @@ describe('BypassLane — OpenCode Go provider', () => {
       globalThis.fetch = originalFetch;
     });
 
-    it('sends POST to OpenCode endpoint with thinking:disabled and no OpenRouter headers', async () => {
+    it('sends POST to OpenCode endpoint with thinking:disabled and no referer/title headers', async () => {
       globalThis.fetch = (async (url: any, init: any) => {
         capturedUrl = String(url);
         capturedInit = init;
@@ -189,7 +189,7 @@ describe('BypassLane — OpenCode Go provider', () => {
 
       const headers = (capturedInit?.headers ?? {}) as Record<string, string>;
       expect(headers.Authorization).toBe('Bearer sk-test-opencode-key');
-      // OpenRouter-specific headers must NOT be sent
+      // referer/title headers must NOT be sent
       expect(headers['HTTP-Referer']).toBeUndefined();
       expect(headers['X-Title']).toBeUndefined();
 

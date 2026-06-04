@@ -349,7 +349,7 @@ describe('SettingsDefaultsManager', () => {
       // Provider settings
       expect(defaults.CLAUDE_MEM_PROVIDER).toBeDefined();
       expect(defaults.CLAUDE_MEM_GEMINI_API_KEY).toBeDefined();
-      expect(defaults.CLAUDE_MEM_OPENROUTER_API_KEY).toBeDefined();
+      expect(defaults.CLAUDE_MEM_OPENCODE_API_KEY).toBeDefined();
 
       // System settings
       expect(defaults.CLAUDE_MEM_DATA_DIR).toBeDefined();
