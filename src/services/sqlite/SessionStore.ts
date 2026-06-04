@@ -40,6 +40,9 @@ export class SessionStore {
     this.db.run('PRAGMA journal_mode = WAL');
     this.db.run('PRAGMA synchronous = NORMAL');
     this.db.run('PRAGMA foreign_keys = ON');
+    // Cap WAL growth at 4MB per DB so the journal doesn't balloon unbounded
+    // under sustained writes (multiple processes share the file). Upstream #1956.
+    this.db.run('PRAGMA journal_size_limit = 4194304');
     this.db.run('PRAGMA temp_store = memory');
 
     // Delegate all migrations to MigrationRunner (single source of truth)
