@@ -10,6 +10,7 @@ import type { EventHandler, NormalizedHookInput, HookResult } from '../types.js'
 import { ensureWorkerRunning, getWorkerPort, fetchWithTimeout } from '../../shared/worker-utils.js';
 import { logger } from '../../utils/logger.js';
 import { extractLastMessage } from '../../shared/transcript-parser.js';
+import { stripMemoryTagsFromPrompt } from '../../utils/tag-stripping.js';
 import { HOOK_EXIT_CODES, HOOK_TIMEOUTS, getTimeout } from '../../shared/hook-constants.js';
 import { resolveProjectContext } from '../../shared/project-allowlist.js';
 import { writeFallbackEntry } from '../../shared/fallback-queue.js';
@@ -55,9 +56,13 @@ export const summarizeHandler: EventHandler = {
       // (see worker-service.replayFallbackEntries).
       const ctx = input._projectContext ?? resolveProjectContext(input.cwd);
       if (ctx) {
-        const lastAssistantMessage = input.transcriptPath
-          ? extractLastMessage(input.transcriptPath, 'assistant', true)
-          : '';
+        // Strip privacy tags (<private> etc.) — the transcript parser only
+        // removes <system-reminder>, so <private> would otherwise reach the summary.
+        const lastAssistantMessage = stripMemoryTagsFromPrompt(
+          input.transcriptPath
+            ? extractLastMessage(input.transcriptPath, 'assistant', true)
+            : ''
+        );
         writeFallbackEntry({
           type: 'summarize', sessionId: input.sessionId, cwd: input.cwd, dbPath: ctx.dbPath,
           timestamp: Date.now(),
@@ -86,7 +91,11 @@ export const summarizeHandler: EventHandler = {
     // Extract last assistant message from transcript (the work Claude did)
     // Note: "user" messages in transcripts are mostly tool_results, not actual user input.
     // The user's original request is already stored in user_prompts table.
-    const lastAssistantMessage = extractLastMessage(transcriptPath, 'assistant', true);
+    // Strip privacy tags before this value flows into the summarize POST / fallback.
+    // extractLastMessage only removes <system-reminder>; <private> must be stripped here.
+    const lastAssistantMessage = stripMemoryTagsFromPrompt(
+      extractLastMessage(transcriptPath, 'assistant', true)
+    );
 
     // F5 — hook-side prompt_number resolution. Ask the worker before POSTing
     // summarize so the turn key is authoritative at enqueue time. Older
