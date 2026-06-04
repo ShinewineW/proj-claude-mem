@@ -127,10 +127,20 @@ export function querySummariesMulti(
 }
 
 /**
- * Convert cwd path to dashed format for transcript lookup
+ * Convert cwd path to dashed format for transcript lookup.
+ *
+ * Claude Code encodes a project's transcript directory by replacing BOTH path
+ * separators AND dots with dashes (e.g. `/Users/john.doe/proj` ->
+ * `-Users-john-doe-proj`). Replacing only `/` left a literal `.` in the dir
+ * name, so "Include last message" silently no-opped for any cwd component
+ * containing a dot — Unix usernames like `john.doe`, dotted dirs, etc. (#2401).
+ *
+ * @internal Exported only so the dot-path test can import it. The sole
+ *   production caller is `ObservationCompiler.ts:205`; do NOT treat this as a
+ *   stable public helper (upstream also exports it solely for its test).
  */
-function cwdToDashed(cwd: string): string {
-  return cwd.replace(/\//g, '-');
+export function cwdToDashed(cwd: string): string {
+  return cwd.replace(/[/.]/g, '-');
 }
 
 /**
