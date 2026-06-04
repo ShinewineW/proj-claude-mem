@@ -345,7 +345,18 @@ NEVER fetch full details without filtering first. 10x token savings.`,
     description: 'Step 1: Search memory. Returns index with IDs. Params: query, limit, offset, project, type (entity: observations/sessions/prompts), obs_type (observation type: discovery/bugfix/feature/change/refactor/decision), dateStart, dateEnd, orderBy, from_project (cross-project: name or "*")',
     inputSchema: {
       type: 'object',
-      properties: {},
+      properties: {
+        query: { type: 'string', description: 'Search query' },
+        limit: { type: 'number', description: 'Max results (default 20)' },
+        project: { type: 'string', description: 'Filter by project name' },
+        type: { type: 'string', description: 'Filter by observation type' },
+        obs_type: { type: 'string', description: 'Filter by obs_type field' },
+        dateStart: { type: 'string', description: 'Start date filter (ISO)' },
+        dateEnd: { type: 'string', description: 'End date filter (ISO)' },
+        offset: { type: 'number', description: 'Pagination offset' },
+        orderBy: { type: 'string', description: 'Sort order: date_desc or date_asc' },
+        from_project: { type: 'string', description: 'Cross-project: project name or "*" for all projects' }
+      },
       additionalProperties: true
     },
     handler: async (args: any) => {
@@ -371,7 +382,14 @@ NEVER fetch full details without filtering first. 10x token savings.`,
     description: 'Step 2: Get context around results. Params: anchor (observation ID) OR query (finds anchor automatically), depth_before, depth_after, project, from_project (cross-project: name only, "*" not supported)',
     inputSchema: {
       type: 'object',
-      properties: {},
+      properties: {
+        anchor: { type: 'number', description: 'Observation ID to center the timeline around' },
+        query: { type: 'string', description: 'Query to find anchor automatically' },
+        depth_before: { type: 'number', description: 'Items before anchor (default 3)' },
+        depth_after: { type: 'number', description: 'Items after anchor (default 3)' },
+        project: { type: 'string', description: 'Filter by project name' },
+        from_project: { type: 'string', description: 'Cross-project: project name only ("*" not supported for timeline)' }
+      },
       additionalProperties: true
     },
     handler: async (args: any) => {
