@@ -133,6 +133,25 @@ export interface Migration {
 let dbInstance: Database | null = null;
 
 /**
+ * Probe that the on-disk schema is readable.
+ *
+ * A malformed `sqlite_master` (orphaned index, dropped column, corrupt CREATE
+ * SQL) makes the very first statement throw — even a PRAGMA. Running a SELECT
+ * against sqlite_master up front guarantees a malformed schema is detected
+ * deterministically, so the constructor's existing repair path
+ * (repairMalformedSchema) is reached even when the first real statement would
+ * have been a PRAGMA. Throws the native "malformed database schema (...)"
+ * error, which the caller pattern-matches.
+ *
+ * @internal Exported only so the schema-probe test can import it. Not part of
+ *   the public Database.ts API surface (the only public export is the
+ *   `ClaudeMemDatabase` class) — do NOT depend on this from production code.
+ */
+export function assertSchemaReadable(db: Database): void {
+  db.query('SELECT count(*) FROM sqlite_master').get();
+}
+
+/**
  * ClaudeMemDatabase - New entry point for the sqlite module
  *
  * Replaces SessionStore as the database coordinator.
@@ -186,6 +205,10 @@ export class ClaudeMemDatabase {
    */
   private openAndConfigure(dbPath: string): Database {
     const db = new Database(dbPath, { create: true, readwrite: true });
+    // Probe schema readability BEFORE any PRAGMA: a malformed sqlite_master
+    // makes even a PRAGMA throw, so this guarantees the constructor's repair
+    // path is reached for malformed on-disk schemas. Upstream #2433 groundwork.
+    assertSchemaReadable(db);
     // busy_timeout first: wait for contended locks rather than failing fast
     // with SQLITE_BUSY — see SessionStore constructor for the rationale.
     db.run('PRAGMA busy_timeout = 5000');
