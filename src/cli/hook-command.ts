@@ -81,6 +81,22 @@ export async function hookCommand(platform: string, event: string, options: Hook
     const input = adapter.normalizeInput(rawInput);
     input.platform = platform;
 
+    // TEMPORARY PROBE (deferred Q23 pod evidence): the normalized input drops
+    // agent_id/agent_type, so read them straight off the raw stdin object.
+    // No behavior change — single info log to the file logger (never stderr).
+    // TODO(Q23): remove this probe once the deferred sub-agent summary impact
+    // question (Q23) is resolved — i.e. once agent_id/agent_type pod evidence
+    // has been collected and Q23 is closed in the audit report (§6.3/6.4). Do
+    // not leave it in past Q23 resolution.
+    {
+      const r = rawInput as { agent_id?: unknown; agent_type?: unknown };
+      logger.info('HOOK', 'AGENT_ID_PROBE', {
+        event,
+        agent_id: r.agent_id ?? null,
+        agent_type: r.agent_type ?? null,
+      });
+    }
+
     // Allowlist guard: resolve project from post-adapter cwd, exit if not in any enabled project
     const projectContext = resolveProjectContext(input.cwd);
     if (!projectContext) {
