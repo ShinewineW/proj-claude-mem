@@ -32,6 +32,7 @@ export interface SettingsDefaults {
   CLAUDE_MEM_OPENCODE_MODEL: string;
   CLAUDE_MEM_OPENCODE_MAX_CONTEXT_MESSAGES: string;
   CLAUDE_MEM_OPENCODE_MAX_TOKENS: string;
+  CLAUDE_MEM_OPENCODE_BASE_URL: string;
   // System Configuration
   CLAUDE_MEM_DATA_DIR: string;
   CLAUDE_MEM_LOG_LEVEL: string;
@@ -120,6 +121,7 @@ export class SettingsDefaultsManager {
     CLAUDE_MEM_OPENCODE_MODEL: "deepseek-v4-flash", // Default OpenCode Go model (non-reasoning when thinking:disabled)
     CLAUDE_MEM_OPENCODE_MAX_CONTEXT_MESSAGES: "20", // Mirrors OpenRouter (history budget is fixed in code; reserved for future tunability)
     CLAUDE_MEM_OPENCODE_MAX_TOKENS: "100000", // Mirrors OpenRouter (history budget is fixed in code; reserved for future tunability)
+    CLAUDE_MEM_OPENCODE_BASE_URL: "", // Optional OpenAI-compatible base URL override for the OpenCode bypass path (blank = default opencode.ai endpoint)
     // System Configuration
     CLAUDE_MEM_DATA_DIR: join(homedir(), ".claude-mem"),
     CLAUDE_MEM_LOG_LEVEL: "INFO",

@@ -31,6 +31,7 @@ import type { PersistentPendingMessage } from "../sqlite/PendingMessageStore.js"
 import type { SessionManager } from "./SessionManager.js";
 import type { DatabaseManager } from "./DatabaseManager.js";
 import { storeBypassObservationsForSession } from "./bypass-observation-store.js";
+import { resolveOpenAICompatibleChatCompletionsUrl, DEFAULT_OPENCODE_API_URL } from "../../shared/openai-compatible-base-url.js";
 
 // API endpoints
 const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1/models";
@@ -495,7 +496,11 @@ export class BypassLane {
         // OpenCode Go: OpenAI-compatible probe. Must include `thinking:disabled`,
         // otherwise reasoning models burn max_tokens=10 on internal CoT and emit
         // empty content → probe fails. Skip OpenRouter-specific headers.
-        response = await fetch(OPENCODE_API_URL, {
+        const opencodeProbeUrl = resolveOpenAICompatibleChatCompletionsUrl(
+          SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH).CLAUDE_MEM_OPENCODE_BASE_URL,
+          OPENCODE_API_URL,
+        );
+        response = await fetch(opencodeProbeUrl, {
           method: "POST",
           headers: {
             Authorization: `Bearer ${this.config.apiKey}`,
@@ -928,7 +933,11 @@ export class BypassLane {
     } else {
       // OpenCode Go: OpenAI-compatible. Send thinking:disabled to keep reasoning
       // models (deepseek-v4-flash etc.) emitting content instead of CoT-only output.
-      const response = await fetch(OPENCODE_API_URL, {
+      const opencodeUrl = resolveOpenAICompatibleChatCompletionsUrl(
+        SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH).CLAUDE_MEM_OPENCODE_BASE_URL,
+        OPENCODE_API_URL,
+      );
+      const response = await fetch(opencodeUrl, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${this.config.apiKey}`,
