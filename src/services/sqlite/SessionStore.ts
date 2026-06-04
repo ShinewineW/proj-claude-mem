@@ -1163,7 +1163,14 @@ export class SessionStore {
           tool_response = NULL
         WHERE id = ? AND status = 'processing'
       `);
-      updateStmt.run(timestampEpoch, messageId);
+      const updateResult = updateStmt.run(timestampEpoch, messageId);
+      // Guard against phantom completion: if the message vanished or is no longer
+      // 'processing', 0 rows change. Throwing rolls back the whole transaction so
+      // we never report success on observations that weren't really committed
+      // against a live queue row. Upstream #65f2fd8c (kept as UPDATE per fork).
+      if (updateResult.changes !== 1) {
+        throw new Error(`storeObservationsAndMarkComplete: failed to complete pending message ${messageId}`);
+      }
 
       return { observationIds, summaryId, createdAtEpoch: timestampEpoch };
     });
