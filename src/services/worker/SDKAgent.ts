@@ -50,6 +50,7 @@ import {
 import { checkProcessStaleness } from "./stale-detection.js";
 import { processRegistry } from "./ProcessRegistry.js";
 import { shouldProactiveReset } from "./generator-action.js";
+import { buildHardenedSdkOptions } from "../../sdk/hardened-options.js";
 
 // Import Agent SDK (assumes it's installed)
 // @ts-ignore - Agent SDK types may not be available
@@ -98,21 +99,9 @@ export class SDKAgent {
 
     // Get model ID and disallowed tools
     const modelId = this.getModelId();
-    // Memory agent is OBSERVER ONLY - no tools allowed
-    const disallowedTools = [
-      "Bash", // Prevent infinite loops
-      "Read", // No file reading
-      "Write", // No file writing
-      "Edit", // No file editing
-      "Grep", // No code searching
-      "Glob", // No file pattern matching
-      "WebFetch", // No web fetching
-      "WebSearch", // No web searching
-      "Task", // No spawning sub-agents
-      "NotebookEdit", // No notebook editing
-      "AskUserQuestion", // No asking questions
-      "TodoWrite", // No todo management
-    ];
+    // Memory agent is OBSERVER ONLY - no tools allowed. The hardened deny-list
+    // (OBSERVER_DISALLOWED_TOOLS) now lives in buildHardenedSdkOptions; the
+    // former local const here was orphaned once the options block routes through it.
 
     // Create message generator (event-driven)
     const messageGenerator = this.createMessageGenerator(session, cwdTracker);
@@ -224,16 +213,19 @@ export class SDKAgent {
     // Use dedicated cwd to isolate observer sessions from user's `claude --resume` list
     ensureDir(OBSERVER_SESSIONS_DIR);
     // CRITICAL: Pass isolated env to prevent Issue #733 (API key pollution from project .env files)
+    // Hardened, no-tools SDK options (defense-in-depth) — single source of
+    // truth shared with fresh-summarize so the lockdown can't drift. cwd jail
+    // (OBSERVER_SESSIONS_DIR) and PID-capturing spawn preserved.
     const queryResult = query({
       prompt: messageGenerator,
-      options: {
+      options: buildHardenedSdkOptions({
+        source: 'Observer',
+        sessionDbId: session.sessionDbId,
+        contentSessionId: session.contentSessionId,
         model: modelId,
-        // Isolate observer sessions - they'll appear under project "observer-sessions"
-        // instead of polluting user's actual project resume lists
         cwd: OBSERVER_SESSIONS_DIR,
         // Only resume if shouldResume is true (memorySessionId exists, not first prompt, not forceInit)
-        ...(shouldResume && { resume: session.memorySessionId }),
-        disallowedTools,
+        ...(shouldResume ? { resume: session.memorySessionId } : {}),
         abortController: session.abortController,
         pathToClaudeCodeExecutable: claudePath,
         // Custom spawn function captures PIDs to fix zombie process accumulation
@@ -241,8 +233,8 @@ export class SDKAgent {
           session.sessionDbId,
           session.dbPath,
         ),
-        env: isolatedEnv, // Use isolated credentials from ~/.claude-mem/.env, not process.env
-      },
+        env: isolatedEnv, // isolated credentials from ~/.claude-mem/.env
+      }),
     });
 
     // Process SDK messages — cleanup in finally ensures subprocess termination

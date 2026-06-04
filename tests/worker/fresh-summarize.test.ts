@@ -35,6 +35,7 @@ import {
   type FreshSummarizeDeps,
   type FreshSummarizeInput,
 } from '../../src/services/worker/fresh-summarize.js';
+import { OBSERVER_DISALLOWED_TOOLS } from '../../src/sdk/hardened-options.js';
 
 // ----- helpers -----------------------------------------------------------
 
@@ -124,13 +125,17 @@ describe('runFreshSummarizeQuery', () => {
     expect(captured.options.abortController).toBe(controller);
   });
 
-  it('passes the disallowedTools list to the query options', async () => {
+  it('always applies the hardened OBSERVER_DISALLOWED_TOOLS, ignoring deps.disallowedTools', async () => {
     const { fn, captured } = makeFakeQuery([]);
-    const deps = makeDeps({ fn: fn as any } as any);
-    deps.query = fn as any;
+    const deps = makeDeps({ query: fn as any });
+    // Even a narrow deps deny-list must be overridden by the hardened lockdown.
     deps.disallowedTools = ['Bash', 'Read', 'Write', 'Grep'];
     await runFreshSummarizeQuery(deps, baseInput);
-    expect(captured.options.disallowedTools).toEqual(['Bash', 'Read', 'Write', 'Grep']);
+    // Hardened helper supplies the full 12-tool deny-list, plus tools:[] /
+    // allowedTools:[] for defense-in-depth.
+    expect(captured.options.disallowedTools).toEqual([...OBSERVER_DISALLOWED_TOOLS]);
+    expect(captured.options.tools).toEqual([]);
+    expect(captured.options.allowedTools).toEqual([]);
   });
 
   it('yields a single user message containing the fresh-summary prompt', async () => {
