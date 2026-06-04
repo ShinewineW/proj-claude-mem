@@ -2,13 +2,33 @@ import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 import { EventEmitter } from 'events';
 import { readFileSync } from 'fs';
 import { join } from 'path';
-import {
-  registerProcess,
-  unregisterProcess,
-  getProcessBySession,
-  getActiveCount,
-  getActiveProcesses,
-} from '../../src/services/worker/ProcessRegistry.js';
+// NOTE: Cannot import the real ProcessRegistry.js — it is mock.module()'d by 11+
+// other test files (ghost-session-cleanup, bypass-lane, summary-lane, ...), and
+// bun's mock.module is process-level and irreversible, so it leaks into this file
+// during full-suite runs. Per the repo convention (see process-registry-killed.test.ts),
+// inline a faithful copy of the registry contract from ProcessRegistry.ts. The
+// production duplicate-prevention logic is additionally source-pinned by the
+// "ProcessRegistry kill-duplicate-before-spawn (source)" describe block below.
+interface TrackedProc { pid: number; sessionDbId: number; spawnedAt: number; process: any }
+const processRegistry = new Map<number, TrackedProc>();
+function registerProcess(pid: number, sessionDbId: number, process: any): void {
+  processRegistry.set(pid, { pid, sessionDbId, spawnedAt: Date.now(), process });
+}
+function unregisterProcess(pid: number): void {
+  processRegistry.delete(pid);
+}
+function getProcessBySession(sessionDbId: number): TrackedProc | undefined {
+  for (const [, info] of processRegistry) {
+    if (info.sessionDbId === sessionDbId) return info;
+  }
+  return undefined;
+}
+function getActiveCount(): number {
+  return processRegistry.size;
+}
+function getActiveProcesses(): Array<{ pid: number }> {
+  return Array.from(processRegistry.values()).map(p => ({ pid: p.pid }));
+}
 
 function createMockProcess(overrides: { exitCode?: number | null } = {}) {
   const emitter = new EventEmitter();
