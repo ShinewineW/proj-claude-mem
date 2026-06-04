@@ -549,23 +549,36 @@ export class WorkerService {
         });
       }
 
-      // Connect to MCP server
+      // Best-effort loopback MCP self-check.
+      // Codex/Claude Desktop connect to the bundled stdio binary directly; this
+      // loopback connect is only a self-check and MUST NOT be fatal — a hung or
+      // failed connect must not starve the orphan/stale reapers, fallback cleanup,
+      // or SummaryLane that start below (#4589b34e).
       const mcpServerPath = path.join(__dirname, 'mcp-server.cjs');
-      const transport = new StdioClientTransport({
-        command: 'node',
-        args: [mcpServerPath],
-        env: process.env
-      });
+      try {
+        const transport = new StdioClientTransport({
+          command: 'node',
+          args: [mcpServerPath],
+          env: process.env
+        });
 
-      const MCP_INIT_TIMEOUT_MS = 300000;
-      const mcpConnectionPromise = this.mcpClient.connect(transport);
-      const timeoutPromise = new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('MCP connection timeout after 5 minutes')), MCP_INIT_TIMEOUT_MS)
-      );
+        const MCP_INIT_TIMEOUT_MS = 300000;
+        const mcpConnectionPromise = this.mcpClient.connect(transport);
+        const timeoutPromise = new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('MCP connection timeout after 5 minutes')), MCP_INIT_TIMEOUT_MS)
+        );
 
-      await Promise.race([mcpConnectionPromise, timeoutPromise]);
-      this.mcpReady = true;
-      logger.success('WORKER', 'MCP server connected');
+        await Promise.race([mcpConnectionPromise, timeoutPromise]);
+        this.mcpReady = true;
+        logger.success('WORKER', 'MCP loopback self-check connected');
+      } catch (mcpError) {
+        // Non-fatal: external stdio clients can still use the bundled binary.
+        this.mcpReady = false;
+        logger.warn('WORKER', 'MCP loopback self-check failed — continuing without loopback MCP', {
+          path: mcpServerPath,
+          error: mcpError instanceof Error ? mcpError.message : String(mcpError)
+        });
+      }
 
       // Start orphan reaper to clean up zombie processes (Issue #737)
       this.stopOrphanReaper = startOrphanReaper(() => {
