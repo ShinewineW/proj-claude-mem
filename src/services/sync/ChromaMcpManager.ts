@@ -14,13 +14,16 @@
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
-import { execSync } from 'child_process';
+import { execFile, execSync, type ChildProcess } from 'child_process';
+import { promisify } from 'util';
 import path from 'path';
 import os from 'os';
 import fs from 'fs';
 import { logger } from '../../utils/logger.js';
 import { SettingsDefaultsManager } from '../../shared/SettingsDefaultsManager.js';
 import { USER_SETTINGS_PATH } from '../../shared/paths.js';
+
+const execFileAsync = promisify(execFile);
 
 const CHROMA_MCP_CLIENT_NAME = 'claude-mem-chroma';
 const CHROMA_MCP_CLIENT_VERSION = '1.0.0';
@@ -108,18 +111,15 @@ export class ChromaMcpManager {
    * Called behind the connection lock to ensure only one connection attempt at a time.
    */
   private async connectInternal(): Promise<void> {
-    // Clean up any stale client/transport from a dead subprocess.
-    // Close transport first (kills subprocess via SIGTERM) before client
-    // to avoid hanging on a stuck process.
-    if (this.transport) {
-      try { await this.transport.close(); } catch { /* already dead */ }
-    }
-    if (this.client) {
-      try { await this.client.close(); } catch { /* already dead */ }
-    }
-    this.client = null;
-    this.transport = null;
-    this.connected = false;
+    // Singleton invariant (#2313): kill any pre-existing chroma-mcp subprocess
+    // tree before spawning a new one. The MCP SDK's transport.close() only
+    // signals the direct child (uvx); on Linux the grandchildren (uv, python,
+    // chroma-mcp) get re-parented to init and survive, accumulating 20+
+    // instances per session if reconnects fire repeatedly. Reuse the same
+    // tree-kill primitive used by stop() so reconnect can never leave
+    // orphans behind. disposeCurrentSubprocess() also resets connected/client/
+    // transport, so the prior manual `this.connected = false` is now covered.
+    await this.disposeCurrentSubprocess();
 
     const commandArgs = this.buildCommandArgs();
     const spawnEnvironment = this.getSpawnEnv();
@@ -162,16 +162,14 @@ export class ChromaMcpManager {
     try {
       await Promise.race([mcpConnectionPromise, timeoutPromise]);
     } catch (connectionError) {
-      // Connection failed or timed out - kill the subprocess to prevent zombies
+      // Connection failed or timed out - kill the subprocess tree to prevent zombies
       clearTimeout(timeoutId!);
-      logger.warn('CHROMA_MCP', 'Connection failed, killing subprocess to prevent zombie', {
+      logger.warn('CHROMA_MCP', 'Connection failed, killing subprocess tree to prevent zombie', {
         error: connectionError instanceof Error ? connectionError.message : String(connectionError)
       });
-      try { await this.transport.close(); } catch { /* best effort */ }
-      try { await this.client.close(); } catch { /* best effort */ }
-      this.client = null;
-      this.transport = null;
-      this.connected = false;
+      // Tree-kill (not just transport.close) so failed-connect descendants
+      // can't survive on Linux (#2313).
+      await this.disposeCurrentSubprocess();
       throw connectionError;
     }
     clearTimeout(timeoutId!);
@@ -184,6 +182,7 @@ export class ChromaMcpManager {
     // CRITICAL: Guard with reference check to prevent stale onclose handlers from
     // previous transports overwriting the current connection (race condition).
     const currentTransport = this.transport;
+    const currentTrackedPid = (this.transport as unknown as { _process?: ChildProcess })._process?.pid;
     this.transport.onclose = () => {
       if (this.transport !== currentTransport) {
         logger.debug('CHROMA_MCP', 'Ignoring stale onclose from previous transport');
@@ -194,6 +193,20 @@ export class ChromaMcpManager {
       this.client = null;
       this.transport = null;
       this.lastConnectionFailureTimestamp = Date.now();
+
+      // Direct child (uvx) emitted close, but on Linux the grandchildren
+      // (uv/python/chroma-mcp) often outlive their parent because MCP SDK
+      // does not use process groups. Sweep the descendant tree using the
+      // captured PID — best-effort; pgrep returns nothing if everything
+      // already exited (#2313).
+      if (currentTrackedPid) {
+        ChromaMcpManager.killProcessTree(currentTrackedPid).catch((error) => {
+          logger.debug('CHROMA_MCP', 'Background tree-kill after onclose finished (best-effort)', {
+            pid: currentTrackedPid,
+            error: error instanceof Error ? error.message : String(error)
+          });
+        });
+      }
     };
   }
 
@@ -278,13 +291,14 @@ export class ChromaMcpManager {
       // Transport error: chroma-mcp subprocess likely died (e.g., killed by orphan reaper,
       // HNSW index corruption). Mark connection dead and retry once after reconnect (#1131).
       // Without this retry, callers see a one-shot error even though reconnect would succeed.
-      this.connected = false;
-      this.client = null;
-      this.transport = null;
-
       logger.warn('CHROMA_MCP', `Transport error during "${toolName}", reconnecting and retrying once`, {
         error: transportError instanceof Error ? transportError.message : String(transportError)
       });
+
+      // Tree-kill the dying subprocess before reconnect. Previously this path
+      // just nulled the handle, which on Linux leaks the uv/python/chroma-mcp
+      // descendants every time a transport error happens (#2313).
+      await this.disposeCurrentSubprocess();
 
       try {
         await this.ensureConnected();
@@ -346,25 +360,187 @@ export class ChromaMcpManager {
    * client.close() sends stdin close -> SIGTERM -> SIGKILL to the subprocess.
    */
   async stop(): Promise<void> {
-    if (!this.client) {
+    if (!this.client && !this.transport) {
       logger.debug('CHROMA_MCP', 'No active MCP connection to stop');
+      this.connecting = null;
       return;
     }
 
     logger.info('CHROMA_MCP', 'Stopping chroma-mcp MCP connection');
 
-    try {
-      await this.client.close();
-    } catch (error) {
-      logger.debug('CHROMA_MCP', 'Error during client close (subprocess may already be dead)', {}, error as Error);
+    await this.disposeCurrentSubprocess();
+    this.connecting = null;
+
+    logger.info('CHROMA_MCP', 'chroma-mcp MCP connection stopped');
+  }
+
+  /**
+   * Singleton enforcement helper (#2313): tree-kill the currently tracked
+   * chroma-mcp subprocess and reset all state so the next spawn starts clean.
+   *
+   * Every code path that intends to abandon `this.transport` / `this.client`
+   * (reconnect, transport error, connect-timeout, onclose, stop()) MUST funnel
+   * through here. The MCP SDK's transport.close() only signals the direct child
+   * (uvx); on Linux the grandchildren (uv, python, chroma-mcp) re-parent to
+   * init and accumulate. Calling killProcessTree() against the captured PID
+   * before we drop the reference is the only way to guarantee at most one
+   * chroma-mcp subprocess tree exists per worker process.
+   *
+   * Idempotent and best-effort — safe to call when there is no active
+   * subprocess (no-op in that case).
+   */
+  private async disposeCurrentSubprocess(): Promise<void> {
+    const chromaProcess = (this.transport as unknown as { _process?: ChildProcess })?._process;
+    const trackedPid = chromaProcess?.pid;
+
+    if (trackedPid) {
+      try {
+        await ChromaMcpManager.killProcessTree(trackedPid);
+      } catch (error) {
+        logger.warn('CHROMA_MCP', 'failed to kill prior chroma-mcp tree (best-effort)', {
+          pid: trackedPid,
+          error: error instanceof Error ? error.message : String(error)
+        });
+      }
+    }
+
+    if (this.transport) {
+      try { await this.transport.close(); } catch { /* already dead */ }
+    }
+    if (this.client) {
+      try { await this.client.close(); } catch { /* already dead */ }
     }
 
     this.client = null;
     this.transport = null;
     this.connected = false;
-    this.connecting = null;
+  }
 
-    logger.info('CHROMA_MCP', 'chroma-mcp MCP connection stopped');
+  /**
+   * Kill a process and all its descendants (tree-kill).
+   *
+   * `private static` by intent — exercised only via the public abandon paths
+   * (the singleton test observes it indirectly through `killTreeCalls`); it is
+   * NOT part of the public API and must not be called from outside this class.
+   *
+   * POSIX: collects the full descendant set via `pgrep -P` walks, then sends
+   * SIGTERM (leaves first), waits briefly, then SIGKILL stragglers (union of
+   * pre-TERM and post-wait descendant sets to catch re-parented children).
+   *
+   * Windows: `taskkill /T /F /PID` for full subtree teardown.
+   *
+   * Best-effort — swallows ESRCH (already dead) and logs other errors.
+   */
+  private static async killProcessTree(pid: number): Promise<void> {
+    logger.debug('CHROMA_MCP', `Killing process tree rooted at PID ${pid}`);
+
+    if (process.platform === 'win32') {
+      try {
+        await execFileAsync('taskkill', ['/PID', String(pid), '/T', '/F'], {
+          timeout: 5_000,
+          windowsHide: true
+        });
+      } catch (error) {
+        // taskkill exits non-zero when the process is already dead — that's fine.
+        logger.debug('CHROMA_MCP', `taskkill tree-kill finished (may already be dead)`, {
+          pid,
+          error: error instanceof Error ? error.message : String(error)
+        });
+      }
+      return;
+    }
+
+    // POSIX: walk descendants recursively (bottom-up) and signal each.
+    // `pkill -P <pid>` only reaches direct children, so `python` /
+    // `chroma-mcp` under `uv` (grandchildren) get re-parented to init and
+    // survive. We collect the full descendant set via `pgrep -P` walks before
+    // signaling, so the SIGTERM phase reaches every layer.
+    try {
+      const descendantsBeforeTerm = await ChromaMcpManager.collectDescendantPids(pid);
+      // Signal leaves first, then the root.
+      for (const child of descendantsBeforeTerm) {
+        try {
+          process.kill(child, 'SIGTERM');
+        } catch {
+          // Already gone — fine.
+        }
+      }
+      try {
+        process.kill(pid, 'SIGTERM');
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (code !== 'ESRCH') {
+          logger.debug('CHROMA_MCP', `Failed to SIGTERM PID ${pid}`, { code });
+        }
+      }
+
+      // Brief wait for SIGTERM to propagate, then SIGKILL stragglers.
+      await new Promise(resolve => setTimeout(resolve, 500));
+
+      // SIGKILL targets the UNION of pre-TERM and post-wait descendant sets:
+      // when the root exits between snapshots, children get re-parented to
+      // init and drop out of `pgrep -P <root>`. Without the union, those
+      // re-parented descendants would never receive SIGKILL even though they
+      // were definitely children before SIGTERM. Dedupe via Set.
+      const descendantsBeforeKill = await ChromaMcpManager.collectDescendantPids(pid);
+      const killTargets = Array.from(new Set([...descendantsBeforeTerm, ...descendantsBeforeKill]));
+      for (const child of killTargets) {
+        try {
+          process.kill(child, 'SIGKILL');
+        } catch {
+          // Already dead — fine.
+        }
+      }
+      try {
+        process.kill(pid, 'SIGKILL');
+      } catch {
+        // Already dead — fine.
+      }
+    } catch (error) {
+      logger.debug('CHROMA_MCP', `Process tree kill completed (best-effort)`, {
+        pid,
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
+  }
+
+  /**
+   * Recursively collect all descendant PIDs of `rootPid` using `pgrep -P`.
+   * Returned bottom-up (leaves first) so callers can signal leaves before
+   * their ancestors. Best-effort: missing pgrep / non-zero exits return [].
+   *
+   * `private static` by intent — internal helper for killProcessTree only.
+   */
+  private static async collectDescendantPids(rootPid: number): Promise<number[]> {
+    const seen = new Set<number>();
+    const collected: number[] = [];
+
+    async function walk(pid: number): Promise<void> {
+      let stdout = '';
+      try {
+        const result = await execFileAsync('pgrep', ['-P', String(pid)], { timeout: 2_000 });
+        stdout = result.stdout;
+      } catch {
+        // pgrep exits 1 when no children match — that's fine, just return.
+        return;
+      }
+      const children = stdout
+        .split('\n')
+        .map(line => line.trim())
+        .filter(line => line.length > 0)
+        .map(line => Number.parseInt(line, 10))
+        .filter(n => Number.isFinite(n) && n > 0 && !seen.has(n));
+
+      for (const child of children) {
+        seen.add(child);
+        await walk(child);
+        // Bottom-up: push after recursion so leaves come first.
+        collected.push(child);
+      }
+    }
+
+    await walk(rootPid);
+    return collected;
   }
 
   /**
