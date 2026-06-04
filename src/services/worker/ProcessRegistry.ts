@@ -445,6 +445,29 @@ export function createUntrackedStderrTailSpawn(label: string) {
  */
 export function createPidCapturingSpawn(sessionDbId: number, dbPath?: string) {
   return (spawnOptions: ClaudeSpawnOptions) => {
+    // Kill any existing live process for this session before spawning a new one.
+    // Multiple processes sharing the same --resume UUID waste API credits and can
+    // conflict with each other (#1590).
+    const existing = getProcessBySession(sessionDbId);
+    if (existing && existing.process.exitCode === null) {
+      logger.warn('PROCESS', `Killing duplicate process PID ${existing.pid} before spawning new one for session ${sessionDbId}`, {
+        existingPid: existing.pid,
+        sessionDbId
+      });
+      let exited = false;
+      try {
+        existing.process.kill('SIGTERM');
+        exited = existing.process.exitCode !== null;
+      } catch {
+        // Already dead — safe to unregister immediately
+        exited = true;
+      }
+      if (exited) {
+        unregisterProcess(existing.pid);
+      }
+      // If still alive, the existing 'exit' handler (below) unregisters it.
+    }
+
     const child = spawnClaudeChild(spawnOptions);
 
     // Capture stderr for debugging spawn failures. The per-chunk DEBUG line is

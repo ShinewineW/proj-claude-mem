@@ -191,17 +191,37 @@ export class SessionRoutes extends BaseRouteHandler {
     // G1 fix: Start bypass lane consumer for this session (no-op if bypass disabled)
     this.bypassLane?.startForSession(session);
 
+    // Capture the AbortController that belongs to THIS generator run.
+    // session.abortController may be replaced (e.g. by stale-recovery) before the
+    // .catch handler runs, so binding it here prevents a stale rejection from
+    // checking against a brand-new controller (#1590).
+    const myController = session.abortController;
+
     session.generatorPromise = agent.startSession(session, this.workerService)
       .catch(error => {
         // Only log non-abort errors
-        if (session.abortController.signal.aborted) return;
+        if (myController.signal.aborted) return;
+
+        const errorMsg = error instanceof Error ? error.message : String(error);
+
+        // Treat SIGTERM (exit code 143) as intentional termination, not a crash.
+        // When the subprocess is killed externally, abort the controller so the
+        // .finally's decideGeneratorAction sees wasAborted=true and does NOT respawn (#1590).
+        if (errorMsg.includes('code 143') || errorMsg.includes('signal SIGTERM')) {
+          logger.warn('SESSION', 'Generator killed by external signal — aborting session to prevent respawn', {
+            sessionId: session.sessionDbId,
+            error: errorMsg
+          });
+          myController.abort();
+          return;
+        }
 
         session.lastGeneratorError = error instanceof Error ? error : new Error(String(error));
 
         logger.error('SESSION', `Generator failed`, {
           sessionId: session.sessionDbId,
           provider: 'claude',
-          error: error.message
+          error: errorMsg
         }, error);
 
         // Retry processing messages (retry_count+1). Known tradeoff: if .finally() also
