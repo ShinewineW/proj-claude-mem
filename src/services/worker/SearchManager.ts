@@ -128,6 +128,18 @@ export class SearchManager {
     let sessions: SessionSummarySearchResult[] = [];
     let prompts: UserPromptSearchResult[] = [];
     let chromaFailed = false;
+    // Composite-key (typePrefix:id) → Chroma rank index, captured from the semantic
+    // search order so the merged result set can restore relevance order. IDs are NOT
+    // globally unique across observations/sessions/prompts, so key by type.
+    // RANK_KEY_PREFIX is the SINGLE SOURCE for the key vocabulary on BOTH the write
+    // side (Step 4, keyed off Chroma doc_type) and the read side (Step 5, keyed off
+    // CombinedResult.type). Keeping them identical avoids silent lookup misses.
+    const RANK_KEY_PREFIX = {
+      observation: 'observation',
+      session: 'session',
+      prompt: 'prompt',
+    } as const;
+    let chromaRankByKey: Map<string, number> | null = null;
 
     // Determine which types to query based on type filter
     const searchObservations = !type || type === 'observations';
@@ -199,14 +211,22 @@ export class SearchManager {
         const sessionIds: number[] = [];
         const promptIds: number[] = [];
 
+        // Capture Chroma rank order before hydration (which re-sorts by date).
+        // Re-applied to the merged result set below when orderBy is relevance (default).
+        // Keys use RANK_KEY_PREFIX (same vocabulary as CombinedResult.type in Step 5).
+        chromaRankByKey = new Map<string, number>();
+        let rankIndex = 0;
         for (const item of recentMetadata) {
           const docType = item.meta?.doc_type;
           if (docType === 'observation' && searchObservations) {
             obsIds.push(item.id);
+            chromaRankByKey.set(`${RANK_KEY_PREFIX.observation}:${item.id}`, rankIndex++);
           } else if (docType === 'session_summary' && searchSessions) {
             sessionIds.push(item.id);
+            chromaRankByKey.set(`${RANK_KEY_PREFIX.session}:${item.id}`, rankIndex++);
           } else if (docType === 'user_prompt' && searchPrompts) {
             promptIds.push(item.id);
+            chromaRankByKey.set(`${RANK_KEY_PREFIX.prompt}:${item.id}`, rankIndex++);
           }
         }
 
@@ -310,11 +330,22 @@ export class SearchManager {
       }))
     ];
 
-    // Sort by date
+    // Sort by date when explicitly requested; otherwise preserve Chroma
+    // semantic-rank order (relevance) using the captured rank map. Falls back
+    // to date_desc when no rank map exists (filter-only / non-Chroma paths).
     if (options.orderBy === 'date_desc') {
       allResults.sort((a, b) => b.epoch - a.epoch);
     } else if (options.orderBy === 'date_asc') {
       allResults.sort((a, b) => a.epoch - b.epoch);
+    } else if (chromaRankByKey) {
+      const rankOf = (r: CombinedResult): number => {
+        // RANK_KEY_PREFIX[r.type] mirrors the Step 4 write side exactly.
+        const rank = chromaRankByKey!.get(`${RANK_KEY_PREFIX[r.type]}:${r.data.id}`);
+        return rank === undefined ? Number.MAX_SAFE_INTEGER : rank;
+      };
+      allResults.sort((a, b) => rankOf(a) - rankOf(b));
+    } else {
+      allResults.sort((a, b) => b.epoch - a.epoch);
     }
 
     // Apply offset and limit across all types
