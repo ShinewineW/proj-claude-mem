@@ -69,6 +69,13 @@ export class SearchManager {
       delete normalized.filePath;
     }
 
+    // Map singular concept to plural concepts (the by-concept endpoint uses the
+    // singular query param; findByConcept expects the plural key).
+    if (normalized.concept && !normalized.concepts) {
+      normalized.concepts = normalized.concept;
+      delete normalized.concept;
+    }
+
     // Parse comma-separated string params into arrays
     for (const key of ['concepts', 'files', 'obs_type'] as const) {
       if (normalized[key] && typeof normalized[key] === 'string') {

@@ -30,6 +30,7 @@ mock.module('../../../src/services/domain/ModeManager.js', () => ({
         };
         return icons[type] || '📌';
       },
+      getWorkEmoji: (_type: string) => '🛠️',
       loadMode: () => {},
     }),
   },
@@ -645,5 +646,28 @@ describe('P3: unified pagination — no double-offset', () => {
     expect(result.observations.map((o: any) => o.id)).toEqual(
       rankedSeed.map((o: any) => o.id)
     );
+  });
+});
+
+describe('Bug 5: singular concept maps to plural concepts', () => {
+  beforeAll(() => {
+    // Add an observation carrying a concept tag (shared db from top-level beforeAll)
+    const epoch = Date.now();
+    db.run(`INSERT INTO observations (memory_session_id, project, type, title, text, files_read, files_modified, concepts, created_at, created_at_epoch)
+            VALUES ('test-ms','test-project','discovery','Concept tagged obs','body','[]','[]', ?, datetime(? / 1000, 'unixepoch'), ?)`,
+      [JSON.stringify(['authentication']), epoch, epoch]);
+  });
+
+  it('findByConcept with singular concept param applies the filter', async () => {
+    const result = await searchManager.findByConcept({
+      concept: 'authentication',
+      project: 'test-project'
+    });
+    const text = result.content?.[0]?.text || '';
+    // After fix: concept→concepts mapping makes the filter apply → only the tagged obs.
+    expect(text).toContain('Concept tagged obs');
+    // Before fix: concepts=undefined → filter dropped → ALL project observations
+    // returned, so a non-tagged seed obs ('Test Observation 1') would leak in.
+    expect(text).not.toContain('Test Observation 1');
   });
 });
