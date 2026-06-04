@@ -1,12 +1,4 @@
-import { describe, it, expect, mock, beforeEach } from "bun:test";
-
-mock.module("../../../src/services/sync/ChromaMcpManager.js", () => ({
-  ChromaMcpManager: {
-    getInstance: () => ({
-      callTool: async () => ({ metadatas: [] }),
-    }),
-  },
-}));
+import { describe, it, expect, mock, beforeEach, afterEach, spyOn } from "bun:test";
 
 mock.module("../../../src/utils/logger.js", () => ({
   logger: {
@@ -38,7 +30,17 @@ mock.module("../../../src/shared/paths.js", () => ({
   DATA_DIR: '/tmp/test-claude-mem',
 }));
 
+import { ChromaMcpManager } from "../../../src/services/sync/ChromaMcpManager.js";
+
 describe("ChromaSync.ensureBackfilled(sessionStore)", () => {
+  beforeEach(() => {
+    spyOn(ChromaMcpManager, 'getInstance').mockReturnValue({ callTool: async () => ({ metadatas: [] }) } as any);
+  });
+
+  afterEach(() => {
+    mock.restore();
+  });
+
   it("reads from the injected SessionStore, not global DB", async () => {
     const { ChromaSync } = await import("../../../src/services/sync/ChromaSync.js");
     const sync = new ChromaSync("cm__test_12345678");
@@ -62,6 +64,11 @@ describe("ChromaSync.backfillAllProjects(dbManager)", () => {
   beforeEach(() => {
     Object.keys(mockProjects).forEach(k => delete mockProjects[k]);
     Object.keys(mockDbPaths).forEach(k => delete mockDbPaths[k]);
+    spyOn(ChromaMcpManager, 'getInstance').mockReturnValue({ callTool: async () => ({ metadatas: [] }) } as any);
+  });
+
+  afterEach(() => {
+    mock.restore();
   });
 
   it("iterates projects from allowlist", async () => {

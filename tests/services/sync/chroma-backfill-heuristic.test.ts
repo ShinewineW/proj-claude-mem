@@ -13,7 +13,7 @@
  * return a DIFFERENT path (simulating the workspace parent heuristic).
  */
 
-import { describe, it, expect, mock, beforeEach } from 'bun:test';
+import { describe, it, expect, mock, beforeEach, afterEach, spyOn } from 'bun:test';
 import { join } from 'path';
 
 // ---------------------------------------------------------------------------
@@ -40,14 +40,6 @@ mock.module('../../../src/utils/logger.js', () => ({
   },
 }));
 
-mock.module('../../../src/services/sync/ChromaMcpManager.js', () => ({
-  ChromaMcpManager: {
-    getInstance: () => ({
-      callTool: async () => ({ metadatas: [] }),
-    }),
-  },
-}));
-
 mock.module('../../../src/services/sqlite/SessionStore.js', () => ({
   SessionStore: class MockSessionStore {
     db = { prepare: () => ({ all: () => [], get: () => ({ count: 0 }) }) };
@@ -66,11 +58,21 @@ mock.module('../../../src/shared/project-allowlist.js', () => ({
   listEnabledProjects: () => ({ [TEST_PROJECT_ROOT]: { enabledAt: '2026-01-01T00:00:00Z' } }),
 }));
 
+import { ChromaMcpManager } from '../../../src/services/sync/ChromaMcpManager.js';
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
 describe('ChromaSync.backfillAllProjects uses direct path.join (not resolveProjectDbPath)', () => {
+  beforeEach(() => {
+    spyOn(ChromaMcpManager, 'getInstance').mockReturnValue({ callTool: async () => ({ metadatas: [] }) } as any);
+  });
+
+  afterEach(() => {
+    mock.restore();
+  });
+
   it('passes path.join(projectRoot, .claude, mem.db) to dbManager, not resolveProjectDbPath result', async () => {
     const { ChromaSync } = await import('../../../src/services/sync/ChromaSync.js');
 

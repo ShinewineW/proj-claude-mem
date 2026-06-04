@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, mock } from 'bun:test';
+import { describe, it, expect, beforeEach, afterEach, mock, spyOn } from 'bun:test';
 
 // Regression for upstream #1566: a duplicate-ID add conflict must be reconciled
 // in place via delete+add instead of being dropped until the next backfill.
@@ -21,20 +21,22 @@ const fakeChromaMcp = {
   },
 };
 
-mock.module('../../../src/services/sync/ChromaMcpManager.js', () => ({
-  ChromaMcpManager: { getInstance: () => fakeChromaMcp },
-}));
-
 mock.module('../../../src/utils/logger.js', () => ({
   logger: { info: () => {}, debug: () => {}, warn: () => {}, error: () => {}, failure: () => {} },
 }));
 
 import { ChromaSync } from '../../../src/services/sync/ChromaSync.js';
+import { ChromaMcpManager } from '../../../src/services/sync/ChromaMcpManager.js';
 
 describe('ChromaSync addDocuments duplicate-ID reconcile (#1566)', () => {
   beforeEach(() => {
     toolCalls = [];
     addAttempts = 0;
+    spyOn(ChromaMcpManager, 'getInstance').mockReturnValue(fakeChromaMcp as any);
+  });
+
+  afterEach(() => {
+    mock.restore();
   });
 
   it('deletes then re-adds the batch when add fails with "already exist"', async () => {

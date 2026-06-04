@@ -1,22 +1,22 @@
-import { describe, test, expect, mock, beforeEach } from 'bun:test';
+import { describe, test, expect, mock, beforeEach, afterEach, spyOn } from 'bun:test';
+import { ChromaMcpManager } from '../../../src/services/sync/ChromaMcpManager';
+import { ChromaSync } from '../../../src/services/sync/ChromaSync';
 
 describe('ChromaSync.deleteObservationDocs', () => {
   let chromaSync: any;
   let callToolMock: ReturnType<typeof mock>;
 
-  beforeEach(async () => {
+  beforeEach(() => {
     callToolMock = mock(async () => ({ content: [{ text: '{"success": true}' }] }));
+    spyOn(ChromaMcpManager, 'getInstance').mockReturnValue({ callTool: callToolMock } as any);
 
-    // Mock ChromaMcpManager before importing ChromaSync
-    const chromaMcpModule = await import('../../../src/services/sync/ChromaMcpManager');
-    (chromaMcpModule.ChromaMcpManager as any).getInstance = () => ({
-      callTool: callToolMock,
-    });
-
-    const { ChromaSync } = await import('../../../src/services/sync/ChromaSync');
     chromaSync = new ChromaSync('test_collection');
     // Mark collection as already created to skip ensureCollectionExists MCP call
     (chromaSync as any).collectionCreated = true;
+  });
+
+  afterEach(() => {
+    mock.restore();
   });
 
   test('generates correct candidate IDs and calls chroma_delete_documents', async () => {
@@ -42,11 +42,8 @@ describe('ChromaSync.deleteObservationDocs', () => {
   });
 
   test('does not throw on MCP error', async () => {
-    callToolMock = mock(async () => { throw new Error('MCP unavailable'); });
-    const chromaMcpModule = await import('../../../src/services/sync/ChromaMcpManager');
-    (chromaMcpModule.ChromaMcpManager as any).getInstance = () => ({
-      callTool: callToolMock,
-    });
+    const throwingMock = mock(async () => { throw new Error('MCP unavailable'); });
+    spyOn(ChromaMcpManager, 'getInstance').mockReturnValue({ callTool: throwingMock } as any);
     // Re-mark collection created
     (chromaSync as any).collectionCreated = true;
 
