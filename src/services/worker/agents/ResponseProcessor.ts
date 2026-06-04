@@ -96,6 +96,33 @@ export async function processAgentResponse(
 
   const summary = parseSummary(text, session.sessionDbId);
 
+  // Detect non-XML responses (auth errors, rate limits, garbled output).
+  // When the response has non-empty text, produced no observations, no summary,
+  // and contains no <observation>/<summary>/<skip_summary> tag, mark the in-flight
+  // pending messages as failed (retry, bounded by maxRetries) instead of
+  // confirming them — confirming would silently discard the queued batch (#1874).
+  const isNonXmlResponse = (
+    text.trim() &&
+    observations.length === 0 &&
+    !summary &&
+    !/<observation>|<summary>|<skip_summary\b/.test(text)
+  );
+
+  if (isNonXmlResponse) {
+    const preview = text.length > 200 ? `${text.slice(0, 200)}...` : text;
+    logger.warn('PARSER', `${agentName} returned non-XML response; marking messages as failed for retry (#1874)`, {
+      sessionId: session.sessionDbId,
+      preview,
+    });
+
+    const pendingStore = sessionManager.getPendingMessageStore(session.dbPath);
+    for (const messageId of session.processingMessageIds) {
+      pendingStore.markFailed(messageId);
+    }
+    session.processingMessageIds = [];
+    return;
+  }
+
   // Convert nullable fields to empty strings for storeSummary (if summary exists)
   let summaryForStore = normalizeSummaryForStorage(summary);
 

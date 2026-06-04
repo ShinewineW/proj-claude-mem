@@ -479,8 +479,8 @@ describe('ResponseProcessor', () => {
       expect(summary).toBeNull();
     });
 
-    it('should handle response with only text (no XML)', async () => {
-      const session = createMockSession();
+    it('marks messages failed (does not store) on response with only text (no XML)', async () => {
+      const session = createMockSession({ processingMessageIds: [7, 8] });
       const responseText = 'This is just plain text without any XML tags.';
 
       mockStoreObservations = mock(() => ({
@@ -494,6 +494,10 @@ describe('ResponseProcessor', () => {
         getSessionById: mock(() => ({ memory_session_id: 'memory-session-456' })),
       });
 
+      const markFailed = mock(() => ({ finalStatus: 'pending', retryCount: 1 }));
+      const confirmProcessed = mock(() => {});
+      (mockSessionManager.getPendingMessageStore as any) = () => ({ markFailed, confirmProcessed });
+
       await processAgentResponse(
         responseText,
         session,
@@ -505,9 +509,11 @@ describe('ResponseProcessor', () => {
         'TestAgent'
       );
 
-      expect(mockStoreObservations).toHaveBeenCalledTimes(1);
-      const [, , observations] = mockStoreObservations.mock.calls[0];
-      expect(observations).toHaveLength(0);
+      // Non-XML garbage must NOT be stored or confirmed — messages are failed for retry
+      expect(mockStoreObservations).not.toHaveBeenCalled();
+      expect(confirmProcessed).not.toHaveBeenCalled();
+      expect(markFailed).toHaveBeenCalledTimes(2);
+      expect(session.processingMessageIds).toHaveLength(0);
     });
   });
 
