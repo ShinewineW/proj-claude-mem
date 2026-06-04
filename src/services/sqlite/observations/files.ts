@@ -8,6 +8,21 @@ import { logger } from '../../../utils/logger.js';
 import type { SessionFilesResult } from './types.js';
 
 /**
+ * Safely parse a JSON array string from the DB.
+ * Handles legacy bare-path strings (e.g. "/foo/bar.ts") by wrapping them
+ * in an array instead of crashing with a SyntaxError (fix for #1359).
+ */
+export function parseFileList(value: string | null | undefined): string[] {
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed : [String(parsed)];
+  } catch {
+    return [value];
+  }
+}
+
+/**
  * Get aggregated files from all observations for a session
  */
 export function getFilesForSession(
@@ -29,29 +44,11 @@ export function getFilesForSession(
   const filesModifiedSet = new Set<string>();
 
   for (const row of rows) {
-    // Parse files_read
-    if (row.files_read) {
-      try {
-        const files = JSON.parse(row.files_read);
-        if (Array.isArray(files)) {
-          files.forEach(f => filesReadSet.add(f));
-        }
-      } catch {
-        logger.debug('DB', 'Malformed files_read JSON, skipping row');
-      }
-    }
+    // Parse files_read (recovers bare-path strings; #1359)
+    parseFileList(row.files_read).forEach(f => filesReadSet.add(f));
 
-    // Parse files_modified
-    if (row.files_modified) {
-      try {
-        const files = JSON.parse(row.files_modified);
-        if (Array.isArray(files)) {
-          files.forEach(f => filesModifiedSet.add(f));
-        }
-      } catch {
-        logger.debug('DB', 'Malformed files_modified JSON, skipping row');
-      }
-    }
+    // Parse files_modified (recovers bare-path strings; #1359)
+    parseFileList(row.files_modified).forEach(f => filesModifiedSet.add(f));
   }
 
   return {

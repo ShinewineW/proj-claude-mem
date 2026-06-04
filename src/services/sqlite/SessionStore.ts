@@ -11,6 +11,7 @@ import {
 } from '../../types/database.js';
 import type { PendingMessageStore } from './PendingMessageStore.js';
 import { computeObservationContentHash, findDuplicateObservation } from './observations/store.js';
+import { parseFileList } from './observations/files.js';
 import { computeSummaryContentHash, findDuplicateSummary } from './summaries/store.js';
 import { assertValidLimit } from './query-utils.js';
 import { MigrationRunner } from './migrations/runner.js';
@@ -516,21 +517,11 @@ export class SessionStore {
     const filesModifiedSet = new Set<string>();
 
     for (const row of rows) {
-      // Parse files_read
-      if (row.files_read) {
-        const files = JSON.parse(row.files_read);
-        if (Array.isArray(files)) {
-          files.forEach(f => filesReadSet.add(f));
-        }
-      }
+      // Parse files_read (recovers bare-path strings; #1359)
+      parseFileList(row.files_read).forEach(f => filesReadSet.add(f));
 
-      // Parse files_modified
-      if (row.files_modified) {
-        const files = JSON.parse(row.files_modified);
-        if (Array.isArray(files)) {
-          files.forEach(f => filesModifiedSet.add(f));
-        }
-      }
+      // Parse files_modified (recovers bare-path strings; #1359)
+      parseFileList(row.files_modified).forEach(f => filesModifiedSet.add(f));
     }
 
     return {
