@@ -30,6 +30,12 @@ const BLOCKED_ENV_VARS = [
   'CLAUDECODE',         // Prevent "cannot be launched inside another Claude Code session" error
   'CLAUDE_CODE_SESSION',  // Prevent nested session detection in child processes
   'MCP_SESSION_ID',       // Prevent MCP session ID inheritance
+  // Issue #2357: parent-shell effort config forwarded by the SDK as the
+  // Messages API `effort` param; models without effort support (Haiku 4.5,
+  // Sonnet 4.5) reject with a permanent HTTP 400 that retries forever.
+  // Safe because ENTRYPOINT/OAUTH are set explicitly AFTER the filter loop.
+  'CLAUDE_CODE_EFFORT_LEVEL',
+  'CLAUDE_CODE_ALWAYS_ENABLE_EFFORT',
 ];
 
 // Prefix blocklist — strips interop ports, session keys, etc.
