@@ -28,6 +28,28 @@ const MCP_CONNECTION_TIMEOUT_MS = 30_000;
 const RECONNECT_BACKOFF_MS = 10_000; // Don't retry connections faster than this after failure
 const DEFAULT_CHROMA_DATA_DIR = path.join(os.homedir(), '.claude-mem', 'chroma');
 
+const CHROMA_MCP_PINNED_VERSION = '0.2.6';
+
+// Override transitive dep resolutions for chroma-mcp 0.2.6 (issue #2371).
+//
+// Why onnxruntime>=1.20: the shipped all-MiniLM-L6-v2 model has pytorch-2.0
+// IR. Older onnxruntime versions can't parse it and fail every embedding
+// add with `[ONNXRuntimeError] : 7 : INVALID_PROTOBUF`. uv may otherwise
+// resolve to a too-old onnxruntime on macOS arm64 / Python 3.13 depending
+// on cache state, so we force a floor.
+//
+// Why protobuf<7: protobuf 7.x's stricter generated-file check rejects
+// opentelemetry's _pb2 stubs (generated with protoc <3.19), throwing
+// `TypeError: Descriptors cannot be created directly` at chromadb import.
+// Capping below 7 lands on protobuf 6.x which opentelemetry tolerates.
+//
+// These pins are runtime-only (uvx --with) so we don't have to fork
+// chroma-mcp upstream — they apply only to claude-mem's spawned subprocess.
+const CHROMA_MCP_DEP_OVERRIDES: ReadonlyArray<string> = [
+  'onnxruntime>=1.20',
+  'protobuf<7',
+];
+
 export class ChromaMcpManager {
   private static instance: ChromaMcpManager | null = null;
   private client: Client | null = null;
@@ -185,6 +207,8 @@ export class ChromaMcpManager {
     const chromaMode = settings.CLAUDE_MEM_CHROMA_MODE || 'local';
     const pythonVersion = process.env.CLAUDE_MEM_PYTHON_VERSION || '3.13';
 
+    const depOverrideFlags = CHROMA_MCP_DEP_OVERRIDES.flatMap(spec => ['--with', spec]);
+
     if (chromaMode === 'remote') {
       const chromaHost = settings.CLAUDE_MEM_CHROMA_HOST || '127.0.0.1';
       const chromaPort = settings.CLAUDE_MEM_CHROMA_PORT || '8000';
@@ -195,7 +219,8 @@ export class ChromaMcpManager {
 
       const args = [
         '--python', pythonVersion,
-        'chroma-mcp',
+        ...depOverrideFlags,
+        `chroma-mcp==${CHROMA_MCP_PINNED_VERSION}`,
         '--client-type', 'http',
         '--host', chromaHost,
         '--port', chromaPort
@@ -221,7 +246,8 @@ export class ChromaMcpManager {
     // Local mode: persistent client with data directory
     return [
       '--python', pythonVersion,
-      'chroma-mcp',
+      ...depOverrideFlags,
+      `chroma-mcp==${CHROMA_MCP_PINNED_VERSION}`,
       '--client-type', 'persistent',
       '--data-dir', DEFAULT_CHROMA_DATA_DIR.replace(/\\/g, '/')
     ];
