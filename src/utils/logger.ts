@@ -146,8 +146,15 @@ class Logger {
       const keys = Object.keys(data);
       if (keys.length === 0) return '{}';
       if (keys.length <= 3) {
-        // Show small objects inline
-        return JSON.stringify(data);
+        // Show small objects inline. Guard the stringify: a circular object of
+        // ANY size must not throw here — formatData is the fallback for the
+        // DEBUG-mode stringify in log(), so an unguarded throw would re-crash
+        // the caller (hook/worker) the fallback exists to protect.
+        try {
+          return JSON.stringify(data);
+        } catch {
+          return `{${keys.length} keys: ${keys.join(', ')}} (uninspectable)`;
+        }
       }
       return `{${keys.length} keys: ${keys.slice(0, 3).join(', ')}...}`;
     }
