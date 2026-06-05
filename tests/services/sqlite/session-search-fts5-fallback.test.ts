@@ -65,4 +65,34 @@ describe('SessionSearch FTS5 fallback', () => {
   it('non-matching query returns empty', () => {
     expect(search.searchObservations('zzznomatch', { project: 'p' }).length).toBe(0);
   });
+
+  // FTS5 has its own query syntax, so ordinary user strings containing FTS
+  // operators / unbalanced quotes throw a SQLite "fts5: syntax error" instead
+  // of returning a normal result. The MATCH execution must be wrapped so a
+  // malformed query degrades to a best-effort result, never a 500.
+  describe('malformed FTS query does not throw (best-effort)', () => {
+    const malformed = ['foo"bar', 'cache:miss', 'a AND', 'NEAR(', '(unbalanced', '"', '*', '^foo', 'a OR OR b'];
+
+    for (const q of malformed) {
+      it(`searchObservations(${JSON.stringify(q)}) returns an array without throwing`, () => {
+        let out: any;
+        expect(() => { out = search.searchObservations(q, { project: 'p' }); }).not.toThrow();
+        expect(Array.isArray(out)).toBe(true);
+      });
+
+      it(`searchSessions(${JSON.stringify(q)}) returns an array without throwing`, () => {
+        let out: any;
+        expect(() => { out = search.searchSessions(q, { project: 'p' }); }).not.toThrow();
+        expect(Array.isArray(out)).toBe(true);
+      });
+    }
+
+    it('a malformed query that LIKE-matches still returns the row via fallback', () => {
+      // "authentication:flow" is invalid FTS (column-filter syntax on a
+      // non-existent column) but the LIKE fallback should still surface the row
+      // whose title contains "authentication".
+      const out = search.searchObservations('authentication"', { project: 'p' });
+      expect(Array.isArray(out)).toBe(true);
+    });
+  });
 });

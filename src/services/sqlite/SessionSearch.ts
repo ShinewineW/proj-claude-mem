@@ -336,7 +336,41 @@ export class SessionSearch {
       LIMIT ? OFFSET ?
     `;
     ftsParams.push(limit, offset);
-    return this.db.prepare(ftsSql).all(...ftsParams) as ObservationSearchResult[];
+    try {
+      return this.db.prepare(ftsSql).all(...ftsParams) as ObservationSearchResult[];
+    } catch (error) {
+      // FTS5 has its own query grammar, so ordinary user strings (e.g. foo"bar,
+      // cache:miss, unbalanced quotes/operators) raise a SQLite syntax error.
+      // Degrade to a best-effort LIKE scan instead of surfacing a 500.
+      logger.warn('DB', 'FTS5 MATCH failed for query — falling back to LIKE', {}, error as Error);
+      return this.likeFallbackObservations(query, { limit, offset, orderBy, ...filters });
+    }
+  }
+
+  /**
+   * Best-effort LIKE fallback for observation text search when an FTS5 MATCH
+   * query is syntactically invalid. Scans the same fields FTS indexes.
+   */
+  private likeFallbackObservations(query: string, options: SearchOptions): ObservationSearchResult[] {
+    const { limit = 50, offset = 0, orderBy = 'relevance', ...filters } = options;
+    const params: any[] = [];
+    const filterClause = this.buildFilterClause(filters, params, 'o');
+    const whereExtra = filterClause ? `AND ${filterClause}` : '';
+    const like = `%${query}%`;
+    // relevance has no FTS rank in the fallback — order by recency.
+    const orderClause = orderBy === 'date_asc'
+      ? 'ORDER BY o.created_at_epoch ASC'
+      : 'ORDER BY o.created_at_epoch DESC';
+    const sql = `
+      SELECT o.*, o.discovery_tokens
+      FROM observations o
+      WHERE (o.title LIKE ? OR o.subtitle LIKE ? OR o.narrative LIKE ? OR o.text LIKE ? OR o.facts LIKE ? OR o.concepts LIKE ?)
+      ${whereExtra}
+      ${orderClause}
+      LIMIT ? OFFSET ?
+    `;
+    const allParams = [like, like, like, like, like, like, ...params, limit, offset];
+    return this.db.prepare(sql).all(...allParams) as ObservationSearchResult[];
   }
 
   /**
@@ -398,7 +432,40 @@ export class SessionSearch {
       LIMIT ? OFFSET ?
     `;
     ftsParams.push(limit, offset);
-    return this.db.prepare(ftsSql).all(...ftsParams) as SessionSummarySearchResult[];
+    try {
+      return this.db.prepare(ftsSql).all(...ftsParams) as SessionSummarySearchResult[];
+    } catch (error) {
+      // Malformed FTS5 query (see searchObservations) — degrade to LIKE.
+      logger.warn('DB', 'FTS5 MATCH failed for session query — falling back to LIKE', {}, error as Error);
+      return this.likeFallbackSessions(query, { limit, offset, orderBy, ...filters });
+    }
+  }
+
+  /**
+   * Best-effort LIKE fallback for session-summary text search when an FTS5
+   * MATCH query is syntactically invalid. Scans the same fields FTS indexes.
+   */
+  private likeFallbackSessions(query: string, options: SearchOptions): SessionSummarySearchResult[] {
+    const { limit = 50, offset = 0, orderBy = 'relevance', ...filters } = options;
+    const params: any[] = [];
+    const sessionFilterOptions = { ...filters };
+    delete sessionFilterOptions.type;
+    const filterClause = this.buildFilterClause(sessionFilterOptions, params, 's');
+    const whereExtra = filterClause ? `AND ${filterClause}` : '';
+    const like = `%${query}%`;
+    const orderClause = orderBy === 'date_asc'
+      ? 'ORDER BY s.created_at_epoch ASC'
+      : 'ORDER BY s.created_at_epoch DESC';
+    const sql = `
+      SELECT s.*, s.discovery_tokens
+      FROM session_summaries s
+      WHERE (s.request LIKE ? OR s.investigated LIKE ? OR s.learned LIKE ? OR s.completed LIKE ? OR s.next_steps LIKE ? OR s.notes LIKE ?)
+      ${whereExtra}
+      ${orderClause}
+      LIMIT ? OFFSET ?
+    `;
+    const allParams = [like, like, like, like, like, like, ...params, limit, offset];
+    return this.db.prepare(sql).all(...allParams) as SessionSummarySearchResult[];
   }
 
   /**
