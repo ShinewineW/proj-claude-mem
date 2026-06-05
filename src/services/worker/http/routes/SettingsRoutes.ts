@@ -367,13 +367,17 @@ export class SettingsRoutes extends BaseRouteHandler {
     if (!existsSync(settingsPath)) {
       const defaults = SettingsDefaultsManager.getAllDefaults();
 
-      // Ensure directory exists
+      // Ensure directory exists (owner-only — settings.json can hold API keys)
       const dir = path.dirname(settingsPath);
       if (!existsSync(dir)) {
-        mkdirSync(dir, { recursive: true });
+        mkdirSync(dir, { recursive: true, mode: 0o700 });
       }
+      chmodSync(dir, 0o700);
 
-      writeFileSync(settingsPath, JSON.stringify(defaults, null, 2), 'utf-8');
+      // Create owner-only. The mode arg applies only on creation (umask-masked);
+      // chmodSync also tightens a pre-existing world-readable file.
+      writeFileSync(settingsPath, JSON.stringify(defaults, null, 2), { encoding: 'utf-8', mode: 0o600 });
+      chmodSync(settingsPath, 0o600);
       logger.info('SETTINGS', 'Created settings file with defaults', { settingsPath });
     }
   }

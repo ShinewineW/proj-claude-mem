@@ -5,7 +5,7 @@
  * Provides methods to get defaults with optional environment variable overrides.
  */
 
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
+import { readFileSync, writeFileSync, existsSync, mkdirSync, chmodSync } from "fs";
 import { join, dirname } from "path";
 import { homedir } from "os";
 // NOTE: Do NOT import logger here - it creates a circular dependency
@@ -267,13 +267,17 @@ export class SettingsDefaultsManager {
         try {
           const dir = dirname(settingsPath);
           if (!existsSync(dir)) {
-            mkdirSync(dir, { recursive: true });
+            mkdirSync(dir, { recursive: true, mode: 0o700 });
           }
-          writeFileSync(
-            settingsPath,
-            JSON.stringify(defaults, null, 2),
-            "utf-8",
-          );
+          chmodSync(dir, 0o700);
+          // settings.json can hold API keys — create owner-only. The mode arg
+          // applies only on creation (and is umask-masked); chmodSync also
+          // tightens a pre-existing world-readable file.
+          writeFileSync(settingsPath, JSON.stringify(defaults, null, 2), {
+            encoding: "utf-8",
+            mode: 0o600,
+          });
+          chmodSync(settingsPath, 0o600);
           // Use console instead of logger to avoid circular dependency
           console.log(
             "[SETTINGS] Created settings file with defaults:",
@@ -301,13 +305,14 @@ export class SettingsDefaultsManager {
         // Migrate from nested to flat schema
         flatSettings = settings.env;
 
-        // Auto-migrate the file to flat schema
+        // Auto-migrate the file to flat schema (keep it owner-only — it can
+        // hold API keys; rewrites a pre-existing file so chmodSync after).
         try {
-          writeFileSync(
-            settingsPath,
-            JSON.stringify(flatSettings, null, 2),
-            "utf-8",
-          );
+          writeFileSync(settingsPath, JSON.stringify(flatSettings, null, 2), {
+            encoding: "utf-8",
+            mode: 0o600,
+          });
+          chmodSync(settingsPath, 0o600);
           console.log(
             "[SETTINGS] Migrated settings file from nested to flat schema:",
             settingsPath,
