@@ -16,7 +16,10 @@ export function parseFileList(value: string | null | undefined): string[] {
   if (!value) return [];
   try {
     const parsed = JSON.parse(value);
-    return Array.isArray(parsed) ? parsed : [String(parsed)];
+    // Coerce array elements through String() too: a JSON array of non-strings
+    // (e.g. [1,2,3], [null], [{}]) must still satisfy the string[] contract so
+    // downstream Set<string> / path operations never receive a non-string.
+    return Array.isArray(parsed) ? parsed.map(String) : [String(parsed)];
   } catch {
     return [value];
   }

@@ -18,8 +18,12 @@ export function computeSummaryContentHash(
   request: string | null,
   investigated: string | null = null
 ): string {
+  // Join with \x00 (mirrors computeObservationContentHash) so boundary-shifted
+  // field vectors don't false-dedup: raw concatenation made ("a","b","") and
+  // ("a","","b") hash identically, dropping a genuinely-different summary as a
+  // duplicate inside the 30s dedup window.
   return createHash('sha256')
-    .update(memorySessionId + (request || '') + (investigated || ''))
+    .update([memorySessionId || '', request || '', investigated || ''].join('\x00'))
     .digest('hex')
     .slice(0, 16);
 }
