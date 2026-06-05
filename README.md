@@ -53,6 +53,18 @@
 - **Session 隔离**：每个会话独立 `sessionDbId`，`Map<sessionDbId, ActiveSession>` 无共享可变状态
 - **消息队列**：`pending_messages` 表使用 claim-confirm 模式，60 秒超时自动重置
 
+### 其他 fork 增强
+
+在上游基础上，本 fork 还引入了一批可靠性与性能子系统：
+
+- **SummaryLane**：全局单消费者摘要通道，在独立的 fresh `query()` 子进程上生成摘要（不复用 observer session），规避了 observer 角色 priming 导致的摘要失效问题
+- **SDK 锁定**（`src/sdk/hardened-options.ts`）：observer 与 fresh-summarize 会话在配置层强制「无工具访问」（`tools:[]` + `permissionMode` + `canUseTool` 多重防御 + cwd jail），不继承外部 settings/MCP
+- **SDK token 优化**（Phase 1+2）：模式过滤、字段截断、安全批处理，以及历史长度/token 主动重置
+- **Pool starvation 防御**（三层）：stale 检测 + pool cooldown + backpressure，避免 pool 超时导致消息永久丢失
+- **Bypass Lane**：并行 REST 旁路消费者处理 observation（provider 为 Gemini / OpenCode Go，主通道始终走 Claude SDK），含分级冷却的熔断器
+- **Chroma per-project 集合**：每个项目独立向量集合 `cm__<name>_<8char-hash>`，语义搜索同样隔离
+- **其他**：schema 自动修复、content-hash 去重、`settings.json` / `.env` owner-only 0600 权限、FTS5 不可用时回退 LIKE 查询
+
 ## ⚠️ 与原版 claude-mem 的兼容性
 
 **本 fork 与原版 [claude-mem](https://github.com/thedotmack/claude-mem) 不能共存。**
@@ -143,6 +155,8 @@ bash ~/.claude/plugins/cache/thedotmack/claude-mem/10.5.2/scripts/uninstall.sh
 | `/mem-enable` | 将当前项目加入记忆录制白名单 |
 | `/mem-disable` | 从白名单移除当前项目，停止录制（已有数据保留） |
 | `/mem-search` | 搜索当前项目的历史记忆 |
+| `/mem-timeline` | 按时间线浏览当前项目的会话与记忆 |
+| `/mem-weekly-digests` | 生成每周记忆摘要 |
 | `/smart-explore` | 基于 tree-sitter AST 的 token 优化代码结构搜索 |
 | `/make-plan` | 创建分阶段实施计划（含文档发现） |
 | `/do` | 使用 subagents 执行分阶段计划 |
@@ -183,7 +197,7 @@ proj-claude-mem/
 ├── plugin/                    # 构建产物
 │   ├── hooks/hooks.json       # Hook 事件注册
 │   ├── scripts/               # CJS bundles（worker-service, mcp-server, context-generator）+ uninstall.sh
-│   ├── skills/                # 内置技能（mem-enable, mem-disable, mem-search 等）
+│   ├── skills/                # 内置技能（mem-enable, mem-disable, mem-search, mem-timeline, mem-weekly-digests 等）
 │   ├── modes/                 # 多语言模式配置
 │   └── ui/                    # Viewer 前端（React → 单文件 HTML）
 ├── scripts/                   # 构建和同步脚本
@@ -192,9 +206,13 @@ proj-claude-mem/
 
 ## 开发与测试
 
+测试套件当前 **2163 通过 / 0 失败**（235 个文件）。
+
+> **注意**：在仓库根目录直接运行 `bun test` 会连带扫描 `attn_sink/upstream-claude-mem/` 中的上游克隆（约 52 个无关的上游失败）。fork 自身的计数请用 `./tests/` 作为路径前缀运行。
+
 ```bash
-# 运行所有测试
-bun test
+# 运行 fork 自身的全部测试（避开 attn_sink 上游克隆）
+bun test ./tests/
 
 # 项目隔离专项测试
 bun test tests/shared/project-db.test.ts
@@ -227,4 +245,4 @@ bun run worker:logs
 
 本项目 fork 自 [claude-mem](https://github.com/thedotmack/claude-mem)（作者：Alex Newman），基于 AGPL-3.0 许可证。
 
-上游项目提供了完整的 Claude Code 持久记忆系统，本 fork 在此基础上增加了 per-project 数据库隔离和 opt-in 白名单机制。
+上游项目提供了完整的 Claude Code 持久记忆系统，本 fork 在此基础上增加了 per-project 数据库隔离和 opt-in 白名单机制。fork 维护自己的版本线，并选择性回移上游的修复与特性（最近一轮为 v10.6.1→v13.4.0 的 41 项审计移植）；移植来源与许可证追溯见 [`docs/PROVENANCE.md`](docs/PROVENANCE.md)。

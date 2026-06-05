@@ -14,7 +14,9 @@ Claude-mem is a Claude Code plugin providing persistent memory across sessions. 
 
 **Bypass Lane** (`src/services/worker/BypassLane.ts`) - Parallel REST consumer for observations (Gemini/OpenCode Go), main channel always Claude SDK. OpenCode path sends `thinking:{type:"disabled"}` to suppress reasoning-model CoT, and classifies failures into `quota`/`auth`/`transient`/`client` buckets with tiered cooldowns (6h / 6h / 20min / no-trip).
 
-**Fresh Summarize Path** (`src/services/worker/fresh-summarize.ts`, `fresh-summarize-store.ts`, `summarize-salvage.ts`, `SDKAgent.runFreshSummarize`) - Summaries run on a fresh `query()` subprocess (no resume, no observer priming) to bypass the observer-session role conditioning that empirically produced 0% valid `<summary>` XML in production. Pre-queue salvage runs first; on fallthrough dispatches to `onRunFreshSummarizeCallback`. Atomic store re-reads `memory_session_id` inside a transaction to avoid FK race. Accept-loss-on-failure policy — pre-queue salvage catches the next trigger. Full architecture → workspace `.claude/rules/architecture-details.md` § "Fresh SDK Query Summarize".
+**Fresh Summarize Path** (`src/services/worker/SummaryLane.ts`, `fresh-summarize.ts`, `fresh-summarize-store.ts`, `fresh-summarize-deps.ts`) - Summaries run on a fresh `query()` subprocess via the **global single-consumer `SummaryLane`**, which claims `type='summarize'` rows from `pending_messages` and calls `runFreshSummarizeQuery` (no resume, no observer priming) to bypass the observer-session role conditioning that empirically produced 0% valid `<summary>` XML in production. The Stop hook is fire-and-forget (~5ms); turn identity is `(content_session_id, prompt_number)`. The atomic store re-reads `memory_session_id` inside a transaction to avoid the FK race; salvage synthesis was removed entirely (no fabricated summaries). Full architecture → workspace `.claude/rules/architecture-details.md` § "Fresh SDK Query Summarize".
+
+**SDK Observer/Summarize Lockdown** (`src/sdk/hardened-options.ts`) - Single source of truth for security-sensitive SDK options that lock observer and fresh-summarize sessions to no-tool-access (defense-in-depth: `tools:[]`, `allowedTools:[]`, `disallowedTools`, `permissionMode:'dontAsk'`, `canUseTool` deny-all backstop, cwd jail, `mcpServers:{}`, `settingSources:[]`).
 
 **Database** (`src/services/sqlite/`) - Per-project SQLite3 at `<repo>/.claude/mem.db`, managed by `DbConnectionPool` (`src/shared/project-db.ts`). Falls back to global `~/.claude-mem/claude-mem.db` when no project context is available.
 
@@ -22,11 +24,7 @@ Claude-mem is a Claude Code plugin providing persistent memory across sessions. 
 
 **DB Path Resolution (legacy)** (`src/shared/paths.ts: resolveProjectDbPath()`) - Resolves per-project DB path: env override → git worktree parent → git root → cwd. All worktrees of the same repo share one database.
 
-**Search Skill** (`plugin/skills/mem-search/SKILL.md`) - HTTP API for searching past work, auto-invoked when users ask about history
-
-**Planning Skill** (`plugin/skills/make-plan/SKILL.md`) - Orchestrator instructions for creating phased implementation plans with documentation discovery
-
-**Execution Skill** (`plugin/skills/do/SKILL.md`) - Orchestrator instructions for executing phased plans using subagents
+**Skills** (`plugin/skills/`) — 8 skills: `mem-search` (search past work), `make-plan` (phased implementation plans), `do` (execute plans via subagents), `mem-enable` / `mem-disable` (per-project opt-in toggle), `mem-timeline` (session history timeline), `mem-weekly-digests` (weekly activity digest), `smart-explore` (exploratory codebase analysis).
 
 **Chroma** (`src/services/sync/ChromaSync.ts`) - Per-project vector embeddings for semantic search, collection naming: `cm__<name>_<8char-hash>`
 

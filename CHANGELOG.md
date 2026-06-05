@@ -1,6 +1,49 @@
 # Changelog
 
-All notable changes to claude-mem.
+`proj-claude-mem` — a per-project-isolation fork of [claude-mem](https://github.com/thedotmack/claude-mem). The fork keeps its own version line (`v1.x`) and is fully separated from upstream. The upstream `v10.x` entries near the bottom are the inherited base (fork point: upstream **v10.5.2**). The auto-generator (`scripts/generate-changelog.js`) reads upstream releases, so the fork sections below are maintained by hand.
+
+## [Unreleased] — fork development since v1.4
+
+### 2026-06 — Upstream v10.6.1→v13.4.0 selective sync + audit hardening
+
+Ported **41 audit-confirmed** upstream fixes from v10.6.1→v13.4.0 (security / data-integrity / reliability); ~52 items deliberately excluded (Server Beta, Worktree adoption, Knowledge Agents, summary-salvage evolution). Per-commit upstream source + license index: `docs/PROVENANCE.md`. Fork stays AGPL-3.0; Apache-2.0-derived files carry per-file SPDX headers + root `NOTICE`.
+
+- **Security**: real no-tools lockdown for observer + fresh-summarize SDK sessions (`src/sdk/hardened-options.ts`: `tools:[]`/`canUseTool` deny-all/`mcpServers:{}`/`settingSources:[]`); `settings.json`/`.env` owner-only `0600` on all create paths; OpenCode base-URL scheme/host validation (SSRF guard); block `CLAUDE_CODE_EFFORT_LEVEL`/`ALWAYS_ENABLE_EFFORT` from the SDK subprocess; strip `<system-reminder>`/`<persisted-output>`/privacy tags at the persistence edge.
+- **Data integrity**: NUL-byte delimiter in observation content-hash (collision fix); `parseFileList` bare-path recovery; non-XML responses are `markFailed` (retried) instead of silently confirmed-and-deleted.
+- **Reliability**: session-lifecycle guards (stale-controller, SIGTERM-as-intentional, kill-duplicate-before-spawn scoped by project `dbPath`, wall-clock cap `CLAUDE_MEM_SESSION_MAX_AGE_MS` default 4h); context-overflow reset; chroma-mcp tree-kill + spawn from `$HOME` + onnxruntime/protobuf pin; atomic crash/symlink-safe JSON writer; FTS5/LIKE search fallback when Chroma is absent; Chroma relevance ordering; atomic socket-bind `isPortInUse`.
+- **Features**: ~53% context-output compression; `mem-weekly-digests` skill; generic OpenAI-compatible base-URL resolver (`CLAUDE_MEM_OPENCODE_BASE_URL`).
+- **Removed**: the OpenRouter bypass provider (generalizing OpenCode to an OpenAI-compatible client made it redundant) — bypass is now **Gemini + OpenCode Go** only.
+
+### 2026-05 — OpenCode Go provider + isolation hardening
+
+- Added **OpenCode Go** as a bypass provider (OpenAI-compatible `…/zen/go/v1`; reasoning model — requests carry `thinking:{type:"disabled"}` so `max_tokens` is not burned on internal CoT); tiered cooldowns (quota/auth 6h, transient 20min, client no-trip); subscription-vs-balance billing detection.
+- BypassLane observation FK-race fix (single-transaction atomic store); SDKAgent filters ephemeral `system:hook_*` session IDs to stop observation mis-attribution.
+
+### 2026-04 — SummaryLane fresh-query summarize refactor
+
+- Replaced observer-session summarize (which produced **0% valid `<summary>` XML** in production) with a **global single-consumer fresh `query()`** path (`SummaryLane`). Fixed a 7-layer root-cause chain (empty-transcript propagation, 10s→60s drain window, salvage poisoning, Agent-SDK empty-arg spawn crash, concurrent-`memory_session_id` FK race). Turn-key `(content_session_id, prompt_number)` identity; salvage synthesis removed.
+
+---
+
+## Fork releases (proj-claude-mem)
+
+## [v1.4] - 2026-03-31 — SDK Token Optimization Phase 2
+Generator safety nets (S1–S6) + centralized `decideGeneratorAction()` decision function; Layer C proactive history reset.
+
+## [v1.3] - 2026-03-30 — Pool Defense, Bypass Lane, Token Optimization
+3-layer pool-starvation defense (stale detection + cooldown + backpressure); bypass lane (Gemini) for parallel observation processing; SDK token optimization Phase 1 (pattern filtering + field truncation + safe batching).
+
+## [v1.2] - 2026-03-17 — Agent Pool Zombie Prevention & Reliability Hardening
+Response watchdog + active pool reclamation; dead-letter replay & generator-abandon fix; periodic ghost-session cleanup; per-project isolation audit fixes (B/I series).
+
+## [v1.1] - 2026-03-15 — Reliability improvements
+Orphan-reaper fix; fallback queue (preserve observations/summaries when the worker is unreachable); proactive summarize before stale-session reap; defensive hardening.
+
+---
+
+## Upstream base (inherited from claude-mem, ≤ v10.5.2)
+
+> The fork point is upstream **v10.5.2**. The entries below are the upstream changelog inherited at fork time; they are not the fork's own releases.
 
 ## [v10.5.2] - 2026-02-26
 
