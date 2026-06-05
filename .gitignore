@@ -49,3 +49,6 @@ plugin/scripts/*.cjs
 .worktrees/
 attn_sink/
 /attn_sink/
+
+# Harness scheduler runtime lock
+.claude/scheduled_tasks.lock
