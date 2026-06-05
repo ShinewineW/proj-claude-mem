@@ -1,6 +1,6 @@
 # Claude-Mem: AI Development Instructions
 
-Fork of [claude-mem](https://github.com/thedotmack/claude-mem) with per-project database isolation. Base: upstream v10.5.2. **Audited and synchronized through upstream v10.6.1 (`9f529a30`)**. See workspace `.claude/CLAUDE.md` → "Upstream Sync Status" for full divergence tracking.
+Fork of [claude-mem](https://github.com/thedotmack/claude-mem) with per-project database isolation. Base: upstream v10.5.2. **Audited and synchronized through upstream v10.6.1 (`9f529a30`)**; the `feat/upstream-cherrypick` branch additionally ports 41 actionable v10.6.1→v13.4.0 fixes (security / data-integrity / reliability) selected by audit — see `docs/PROVENANCE.md` for the per-commit upstream source + license index. See workspace `.claude/CLAUDE.md` → "Upstream Sync Status" for full divergence tracking.
 
 Claude-mem is a Claude Code plugin providing persistent memory across sessions. It captures tool usage, compresses observations using the Claude Agent SDK, and injects relevant context into future sessions.
 
@@ -42,7 +42,7 @@ Claude-mem is a Claude Code plugin providing persistent memory across sessions. 
 
 ```bash
 /opt/homebrew/bin/bun run build-and-sync   # Build, deploy to cache + marketplace discovery, restart worker
-/opt/homebrew/bin/bun test                  # Run all tests (1933 pass, 0 fail, 0 skip)
+/opt/homebrew/bin/bun test                  # Run all tests (2160 pass, 0 fail on feat/upstream-cherrypick)
 ```
 
 ## Configuration
