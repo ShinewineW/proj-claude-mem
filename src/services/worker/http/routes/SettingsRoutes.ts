@@ -84,6 +84,7 @@ export class SettingsRoutes extends BaseRouteHandler {
       'CLAUDE_MEM_OPENCODE_MODEL',
       'CLAUDE_MEM_OPENCODE_MAX_CONTEXT_MESSAGES',
       'CLAUDE_MEM_OPENCODE_MAX_TOKENS',
+      'CLAUDE_MEM_OPENCODE_BASE_URL',
       // System Configuration
       'CLAUDE_MEM_LOG_LEVEL',
       'CLAUDE_CODE_PATH',
@@ -160,6 +161,23 @@ export class SettingsRoutes extends BaseRouteHandler {
       const validGeminiModels = ['gemini-2.5-flash-lite', 'gemini-2.5-flash', 'gemini-3-flash-preview'];
       if (!validGeminiModels.includes(settings.CLAUDE_MEM_GEMINI_MODEL)) {
         return { valid: false, error: 'CLAUDE_MEM_GEMINI_MODEL must be one of: gemini-2.5-flash-lite, gemini-2.5-flash, gemini-3-flash-preview' };
+      }
+    }
+
+    // Validate CLAUDE_MEM_OPENCODE_BASE_URL — must be a valid http(s) URL when
+    // set (blank = use the default OpenCode endpoint). The bypass lane sends the
+    // OpenCode Bearer key + observation content here, so a non-http(s) / malformed
+    // value is rejected rather than persisted (mirrors the resolver's guard).
+    if (settings.CLAUDE_MEM_OPENCODE_BASE_URL && String(settings.CLAUDE_MEM_OPENCODE_BASE_URL).trim() !== '') {
+      const candidate = String(settings.CLAUDE_MEM_OPENCODE_BASE_URL).trim();
+      let parsed: URL | null = null;
+      try {
+        parsed = new URL(candidate);
+      } catch {
+        parsed = null;
+      }
+      if (!parsed || (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') || parsed.hostname.length === 0) {
+        return { valid: false, error: 'CLAUDE_MEM_OPENCODE_BASE_URL must be a valid http(s) URL' };
       }
     }
 

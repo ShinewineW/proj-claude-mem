@@ -73,3 +73,34 @@ describe('SummaryLane max-cap settings persistence', () => {
     expect(content).toMatch(/between 1 and 2000/);
   });
 });
+
+describe('OpenCode base URL settings persistence (fix F)', () => {
+  test('CLAUDE_MEM_OPENCODE_BASE_URL is in SettingsRoutes write-back allowlist', () => {
+    // Without this, BypassLane consumes the key but POST /api/settings silently
+    // drops it (200 OK, no effect).
+    const content = readFileSync(join(SRC_ROOT, 'services/worker/http/routes/SettingsRoutes.ts'), 'utf-8');
+    expect(content).toContain("'CLAUDE_MEM_OPENCODE_BASE_URL'");
+  });
+
+  test('CLAUDE_MEM_OPENCODE_BASE_URL has http(s) validation in SettingsRoutes', () => {
+    const content = readFileSync(join(SRC_ROOT, 'services/worker/http/routes/SettingsRoutes.ts'), 'utf-8');
+    // Must reject non-http(s) / malformed values consistent with the resolver.
+    expect(content).toMatch(/CLAUDE_MEM_OPENCODE_BASE_URL[\s\S]{0,400}(http|https|valid URL)/);
+  });
+});
+
+describe('OpenCode base URL validation logic (behavioral, isolated)', () => {
+  // validateSettings is pure (no I/O), so we can drive it directly through a
+  // fresh instance without touching the production settings file.
+  test('rejects a non-http(s) base URL with a 4xx-style validation error', async () => {
+    const { SettingsRoutes } = await import('../../src/services/worker/http/routes/SettingsRoutes.js');
+    const routes: any = new SettingsRoutes();
+    const bad = routes.validateSettings({ CLAUDE_MEM_OPENCODE_BASE_URL: 'ftp://evil/v1' });
+    expect(bad.valid).toBe(false);
+    const ok = routes.validateSettings({ CLAUDE_MEM_OPENCODE_BASE_URL: 'https://api.deepseek.com/v1' });
+    expect(ok.valid).toBe(true);
+    // blank is allowed (means "use default endpoint")
+    const blank = routes.validateSettings({ CLAUDE_MEM_OPENCODE_BASE_URL: '' });
+    expect(blank.valid).toBe(true);
+  });
+});
