@@ -241,6 +241,14 @@ bun run worker:logs
 - **Viewer 默认视图为空**：`http://localhost:37777/` 在 "All Projects" 模式下不显示 observations，因为默认查询全局 DB（隔离后为空）。需要在 Header 下拉框选择具体项目。待实现多 DB 聚合。
 - **MCP server 孤儿进程**：stdio MCP server 偶尔在父进程退出后存活（竞态条件），无害，~40MB 空闲内存，重启后自动清理。
 
+## 文档导航
+
+- [`docs/README.md`](docs/README.md) — 文档总索引（参考 / 报告 / 设计 / 外部快照）
+- [`CLAUDE.md`](CLAUDE.md) — 架构总览与文件位置
+- [`plugin/README.md`](plugin/README.md) — 插件载荷的生成物 vs 手写源边界
+- [`docs/PROVENANCE.md`](docs/PROVENANCE.md) — 上游 cherry-pick 来源 + 许可证追溯
+- 子系统导航文档：各目录下的 `CLAUDE.md`（`src/services/worker/`、`src/services/sqlite/`、`src/shared/`、`src/cli/handlers/`、`scripts/`、`tests/`）
+
 ## 致谢
 
 本项目 fork 自 [claude-mem](https://github.com/thedotmack/claude-mem)（作者：Alex Newman），基于 AGPL-3.0 许可证。

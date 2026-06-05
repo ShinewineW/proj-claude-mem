@@ -1,5 +1,7 @@
 # Session ID Architecture
 
+> **范围**: `contentSessionId` ↔ `memorySessionId` 双 session ID 模型 — 两者的语义、初始化流程与 resume 关系（贯穿 hooks → SDKAgent → SessionStore）。
+
 ## Overview
 
 Claude-mem uses **two distinct session IDs** to track conversations and memory:

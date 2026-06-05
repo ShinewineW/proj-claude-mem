@@ -1,5 +1,7 @@
 # Hooks
 
+> **外部快照**: Cursor hooks 系统官方参考，引入仓库于 2026-04-12；外部参考资料，非本项目契约，可能滞后于 Cursor 官方文档。
+
 Hooks let you observe, control, and extend the agent loop using custom scripts. Hooks are spawned processes that communicate over stdio using JSON in both directions. They run before or after defined stages of the agent loop and can observe, block, or modify behavior.
 
 With hooks, you can:

@@ -1,5 +1,7 @@
 # Get started with Claude Code hooks
 
+> **外部快照**: Claude Code hooks 官方文档，抓取于 2026-01-07（见文件名）；外部参考资料，可能滞后于上游官方文档。
+
 > Learn how to customize and extend Claude Code's behavior by registering shell commands
 
 Claude Code hooks are user-defined shell commands that execute at various points

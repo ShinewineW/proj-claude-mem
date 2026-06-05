@@ -1,239 +1,96 @@
 # README Translator
 
-Translate README.md files to multiple languages using the Claude Agent SDK. Perfect for build scripts and CI/CD pipelines.
+> **创建日期**: 2026-04-12
+> **更新日期**: 2026-06-06
+> **状态**: 维护（已接入 `package.json` 的 `translate:*` 脚本；非高频运行）
+> **范围**: 用 Claude Agent SDK 把 `README.md` 翻译成多语言
+> **适用环境**: Bun（仓库内运行）；需 Claude Code 已登录 或 `ANTHROPIC_API_KEY`
 
-## Installation
+---
+
+## 1. 概述
+
+一个用 Claude Agent SDK 翻译 Markdown 文档的小工具，**vendored 在本仓库内**（不是从 npm 安装的外部包）。在 proj-claude-mem 里，它的产物用于生成 README 的多语言版本到 `docs/i18n/`。
+
+> ⚠️ 下文的 `npm install readme-translator` 是上游作为**独立 npm 包**发布时的说法；在本仓库中应通过 `bun scripts/translate-readme/cli.ts` 运行。**许可证按本仓库整体的 AGPL-3.0 判定**（不适用独立包的 MIT 声明）。
+>
+> 截至 2026-06-06，`docs/i18n/` 尚未生成/提交，即翻译尚未实际跑出产物。
+
+## 2. 文件清单
+
+- `cli.ts`
+  - 性质：CLI 入口
+  - 作用：解析命令行参数（语言、`-o/-p/-m/--max-budget/-v/--list-languages` 等），调用 `index.ts` 的 `translateReadme()`。
+  - 主 caller / 入口：`bun scripts/translate-readme/cli.ts`；`package.json` 的 `translate-readme` / `translate:tier1..4` / `translate:all` 脚本。
+
+- `index.ts`
+  - 性质：库（公共 API）
+  - 作用：导出 `translateReadme(options)`、`SUPPORTED_LANGUAGES`、以及 `TranslationOptions` / `TranslationResult` / `TranslationJobResult` 类型。
+  - 主 caller / 入口：`cli.ts`、以及任何 `import { translateReadme } from "./index"` 的脚本。
+
+- `examples.ts`
+  - 性质：示例
+  - 作用：编程式调用 `translateReadme()` 的用法示例。
+
+- `README.md`
+  - 性质：doc — 本工具的 API 参考与仓库内用法。
+
+## 3. 在本仓库中如何使用
 
 ```bash
-npm install readme-translator
-# or
-npm install -g readme-translator  # for CLI usage
+# 直接跑 CLI（仓库内的真实入口）
+bun scripts/translate-readme/cli.ts -v -o docs/i18n README.md zh ja fr
+
+# 列出支持的语言码
+bun scripts/translate-readme/cli.ts --list-languages
+
+# 经 npm 脚本分层翻译（输出到 docs/i18n/）
+bun run translate-readme        # = cli.ts -v -o docs/i18n README.md
+bun run translate:tier1         # zh zh-tw ja pt-br ko es de fr
+bun run translate:tier2 / tier3 / tier4
+bun run translate:all           # 四层并行
 ```
 
-## Requirements
+### CLI 选项
 
-- Node.js 18+
-- **Authentication** (one of the following):
-  - Claude Code installed and authenticated (Pro/Max subscription) - **no API key needed**
-  - `ANTHROPIC_API_KEY` environment variable set (for API-based usage)
-  - AWS Bedrock (`CLAUDE_CODE_USE_BEDROCK=1` + AWS credentials)
-  - Google Vertex AI (`CLAUDE_CODE_USE_VERTEX=1` + GCP credentials)
-
-If you have Claude Code installed and logged in with your Pro/Max subscription, the SDK will automatically use that authentication.
-
-## CLI Usage
-
-```bash
-# Basic usage
-translate-readme README.md es fr de
-
-# With options
-translate-readme -v -o ./i18n --pattern docs.{lang}.md README.md es fr de ja zh
-
-# List supported languages
-translate-readme --list-languages
-```
-
-### CLI Options
-
-| Option | Description |
+| 选项 | 说明 |
 |--------|-------------|
-| `-o, --output <dir>` | Output directory (default: same as source) |
-| `-p, --pattern <pat>` | Output filename pattern (default: `README.{lang}.md`) |
-| `--no-preserve-code` | Translate code blocks too (not recommended) |
-| `-m, --model <model>` | Claude model to use (default: `sonnet`) |
-| `--max-budget <usd>` | Maximum budget in USD |
-| `--use-existing` | Use existing translation file as a reference |
-| `-v, --verbose` | Show detailed progress |
-| `-h, --help` | Show help message |
-| `--list-languages` | List all supported language codes |
+| `-o, --output <dir>` | 输出目录（默认与源文件同目录） |
+| `-p, --pattern <pat>` | 输出文件名模式（默认 `README.{lang}.md`） |
+| `--no-preserve-code` | 连代码块也翻译（不推荐） |
+| `-m, --model <model>` | Claude 模型（默认 `sonnet`） |
+| `--max-budget <usd>` | 最大预算（USD） |
+| `--use-existing` | 用已存在的翻译文件作参考 |
+| `-v, --verbose` | 详细进度 |
+| `--list-languages` | 列出所有语言码 |
 
-## Programmatic Usage
+### 编程式 API
 
 ```typescript
-import { translateReadme } from "readme-translator";
+import { translateReadme } from "./index";
 
 const result = await translateReadme({
   source: "./README.md",
-  languages: ["es", "fr", "de", "ja", "zh"],
+  languages: ["zh", "ja", "fr"],
+  outputDir: "./docs/i18n",
+  maxBudgetUsd: 5.0,
   verbose: true,
 });
-
-console.log(`Translated ${result.successful} files`);
-console.log(`Total cost: $${result.totalCostUsd.toFixed(4)}`);
+console.log(`Translated ${result.successful} files, $${result.totalCostUsd.toFixed(4)}`);
 ```
 
-### API Options
+`TranslationOptions` 字段：`source`、`languages`、`outputDir?`、`pattern?`（默认 `README.{lang}.md`）、`preserveCode?`（默认 `true`）、`model?`（默认 `sonnet`）、`maxBudgetUsd?`、`useExisting?`、`verbose?`。
 
-```typescript
-interface TranslationOptions {
-  /** Source README file path */
-  source: string;
+支持的语言码以代码为准——用 `--list-languages` 或读 `index.ts` 的 `SUPPORTED_LANGUAGES`（`package.json` 的 `translate:tier1..4` 划分了优先级分层）。
 
-  /** Target language codes */
-  languages: string[];
+## 4. 关键约束 / 已知坑
 
-  /** Output directory (defaults to same directory as source) */
-  outputDir?: string;
+- **认证**：本机有 Claude Code 已登录即可（无需 API key）；CI 环境需 `ANTHROPIC_API_KEY`（或 Bedrock / Vertex 凭证）。
+- **预算**：用 `--max-budget` / `maxBudgetUsd` 防止跑量超支。
+- **保留代码块**：默认 `preserveCode: true`，避免破坏代码示例。
+- 自动翻译非完美，关键文档建议人工复核。
 
-  /** Output filename pattern (use {lang} placeholder) */
-  pattern?: string; // default: "README.{lang}.md"
+## 5. Cross-Ref
 
-  /** Preserve code blocks without translation */
-  preserveCode?: boolean; // default: true
-
-  /** Claude model to use */
-  model?: string; // default: "sonnet"
-
-  /** Maximum budget in USD */
-  maxBudgetUsd?: number;
-
-  /** Use existing translation file (if present) as a reference */
-  useExisting?: boolean;
-
-  /** Verbose output */
-  verbose?: boolean;
-}
-```
-
-### Return Value
-
-```typescript
-interface TranslationJobResult {
-  results: TranslationResult[];
-  totalCostUsd: number;
-  successful: number;
-  failed: number;
-}
-
-interface TranslationResult {
-  language: string;
-  outputPath: string;
-  success: boolean;
-  error?: string;
-  costUsd?: number;
-}
-```
-
-## Build Script Integration
-
-### package.json
-
-```json
-{
-  "scripts": {
-    "translate": "translate-readme README.md es fr de ja zh",
-    "translate:all": "translate-readme -v -o ./i18n README.md es fr de it pt ja ko zh ru ar",
-    "prebuild": "npm run translate"
-  }
-}
-```
-
-### GitHub Actions
-
-Note: CI/CD environments require an API key since Claude Code won't be authenticated there.
-
-```yaml
-name: Translate README
-on:
-  push:
-    branches: [main]
-    paths: [README.md]
-
-jobs:
-  translate:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-      
-      - run: npm install -g readme-translator
-      
-      - name: Translate README
-        env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-        run: |
-          translate-readme -v -o ./i18n README.md es fr de ja zh
-      
-      - name: Commit translations
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add i18n/
-          git diff --staged --quiet || git commit -m "chore: update README translations"
-          git push
-```
-
-### Programmatic Build Script
-
-```typescript
-// scripts/translate.ts
-import { translateReadme } from "readme-translator";
-
-async function main() {
-  const result = await translateReadme({
-    source: "./README.md",
-    languages: (process.env.TRANSLATE_LANGS || "es,fr,de").split(","),
-    outputDir: "./docs/i18n",
-    maxBudgetUsd: 5.0,
-    verbose: !process.env.CI,
-  });
-
-  if (result.failed > 0) {
-    console.error("Some translations failed");
-    process.exit(1);
-  }
-}
-
-main();
-```
-
-## Supported Languages
-
-| Code | Language | Code | Language |
-|------|----------|------|----------|
-| `ar` | Arabic | `ko` | Korean |
-| `bg` | Bulgarian | `lt` | Lithuanian |
-| `cs` | Czech | `lv` | Latvian |
-| `da` | Danish | `nl` | Dutch |
-| `de` | German | `no` | Norwegian |
-| `el` | Greek | `pl` | Polish |
-| `es` | Spanish | `pt` | Portuguese |
-| `et` | Estonian | `pt-br` | Brazilian Portuguese |
-| `fi` | Finnish | `ro` | Romanian |
-| `fr` | French | `ru` | Russian |
-| `he` | Hebrew | `sk` | Slovak |
-| `hi` | Hindi | `sl` | Slovenian |
-| `hu` | Hungarian | `sv` | Swedish |
-| `id` | Indonesian | `th` | Thai |
-| `it` | Italian | `tr` | Turkish |
-| `ja` | Japanese | `uk` | Ukrainian |
-| | | `vi` | Vietnamese |
-| | | `zh` | Chinese (Simplified) |
-| | | `zh-tw` | Chinese (Traditional) |
-
-## Best Practices
-
-1. **Preserve Code Blocks**: Keep `preserveCode: true` (default) to avoid breaking code examples
-
-2. **Set Budget Limits**: Use `maxBudgetUsd` to prevent runaway costs
-
-3. **Run on Releases Only**: In CI/CD, trigger translations only on main branch or releases
-
-4. **Review Translations**: Automated translations are good but not perfect - consider human review for critical docs
-
-5. **Cache Results**: Don't re-translate unchanged content - check if README changed before running
-
-## Cost Estimation
-
-Typical costs per language (varies by README length):
-- Short README (~500 words): ~$0.01-0.02
-- Medium README (~2000 words): ~$0.05-0.10
-- Long README (~5000 words): ~$0.15-0.25
-
-## License
-
-MIT
+- 根 [`README.md`](../../README.md) — 翻译的源文档。
+- [`scripts/CLAUDE.md`](../CLAUDE.md) — scripts/ 目录总导航。

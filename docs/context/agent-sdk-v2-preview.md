@@ -1,5 +1,7 @@
 # TypeScript SDK V2 interface (preview)
 
+> **外部快照**: Claude Agent SDK V2 (TypeScript) 接口预览，引入仓库于 2026-04-12；外部参考资料，非本项目契约，可能滞后于上游官方文档。配套示例见 `agent-sdk-v2-examples.ts`。
+
 Preview of the simplified V2 TypeScript Agent SDK, with session-based send/receive patterns for multi-turn conversations.
 
 ---

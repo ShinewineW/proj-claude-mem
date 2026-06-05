@@ -1,246 +1,84 @@
 # Claude-Mem Cursor Hooks Integration
 
-> **Persistent AI Memory for Cursor - Free Options Available**
-
-Give your Cursor AI persistent memory across sessions. Your agent remembers what it worked on, the decisions it made, and the patterns in your codebase - automatically.
-
-### Why Claude-Mem?
-
-- **Remember context across sessions**: No more re-explaining your codebase every time
-- **Automatic capture**: MCP tools, shell commands, and file edits are logged without effort
-- **Free tier options**: Works with Gemini (1500 free req/day) or OpenCode Go (OpenAI-compatible)
-- **Works with or without Claude Code**: Full functionality either way
-
-### Quick Install (5 minutes)
-
-```bash
-# Clone and build
-git clone https://github.com/thedotmack/claude-mem.git
-cd claude-mem && bun install && bun run build
-
-# Interactive setup (configures provider + installs hooks)
-bun run cursor:setup
-```
+> **创建日期**: 2026-04-12
+> **更新日期**: 2026-06-06
+> **状态**: 维护（继承自上游；本 fork 经**统一 CLI 模式**工作，旧的 `.sh` 脚本式安装已弃用）
+> **范围**: 把 Cursor 的 hook 系统桥接到 claude-mem worker API，让 Cursor 也能有跨会话记忆
+> **适用环境**: 已构建并安装本插件（`bun run build-and-sync`）；worker 在 `127.0.0.1:37777` 运行
 
 ---
 
-## Quick Start for Cursor Users
+## 1. 概述
 
-**Using Claude Code?** Skip to [Installation](#installation) - everything works automatically.
+这些 hook 让 Cursor 在每次提交 prompt / 执行 MCP 工具 / 跑 shell / 改文件 / 结束会话时，调用 claude-mem worker，从而：
 
-**Cursor-only (no Claude Code)?** See [STANDALONE-SETUP.md](STANDALONE-SETUP.md) for free-tier options using Gemini or OpenCode Go.
+- **会话管理**：初始化会话、生成摘要。
+- **观察捕获**：记录 MCP 工具调用、shell 命令、文件编辑。
+- **上下文注入**：把历史上下文写入 `.cursor/rules/claude-mem-context.mdc`，Cursor 在所有会话里自动带上它。
 
----
+> ⚠️ **统一 CLI 模式 vs 遗留 `.sh` 模式（重要）**
+> 本 fork 的安装器 `src/services/integrations/CursorHooksInstaller.ts` 生成的 `hooks.json` 直接调用
+> `"<bun>" "<worker-service.cjs>" hook cursor <command>`（统一 CLI 模式），**不**使用独立 shell 脚本。
+> 本目录里**没有** `session-init.sh` / `save-observation.sh` 等 `.sh` 文件——它们是上游早期的脚本式做法，已被统一 CLI 模式取代。
+> 仓库内提交的 `cursor-hooks/hooks.json`（其命令写成 `./cursor-hooks/*.sh`）是**遗留模板**，不代表实际安装产物；请用下方 §3 的安装命令，由安装器生成真实的 `hooks.json`。
 
-## Overview
+## 2. 文件清单
 
-The hooks bridge Cursor's hook system to claude-mem's worker API, allowing:
-- **Session Management**: Initialize sessions and generate summaries
-- **Observation Capture**: Record MCP tool usage, shell commands, and file edits
-- **Worker Readiness**: Ensure the worker is running before prompt submission
+本目录现存的是**文档 + 一个遗留模板**，没有可执行脚本：
 
-## Context Injection
+- `README.md` — 性质：doc — 本集成的导航入口（你正在读）。
+- `QUICKSTART.md` — 性质：doc — 5 分钟上手。
+- `STANDALONE-SETUP.md` — 性质：doc — 不装 Claude Code、仅 Cursor 时的免费 provider（Gemini / OpenCode Go）配置。
+- `CONTEXT-INJECTION.md` — 性质：doc — 上下文如何注入到 `.cursor/rules/`。
+- `INTEGRATION.md` — 性质：doc — 集成细节。
+- `PARITY.md` — 性质：doc — 与 Claude Code 集成的功能对齐。
+- `REVIEW.md` — 性质：doc — 评审记录。
+- `cursorrules-template.md` — 性质：模板 — `.cursorrules` 文件模板。
+- `hooks.json` — 性质：**遗留模板**（命令引用不存在的 `./cursor-hooks/*.sh`）；真实 `hooks.json` 由安装器生成，勿直接拷贝此文件。
 
-Context is automatically injected via Cursor's **Rules** system:
+> 实现真源在 `src/services/integrations/CursorHooksInstaller.ts`（生成 / 校验 / 卸载 `.cursor/hooks.json` 与 `.cursor/mcp.json`）。
 
-1. **Install**: `claude-mem cursor install` generates initial context
-2. **Stop hook**: Updates context in `.cursor/rules/claude-mem-context.mdc` after each session
-3. **Cursor**: Automatically includes this rule in ALL chat sessions
+## 3. 使用 / 工作流
 
-**The context updates after each session ends**, so the next session sees fresh context.
-
-### Additional Access Methods
-
-- **MCP Tools**: Configure claude-mem's MCP server for `search`, `timeline`, `get_observations` tools
-- **Web Viewer**: Access context at `http://localhost:37777`
-- **Manual Request**: Ask the agent to search memory
-
-See [CONTEXT-INJECTION.md](CONTEXT-INJECTION.md) for details.
-
-## Installation
-
-### Quick Install (Recommended)
+安装（推荐用统一 CLI，安装器会生成正确的 `hooks.json`）：
 
 ```bash
-# Install globally for all projects (recommended)
-claude-mem cursor install user
+# 经 npm 脚本（底层即 worker-service.cjs cursor ...）
+bun run cursor:setup        # 交互式：配置 provider + 安装 hooks
+bun run cursor:install      # 安装到当前项目（.cursor/）
+bun run cursor:status       # 查看安装状态
+bun run cursor:uninstall    # 卸载
 
-# Or install for current project only
-claude-mem cursor install
+# 或直接调底层命令（user 级 = 所有项目）
+bun plugin/scripts/worker-service.cjs cursor install user
 ```
 
-### Manual Installation
+安装后：启动 worker（`bun run worker:start` 或 `bun plugin/scripts/worker-service.cjs start`）→ 重启 Cursor 加载 hooks → `bun run cursor:status` 验证。
 
-<details>
-<summary>Click to expand manual installation steps</summary>
+### Hook → 统一 CLI 命令映射
 
-**User-level** (recommended - applies to all projects):
-```bash
-# Copy hooks.json to your home directory
-cp cursor-hooks/hooks.json ~/.cursor/hooks.json
+安装器写入的 `hooks.json` 把 Cursor 事件映射到 `worker-service.cjs hook cursor <command>`：
 
-# Copy hook scripts
-mkdir -p ~/.cursor/hooks
-cp cursor-hooks/*.sh ~/.cursor/hooks/
-chmod +x ~/.cursor/hooks/*.sh
-```
+| Cursor 事件 | 统一 CLI 命令 | 作用 |
+|-------------|---------------|------|
+| `beforeSubmitPrompt` | `session-init` | 初始化 claude-mem 会话 |
+| `beforeSubmitPrompt` | `context` | 确保 worker 就绪 |
+| `afterMCPExecution` | `observation` | 捕获 MCP 工具调用 |
+| `afterShellExecution` | `observation` | 捕获 shell 命令 |
+| `afterFileEdit` | `file-edit` | 捕获文件编辑 |
+| `stop` | `summarize` | 生成摘要 + 更新上下文文件 |
 
-**Project-level** (for per-project hooks):
-```bash
-# Copy hooks.json to your project
-mkdir -p .cursor
-cp cursor-hooks/hooks.json .cursor/hooks.json
+上下文文件 `.cursor/rules/claude-mem-context.mdc` 在每次会话结束（`stop` → `summarize`）后更新，下次会话即可见。
 
-# Copy hook scripts to your project
-mkdir -p .cursor/hooks
-cp cursor-hooks/*.sh .cursor/hooks/
-chmod +x .cursor/hooks/*.sh
-```
+## 4. 关键约束 / 已知坑
 
-</details>
+- **不要手抄 `cursor-hooks/hooks.json`**：它引用了本 fork 不存在的 `.sh` 文件；务必用安装器生成。
+- hook 命令用**绝对路径**指向 bun 与 `worker-service.cjs`（安装器在写入时解析），故插件版本升级或 cache 路径变化后需重新 `cursor:install`。
+- 与 Claude Code 集成相比：摘要在 Cursor 侧的 `stop` hook 无 transcript（见 `PARITY.md`）。
 
-### After Installation
+## 5. Cross-Ref
 
-1. **Start the worker**:
-   ```bash
-   claude-mem start
-   ```
-
-2. **Restart Cursor** to load the hooks
-
-3. **Verify installation**:
-   ```bash
-   claude-mem cursor status
-   ```
-
-## Hook Mappings
-
-| Cursor Hook | Script | Purpose |
-|-------------|--------|---------|
-| `beforeSubmitPrompt` | `session-init.sh` | Initialize claude-mem session |
-| `beforeSubmitPrompt` | `context-inject.sh` | Ensure worker is running |
-| `afterMCPExecution` | `save-observation.sh` | Capture MCP tool usage |
-| `afterShellExecution` | `save-observation.sh` | Capture shell command execution |
-| `afterFileEdit` | `save-file-edit.sh` | Capture file edits |
-| `stop` | `session-summary.sh` | Generate summary + update context file |
-
-## How It Works
-
-### Session Initialization (`session-init.sh`)
-- Called before each prompt submission
-- Initializes a new session in claude-mem using `conversation_id` as the session ID
-- Extracts project name from workspace root
-- Outputs `{"continue": true}` to allow prompt submission
-
-### Context Hook (`context-inject.sh`)
-- Ensures claude-mem worker is running before session
-- Outputs `{"continue": true}` to allow prompt submission
-- Note: Context file is updated by `session-summary.sh` (stop hook), not here
-
-### Observation Capture (`save-observation.sh`)
-- Captures MCP tool executions and shell commands
-- Maps them to claude-mem's observation format
-- Sends to `/api/sessions/observations` endpoint (fire-and-forget)
-
-### File Edit Capture (`save-file-edit.sh`)
-- Captures file edits made by the agent
-- Treats edits as "write_file" tool usage
-- Includes edit summaries in observations
-
-### Session Summary (`session-summary.sh`)
-- Called when agent loop ends (stop hook)
-- Requests summary generation from claude-mem
-- **Updates context file** in `.cursor/rules/claude-mem-context.mdc` for next session
-
-## Configuration
-
-The hooks read configuration from `~/.claude-mem/settings.json`:
-
-- `CLAUDE_MEM_WORKER_PORT`: Worker port (default: 37777)
-- `CLAUDE_MEM_WORKER_HOST`: Worker host (default: 127.0.0.1)
-
-## Dependencies
-
-The hook scripts require:
-- `jq` - JSON processing
-- `curl` - HTTP requests
-- `bash` - Shell interpreter
-
-Install on macOS: `brew install jq curl`
-Install on Ubuntu: `apt-get install jq curl`
-
-## Troubleshooting
-
-### Hooks not executing
-
-1. Check hooks are in the correct location:
-   ```bash
-   ls .cursor/hooks.json  # Project-level
-   ls ~/.cursor/hooks.json  # User-level
-   ```
-
-2. Verify scripts are executable:
-   ```bash
-   chmod +x ~/.cursor/hooks/*.sh
-   ```
-
-3. Check Cursor Settings → Hooks tab for configuration status
-
-4. Check Hooks output channel in Cursor for error messages
-
-### Worker not responding
-
-1. Verify worker is running:
-   ```bash
-   curl http://127.0.0.1:37777/api/readiness
-   ```
-
-2. Check worker logs:
-   ```bash
-   tail -f ~/.claude-mem/logs/worker-$(date +%Y-%m-%d).log
-   ```
-
-3. Restart worker:
-   ```bash
-   claude-mem restart
-   ```
-
-### Observations not being saved
-
-1. Monitor worker logs for incoming requests
-
-2. Verify session was initialized via web viewer at `http://localhost:37777`
-
-3. Test observation endpoint directly:
-   ```bash
-   curl -X POST http://127.0.0.1:37777/api/sessions/observations \
-     -H "Content-Type: application/json" \
-     -d '{"contentSessionId":"test","tool_name":"test","tool_input":{},"tool_response":{},"cwd":"/tmp"}'
-   ```
-
-## Comparison with Claude Code Integration
-
-| Feature | Claude Code | Cursor |
-|---------|-------------|--------|
-| Session Initialization | ✅ `SessionStart` hook | ✅ `beforeSubmitPrompt` hook |
-| Context Injection | ✅ `additionalContext` field | ✅ Auto-updated `.cursor/rules/` file |
-| Observation Capture | ✅ `PostToolUse` hook | ✅ `afterMCPExecution`, `afterShellExecution`, `afterFileEdit` |
-| Session Summary | ✅ `Stop` hook with transcript | ⚠️ `stop` hook (no transcript) |
-| MCP Search Tools | ✅ Full support | ✅ Full support (if MCP configured) |
-
-## Files
-
-- `hooks.json` - Hook configuration
-- `common.sh` - Shared utility functions
-- `session-init.sh` - Session initialization
-- `context-inject.sh` - Context/worker readiness hook
-- `save-observation.sh` - MCP and shell observation capture
-- `save-file-edit.sh` - File edit observation capture
-- `session-summary.sh` - Summary generation
-- `cursorrules-template.md` - Template for `.cursorrules` file
-
-## See Also
-
-- [Claude-Mem Documentation](https://docs.claude-mem.ai)
-- [Cursor Hooks Reference](../docs/context/cursor-hooks-reference.md)
-- [Claude-Mem Architecture](https://docs.claude-mem.ai/architecture/overview)
+- 实现：`src/services/integrations/CursorHooksInstaller.ts`。
+- 上手：[`QUICKSTART.md`](QUICKSTART.md)、免费 provider [`STANDALONE-SETUP.md`](STANDALONE-SETUP.md)、上下文注入 [`CONTEXT-INJECTION.md`](CONTEXT-INJECTION.md)、功能对齐 [`PARITY.md`](PARITY.md)。
+- 参考：[`../docs/context/cursor-hooks-reference.md`](../docs/context/cursor-hooks-reference.md)。
+- 根 [`README.md`](../README.md)、[`CLAUDE.md`](../CLAUDE.md)。
