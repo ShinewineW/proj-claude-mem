@@ -44,7 +44,7 @@ import { cleanupProcessedMessages } from './SessionCleanupHelper.js';
  * @param worker - Worker reference for SSE broadcasting (optional)
  * @param discoveryTokens - Token cost delta for this response
  * @param originalTimestamp - Original epoch when message was queued (for accurate timestamps)
- * @param agentName - Name of the agent for logging (e.g., 'SDK', 'Gemini', 'OpenRouter')
+ * @param agentName - Name of the agent for logging (e.g., 'SDK', 'Gemini', 'OpenCode')
  */
 export async function processAgentResponse(
   text: string,
@@ -95,6 +95,47 @@ export async function processAgentResponse(
   }
 
   const summary = parseSummary(text, session.sessionDbId);
+
+  // Detect responses that yielded nothing storable (auth errors, rate limits,
+  // garbled output, OR truncated XML where the model hit the output-token limit
+  // mid-tag). When the response has non-empty text, produced no observations,
+  // no summary, and is not an intentional skip_summary, mark the in-flight
+  // pending messages as failed (retry, bounded by maxRetries) instead of
+  // confirming them — confirming would silently discard the queued batch (#1874).
+  //
+  // The guard checks the PARSED result, not an opening-tag substring: the
+  // parsers require CLOSING tags, so an unclosed `<observation>…` (or prose that
+  // merely contains the substring) parses to 0 observations. A substring guard
+  // would mis-classify those as "is XML" and fall through to confirmProcessed,
+  // deleting the queue with nothing stored.
+  //
+  // Use allObservations (the unfiltered parse), not the ghost-filtered
+  // `observations`: a well-formed empty observation (`<observation><type>X</type>
+  // </observation>`) parses to a ghost that the filter drops, but it IS valid XML
+  // and is the context-overflow signal handled further down. Only a parse that
+  // produced ZERO raw observations AND no summary is a genuine non-XML response.
+  const skipSummaryRequested = /<skip_summary\b/.test(text);
+  const isNonXmlResponse = (
+    text.trim().length > 0 &&
+    allObservations.length === 0 &&
+    !summary &&
+    !skipSummaryRequested
+  );
+
+  if (isNonXmlResponse) {
+    const preview = text.length > 200 ? `${text.slice(0, 200)}...` : text;
+    logger.warn('PARSER', `${agentName} returned non-XML response; marking messages as failed for retry (#1874)`, {
+      sessionId: session.sessionDbId,
+      preview,
+    });
+
+    const pendingStore = sessionManager.getPendingMessageStore(session.dbPath);
+    for (const messageId of session.processingMessageIds) {
+      pendingStore.markFailed(messageId);
+    }
+    session.processingMessageIds = [];
+    return;
+  }
 
   // Convert nullable fields to empty strings for storeSummary (if summary exists)
   let summaryForStore = normalizeSummaryForStorage(summary);

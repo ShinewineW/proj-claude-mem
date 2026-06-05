@@ -2,7 +2,7 @@
  * BypassLane: Parallel REST provider consumer
  *
  * Runs alongside the main Claude SDK channel, claiming observation messages
- * from the same pending_messages queue. Uses Gemini or OpenRouter REST API
+ * from the same pending_messages queue. Uses Gemini or OpenCode REST API
  * for one-shot processing (no conversation history).
  *
  * State machine: DISABLED → ACTIVE → TRIPPED → (probe) → ACTIVE
@@ -31,11 +31,10 @@ import type { PersistentPendingMessage } from "../sqlite/PendingMessageStore.js"
 import type { SessionManager } from "./SessionManager.js";
 import type { DatabaseManager } from "./DatabaseManager.js";
 import { storeBypassObservationsForSession } from "./bypass-observation-store.js";
+import { resolveOpenAICompatibleChatCompletionsUrl, DEFAULT_OPENCODE_API_URL } from "../../shared/openai-compatible-base-url.js";
 
 // API endpoints
 const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1/models";
-const OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions";
-const OPENCODE_API_URL = "https://opencode.ai/zen/go/v1/chat/completions";
 // Must be < STALE_PROCESSING_THRESHOLD_MS (60s in PendingMessageStore) to prevent
 // the main channel's self-healing from resetting a bypass in-flight message to 'pending',
 // which would cause double-processing.
@@ -141,7 +140,7 @@ export interface BypassStatus {
 }
 
 interface BypassConfig {
-  provider: "gemini" | "openrouter" | "opencode";
+  provider: "gemini" | "opencode";
   apiKey: string;
   model: string;
   cooldownMs: number;
@@ -207,17 +206,6 @@ export class BypassLane {
       if (!apiKey) return null;
       const model = settings.CLAUDE_MEM_GEMINI_MODEL || "gemini-2.5-flash-lite";
       return { provider: "gemini", apiKey, model, cooldownMs };
-    }
-
-    if (provider === "openrouter") {
-      const apiKey =
-        settings.CLAUDE_MEM_OPENROUTER_API_KEY ||
-        getCredential("OPENROUTER_API_KEY") ||
-        "";
-      if (!apiKey) return null;
-      const model =
-        settings.CLAUDE_MEM_OPENROUTER_MODEL || "minimax/minimax-m2.5:free";
-      return { provider: "openrouter", apiKey, model, cooldownMs };
     }
 
     if (provider === "opencode") {
@@ -473,29 +461,15 @@ export class BypassLane {
           }),
           signal,
         });
-      } else if (this.config.provider === "openrouter") {
-        // Must include HTTP-Referer — some upstream providers (e.g. StepFun behind Alibaba WAF)
-        // reject requests without it, causing the probe to always fail and bypass to stay DISABLED.
-        response = await fetch(OPENROUTER_API_URL, {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${this.config.apiKey}`,
-            "HTTP-Referer": "https://github.com/ShinewineW/proj-claude-mem",
-            "X-Title": "claude-mem",
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            model: this.config.model,
-            messages: [{ role: "user", content: "Reply with OK" }],
-            max_tokens: 10,
-          }),
-          signal,
-        });
       } else {
         // OpenCode Go: OpenAI-compatible probe. Must include `thinking:disabled`,
         // otherwise reasoning models burn max_tokens=10 on internal CoT and emit
-        // empty content → probe fails. Skip OpenRouter-specific headers.
-        response = await fetch(OPENCODE_API_URL, {
+        // empty content → probe fails. No referer/title headers needed.
+        const opencodeProbeUrl = resolveOpenAICompatibleChatCompletionsUrl(
+          SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH).CLAUDE_MEM_OPENCODE_BASE_URL,
+          DEFAULT_OPENCODE_API_URL,
+        );
+        response = await fetch(opencodeProbeUrl, {
           method: "POST",
           headers: {
             Authorization: `Bearer ${this.config.apiKey}`,
@@ -757,9 +731,27 @@ export class BypassLane {
     }
 
     // Parse observations from XML response
-    const observations = parseObservations(
+    const parsedObservations = parseObservations(
       responseText,
       session.contentSessionId,
+    );
+
+    // Ghost filter (parity with the main Claude SDK channel, ResponseProcessor.ts):
+    // drop observations whose every content field is null/empty. A true ghost is a
+    // context-overflow artifact (<observation><type>X</type></observation>) that would
+    // otherwise store as an "Untitled" row. Observations with ANY content are kept.
+    // Intentionally reuses ResponseProcessor's stricter predicate (also checks subtitle,
+    // files_read, files_modified) rather than upstream's narrower title+narrative+facts+concepts
+    // check — this is a conscious fork choice for tighter ghost rejection.
+    const observations = parsedObservations.filter(
+      (obs) =>
+        obs.title !== null ||
+        obs.narrative !== null ||
+        obs.subtitle !== null ||
+        obs.facts.length > 0 ||
+        obs.concepts.length > 0 ||
+        obs.files_read.length > 0 ||
+        obs.files_modified.length > 0,
     );
 
     // F1 fix: Throw on empty observations — consumeLoop catch calls markFailed + recordFailure.
@@ -833,7 +825,7 @@ export class BypassLane {
     return { truncatedFields };
   }
 
-  /** Call Gemini or OpenRouter REST API. Returns response text. */
+  /** Call Gemini or OpenCode REST API. Returns response text. */
   private async callRestApi(
     prompt: string,
     systemPrompt: string,
@@ -874,43 +866,14 @@ export class BypassLane {
 
       const data = (await response.json()) as any;
       return data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
-    } else if (this.config.provider === "openrouter") {
-      const response = await fetch(OPENROUTER_API_URL, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${this.config.apiKey}`,
-          "HTTP-Referer": "https://github.com/ShinewineW/proj-claude-mem",
-          "X-Title": "claude-mem",
-          "Content-Type": "application/json",
-        },
-        // Build messages array with history context
-        body: JSON.stringify({
-          model: this.config.model,
-          messages: [
-            { role: "system", content: systemPrompt },
-            ...history.map((m) => ({ role: m.role, content: m.content })),
-            { role: "user", content: prompt },
-          ],
-          temperature: 0.3,
-          max_tokens: 8192,
-        }),
-        signal,
-      });
-
-      if (!response.ok) {
-        // Truncate error body to prevent accidental credential echo in logs
-        const errorText = (await response.text()).substring(0, 500);
-        throw new Error(
-          `OpenRouter API error: ${response.status} - ${errorText}`,
-        );
-      }
-
-      const data = (await response.json()) as any;
-      return data?.choices?.[0]?.message?.content || "";
     } else {
       // OpenCode Go: OpenAI-compatible. Send thinking:disabled to keep reasoning
       // models (deepseek-v4-flash etc.) emitting content instead of CoT-only output.
-      const response = await fetch(OPENCODE_API_URL, {
+      const opencodeUrl = resolveOpenAICompatibleChatCompletionsUrl(
+        SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH).CLAUDE_MEM_OPENCODE_BASE_URL,
+        DEFAULT_OPENCODE_API_URL,
+      );
+      const response = await fetch(opencodeUrl, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${this.config.apiKey}`,

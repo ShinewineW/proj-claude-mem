@@ -11,6 +11,7 @@ import {
 } from '../../types/database.js';
 import type { PendingMessageStore } from './PendingMessageStore.js';
 import { computeObservationContentHash, findDuplicateObservation } from './observations/store.js';
+import { parseFileList } from './observations/files.js';
 import { computeSummaryContentHash, findDuplicateSummary } from './summaries/store.js';
 import { assertValidLimit } from './query-utils.js';
 import { MigrationRunner } from './migrations/runner.js';
@@ -39,6 +40,9 @@ export class SessionStore {
     this.db.run('PRAGMA journal_mode = WAL');
     this.db.run('PRAGMA synchronous = NORMAL');
     this.db.run('PRAGMA foreign_keys = ON');
+    // Cap WAL growth at 4MB per DB so the journal doesn't balloon unbounded
+    // under sustained writes (multiple processes share the file). Upstream #1956.
+    this.db.run('PRAGMA journal_size_limit = 4194304');
     this.db.run('PRAGMA temp_store = memory');
 
     // Delegate all migrations to MigrationRunner (single source of truth)
@@ -516,21 +520,11 @@ export class SessionStore {
     const filesModifiedSet = new Set<string>();
 
     for (const row of rows) {
-      // Parse files_read
-      if (row.files_read) {
-        const files = JSON.parse(row.files_read);
-        if (Array.isArray(files)) {
-          files.forEach(f => filesReadSet.add(f));
-        }
-      }
+      // Parse files_read (recovers bare-path strings; #1359)
+      parseFileList(row.files_read).forEach(f => filesReadSet.add(f));
 
-      // Parse files_modified
-      if (row.files_modified) {
-        const files = JSON.parse(row.files_modified);
-        if (Array.isArray(files)) {
-          files.forEach(f => filesModifiedSet.add(f));
-        }
-      }
+      // Parse files_modified (recovers bare-path strings; #1359)
+      parseFileList(row.files_modified).forEach(f => filesModifiedSet.add(f));
     }
 
     return {
@@ -1169,7 +1163,14 @@ export class SessionStore {
           tool_response = NULL
         WHERE id = ? AND status = 'processing'
       `);
-      updateStmt.run(timestampEpoch, messageId);
+      const updateResult = updateStmt.run(timestampEpoch, messageId);
+      // Guard against phantom completion: if the message vanished or is no longer
+      // 'processing', 0 rows change. Throwing rolls back the whole transaction so
+      // we never report success on observations that weren't really committed
+      // against a live queue row. Upstream #65f2fd8c (kept as UPDATE per fork).
+      if (updateResult.changes !== 1) {
+        throw new Error(`storeObservationsAndMarkComplete: failed to complete pending message ${messageId}`);
+      }
 
       return { observationIds, summaryId, createdAtEpoch: timestampEpoch };
     });

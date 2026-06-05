@@ -5,7 +5,7 @@
  * Provides methods to get defaults with optional environment variable overrides.
  */
 
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
+import { readFileSync, writeFileSync, existsSync, mkdirSync, chmodSync } from "fs";
 import { join, dirname } from "path";
 import { homedir } from "os";
 // NOTE: Do NOT import logger here - it creates a circular dependency
@@ -18,20 +18,15 @@ export interface SettingsDefaults {
   CLAUDE_MEM_WORKER_HOST: string;
   CLAUDE_MEM_SKIP_TOOLS: string;
   // AI Provider Configuration
-  CLAUDE_MEM_PROVIDER: string; // 'claude' | 'gemini' | 'openrouter' | 'opencode'
+  CLAUDE_MEM_PROVIDER: string; // 'claude' | 'gemini' | 'opencode'
   CLAUDE_MEM_GEMINI_API_KEY: string;
   CLAUDE_MEM_GEMINI_MODEL: string; // 'gemini-2.5-flash-lite' | 'gemini-2.5-flash' | 'gemini-3-flash-preview'
   CLAUDE_MEM_GEMINI_RATE_LIMITING_ENABLED: string; // 'true' | 'false' - enable rate limiting for free tier
-  CLAUDE_MEM_OPENROUTER_API_KEY: string;
-  CLAUDE_MEM_OPENROUTER_MODEL: string;
-  CLAUDE_MEM_OPENROUTER_SITE_URL: string;
-  CLAUDE_MEM_OPENROUTER_APP_NAME: string;
-  CLAUDE_MEM_OPENROUTER_MAX_CONTEXT_MESSAGES: string;
-  CLAUDE_MEM_OPENROUTER_MAX_TOKENS: string;
   CLAUDE_MEM_OPENCODE_API_KEY: string;
   CLAUDE_MEM_OPENCODE_MODEL: string;
   CLAUDE_MEM_OPENCODE_MAX_CONTEXT_MESSAGES: string;
   CLAUDE_MEM_OPENCODE_MAX_TOKENS: string;
+  CLAUDE_MEM_OPENCODE_BASE_URL: string;
   // System Configuration
   CLAUDE_MEM_DATA_DIR: string;
   CLAUDE_MEM_LOG_LEVEL: string;
@@ -90,6 +85,8 @@ export interface SettingsDefaults {
   CLAUDE_MEM_MAX_HISTORY_TOKENS: string;    // Max estimated tokens before proactive reset
   // SummaryLane adaptive observation cap
   CLAUDE_MEM_MAX_SUMMARY_OBSERVATIONS: string; // Default cap on obs embedded in fresh-summarize prompt (first step of adaptive sequence)
+  // Session lifecycle guard
+  CLAUDE_MEM_SESSION_MAX_AGE_MS: string; // Wall-clock age (ms) after which a session refuses new generators (#1590)
 }
 
 export class SettingsDefaultsManager {
@@ -108,16 +105,11 @@ export class SettingsDefaultsManager {
     CLAUDE_MEM_GEMINI_API_KEY: "", // Empty by default, can be set via UI or env
     CLAUDE_MEM_GEMINI_MODEL: "gemini-2.5-flash-lite", // Default Gemini model (highest free tier RPM)
     CLAUDE_MEM_GEMINI_RATE_LIMITING_ENABLED: "true", // Rate limiting ON by default for free tier users
-    CLAUDE_MEM_OPENROUTER_API_KEY: "", // Empty by default, can be set via UI or env
-    CLAUDE_MEM_OPENROUTER_MODEL: "minimax/minimax-m2.5:free", // Default OpenRouter model (free tier)
-    CLAUDE_MEM_OPENROUTER_SITE_URL: "", // Optional: for OpenRouter analytics
-    CLAUDE_MEM_OPENROUTER_APP_NAME: "claude-mem", // App name for OpenRouter analytics
-    CLAUDE_MEM_OPENROUTER_MAX_CONTEXT_MESSAGES: "20", // Max messages in context window
-    CLAUDE_MEM_OPENROUTER_MAX_TOKENS: "100000", // Max estimated tokens (~100k safety limit)
     CLAUDE_MEM_OPENCODE_API_KEY: "", // Empty by default, can be set via UI or env
     CLAUDE_MEM_OPENCODE_MODEL: "deepseek-v4-flash", // Default OpenCode Go model (non-reasoning when thinking:disabled)
-    CLAUDE_MEM_OPENCODE_MAX_CONTEXT_MESSAGES: "20", // Mirrors OpenRouter (history budget is fixed in code; reserved for future tunability)
-    CLAUDE_MEM_OPENCODE_MAX_TOKENS: "100000", // Mirrors OpenRouter (history budget is fixed in code; reserved for future tunability)
+    CLAUDE_MEM_OPENCODE_MAX_CONTEXT_MESSAGES: "20", // History budget is fixed in code; reserved for future tunability
+    CLAUDE_MEM_OPENCODE_MAX_TOKENS: "100000", // History budget is fixed in code; reserved for future tunability
+    CLAUDE_MEM_OPENCODE_BASE_URL: "", // Optional OpenAI-compatible base URL override for the OpenCode bypass path (blank = default opencode.ai endpoint)
     // System Configuration
     CLAUDE_MEM_DATA_DIR: join(homedir(), ".claude-mem"),
     CLAUDE_MEM_LOG_LEVEL: "INFO",
@@ -180,6 +172,9 @@ export class SettingsDefaultsManager {
     // becomes [150, 75, 37, 18, 9, 4, 2, 1]. Setting values <= 0 or
     // non-numeric fall back to 150 defensively.
     CLAUDE_MEM_MAX_SUMMARY_OBSERVATIONS: "150",
+    // Session lifecycle guard: 4 hours. Sessions older than this refuse new
+    // generators and drain their queue, capping runaway API spend (#1590).
+    CLAUDE_MEM_SESSION_MAX_AGE_MS: "14400000",
   };
 
   /**
@@ -272,13 +267,17 @@ export class SettingsDefaultsManager {
         try {
           const dir = dirname(settingsPath);
           if (!existsSync(dir)) {
-            mkdirSync(dir, { recursive: true });
+            mkdirSync(dir, { recursive: true, mode: 0o700 });
           }
-          writeFileSync(
-            settingsPath,
-            JSON.stringify(defaults, null, 2),
-            "utf-8",
-          );
+          chmodSync(dir, 0o700);
+          // settings.json can hold API keys — create owner-only. The mode arg
+          // applies only on creation (and is umask-masked); chmodSync also
+          // tightens a pre-existing world-readable file.
+          writeFileSync(settingsPath, JSON.stringify(defaults, null, 2), {
+            encoding: "utf-8",
+            mode: 0o600,
+          });
+          chmodSync(settingsPath, 0o600);
           // Use console instead of logger to avoid circular dependency
           console.log(
             "[SETTINGS] Created settings file with defaults:",
@@ -306,13 +305,14 @@ export class SettingsDefaultsManager {
         // Migrate from nested to flat schema
         flatSettings = settings.env;
 
-        // Auto-migrate the file to flat schema
+        // Auto-migrate the file to flat schema (keep it owner-only — it can
+        // hold API keys; rewrites a pre-existing file so chmodSync after).
         try {
-          writeFileSync(
-            settingsPath,
-            JSON.stringify(flatSettings, null, 2),
-            "utf-8",
-          );
+          writeFileSync(settingsPath, JSON.stringify(flatSettings, null, 2), {
+            encoding: "utf-8",
+            mode: 0o600,
+          });
+          chmodSync(settingsPath, 0o600);
           console.log(
             "[SETTINGS] Migrated settings file from nested to flat schema:",
             settingsPath,

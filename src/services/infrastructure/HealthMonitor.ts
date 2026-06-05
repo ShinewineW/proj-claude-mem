@@ -10,22 +10,48 @@
  */
 
 import path from 'path';
+import net from 'net';
 import { readFileSync } from 'fs';
 import { logger } from '../../utils/logger.js';
 import { MARKETPLACE_ROOT } from '../../shared/paths.js';
 
 /**
- * Check if a port is in use by querying the health endpoint
+ * Check if a port is in use by attempting an atomic socket bind.
+ * More reliable than an HTTP health check for daemon spawn guards —
+ * prevents the TOCTOU race where two daemons both see "port free" via
+ * HTTP and then both call listen() (#1566).
+ *
+ * Windows keeps the HTTP fallback: socket-bind semantics differ
+ * (SO_REUSEADDR defaults, firewall prompts) and would cause false
+ * positives or UAC popups.
  */
 export async function isPortInUse(port: number): Promise<boolean> {
-  try {
-    // Note: Removed AbortSignal.timeout to avoid Windows Bun cleanup issue (libuv assertion)
-    const response = await fetch(`http://127.0.0.1:${port}/api/health`);
-    return response.ok;
-  } catch (error) {
-    // [ANTI-PATTERN IGNORED]: Health check polls every 500ms, logging would flood
-    return false;
+  if (process.platform === 'win32') {
+    // APPROVED OVERRIDE: Windows keeps the HTTP health check. The TOCTOU
+    // race remains on Windows but is an accepted limitation.
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/api/health`);
+      return response.ok;
+    } catch {
+      return false;
+    }
   }
+
+  // Unix: atomic socket bind check — no TOCTOU race
+  return new Promise((resolve) => {
+    const server = net.createServer();
+    server.once('error', (err: NodeJS.ErrnoException) => {
+      if (err.code === 'EADDRINUSE') {
+        resolve(true);
+      } else {
+        resolve(false);
+      }
+    });
+    server.once('listening', () => {
+      server.close(() => resolve(false));
+    });
+    server.listen(port, '127.0.0.1');
+  });
 }
 
 /**

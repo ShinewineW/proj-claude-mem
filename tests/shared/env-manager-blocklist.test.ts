@@ -8,6 +8,8 @@ describe('buildIsolatedEnv blocklist expansion', () => {
     'CLAUDECODE_SESSION_KEY',
     'CLAUDE_CODE_SESSION',
     'MCP_SESSION_ID',
+    'CLAUDE_CODE_EFFORT_LEVEL',
+    'CLAUDE_CODE_ALWAYS_ENABLE_EFFORT',
   ];
 
   beforeEach(() => {
@@ -53,6 +55,17 @@ describe('buildIsolatedEnv blocklist expansion', () => {
     const env = buildIsolatedEnv(false);
     expect(env).not.toHaveProperty('CLAUDECODE');
     delete process.env.CLAUDECODE;
+  });
+
+  it('blocks CLAUDE_CODE_EFFORT_LEVEL and CLAUDE_CODE_ALWAYS_ENABLE_EFFORT (#2357)', () => {
+    const env = buildIsolatedEnv(false);
+    expect(env).not.toHaveProperty('CLAUDE_CODE_EFFORT_LEVEL');
+    expect(env).not.toHaveProperty('CLAUDE_CODE_ALWAYS_ENABLE_EFFORT');
+  });
+
+  it('still preserves CLAUDE_CODE_ENTRYPOINT despite effort block (set after filter)', () => {
+    const env = buildIsolatedEnv(false);
+    expect(env.CLAUDE_CODE_ENTRYPOINT).toBe('sdk-ts');
   });
 
   it('preserves normal env vars like PATH', () => {

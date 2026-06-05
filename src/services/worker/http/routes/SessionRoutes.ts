@@ -86,6 +86,35 @@ export class SessionRoutes extends BaseRouteHandler {
 
     const key = this.spawnKey(sessionDbId, dbPath);
 
+    // Wall-clock age guard: refuse new generators for sessions alive too long, to
+    // cap runaway API spend (#1590). Use persisted started_at_epoch (milliseconds
+    // since epoch — same unit as Date.now()) so the guard survives worker restarts
+    // (session.startTime resets on every re-activation).
+    const settingsForAge = SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH);
+    const maxAgeMs = parseInt(settingsForAge.CLAUDE_MEM_SESSION_MAX_AGE_MS, 10) || 14400000;
+    const dbSessionRecord = this.dbManager.getSessionStore(session.dbPath).db
+      .prepare('SELECT started_at_epoch FROM sdk_sessions WHERE id = ? LIMIT 1')
+      .get(sessionDbId) as { started_at_epoch: number } | undefined;
+    // started_at_epoch and session.startTime are BOTH milliseconds — no conversion.
+    const sessionOriginMs = dbSessionRecord?.started_at_epoch ?? session.startTime;
+    const sessionAgeMs = Date.now() - sessionOriginMs;
+    if (sessionAgeMs > maxAgeMs) {
+      logger.warn('SESSION', 'Session exceeded wall-clock age limit — aborting to prevent runaway spend', {
+        sessionId: sessionDbId,
+        ageHours: Math.round(sessionAgeMs / 3_600_000 * 10) / 10,
+        limitHours: maxAgeMs / 3_600_000,
+        source
+      });
+      if (!session.abortController.signal.aborted) {
+        session.abortController.abort();
+      }
+      this.bypassLane?.stopForSession(sessionDbId); // Mirror stale-recovery teardown ordering (line 139)
+      const pendingStore = this.sessionManager.getPendingMessageStore(session.dbPath);
+      pendingStore.markAllSessionMessagesAbandoned(sessionDbId);
+      this.sessionManager.removeSessionImmediate(sessionDbId, session.dbPath);
+      return;
+    }
+
     // GUARD: Prevent duplicate spawns
     if (this.spawnInProgress.get(key)) {
       logger.debug('SESSION', 'Spawn already in progress, skipping', { sessionDbId, source });
@@ -191,17 +220,37 @@ export class SessionRoutes extends BaseRouteHandler {
     // G1 fix: Start bypass lane consumer for this session (no-op if bypass disabled)
     this.bypassLane?.startForSession(session);
 
+    // Capture the AbortController that belongs to THIS generator run.
+    // session.abortController may be replaced (e.g. by stale-recovery) before the
+    // .catch handler runs, so binding it here prevents a stale rejection from
+    // checking against a brand-new controller (#1590).
+    const myController = session.abortController;
+
     session.generatorPromise = agent.startSession(session, this.workerService)
       .catch(error => {
         // Only log non-abort errors
-        if (session.abortController.signal.aborted) return;
+        if (myController.signal.aborted) return;
+
+        const errorMsg = error instanceof Error ? error.message : String(error);
+
+        // Treat SIGTERM (exit code 143) as intentional termination, not a crash.
+        // When the subprocess is killed externally, abort the controller so the
+        // .finally's decideGeneratorAction sees wasAborted=true and does NOT respawn (#1590).
+        if (errorMsg.includes('code 143') || errorMsg.includes('signal SIGTERM')) {
+          logger.warn('SESSION', 'Generator killed by external signal — aborting session to prevent respawn', {
+            sessionId: session.sessionDbId,
+            error: errorMsg
+          });
+          myController.abort();
+          return;
+        }
 
         session.lastGeneratorError = error instanceof Error ? error : new Error(String(error));
 
         logger.error('SESSION', `Generator failed`, {
           sessionId: session.sessionDbId,
           provider: 'claude',
-          error: error.message
+          error: errorMsg
         }, error);
 
         // Retry processing messages (retry_count+1). Known tradeoff: if .finally() also
@@ -239,7 +288,7 @@ export class SessionRoutes extends BaseRouteHandler {
       })
       .finally(async () => {
         // CRITICAL: Verify subprocess exit to prevent zombie accumulation (Issue #1168)
-        const tracked = getProcessBySession(session.sessionDbId);
+        const tracked = getProcessBySession(session.sessionDbId, session.dbPath);
         if (tracked && tracked.process.exitCode === null) {
           await ensureProcessExit(tracked, 5000);
         }
@@ -250,7 +299,13 @@ export class SessionRoutes extends BaseRouteHandler {
         const sessionDbId = session.sessionDbId;
         const key = this.spawnKey(sessionDbId, session.dbPath);
         this.spawnInProgress.delete(key);
-        const wasAborted = session.abortController.signal.aborted;
+        // Use the CAPTURED controller for the respawn decision, not the live
+        // session.abortController. Stale-recovery / proactive-reset can swap
+        // session.abortController to a brand-new (un-aborted) controller before
+        // this .finally() runs; reading the live one would report wasAborted=false
+        // for a generator that WAS intentionally aborted, causing an unwanted
+        // respawn (#1590). myController is the AbortController bound to THIS run.
+        const wasAborted = myController.signal.aborted;
 
         if (wasAborted) {
           logger.info('SESSION', `Generator aborted`, { sessionId: sessionDbId });

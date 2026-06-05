@@ -171,7 +171,7 @@ export class SessionSearch {
    * Probe whether the FTS5 extension is available in the current SQLite build.
    * Creates and immediately drops a temporary FTS5 table.
    */
-  private isFts5Available(): boolean {
+  isFts5Available(): boolean {
     try {
       this.db.run('CREATE VIRTUAL TABLE _fts5_probe USING fts5(test_column)');
       this.db.run('DROP TABLE _fts5_probe');
@@ -181,6 +181,17 @@ export class SessionSearch {
     }
   }
 
+  /**
+   * Whether the populated FTS5 tables (observations_fts / session_summaries_fts)
+   * exist for query-text fallback. Returns false on platforms where FTS5 was
+   * unavailable at table-creation time (#791).
+   */
+  private hasFtsTables(): boolean {
+    const rows = this.db
+      .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name IN ('observations_fts','session_summaries_fts')")
+      .all() as TableNameRow[];
+    return rows.length === 2;
+  }
 
   /**
    * Build WHERE clause for structured filters
@@ -303,10 +314,62 @@ export class SessionSearch {
       return this.db.prepare(sql).all(...params) as ObservationSearchResult[];
     }
 
-    // Vector search with query text should be handled by ChromaDB
-    // This method only supports filter-only queries (query=undefined)
-    logger.warn('DB', 'Text search not supported - use ChromaDB for vector search');
-    return [];
+    // Query-text path: ChromaDB is the primary semantic engine. When it is
+    // ABSENT, fall back to local FTS5 full-text search so text queries still work.
+    if (!this.hasFtsTables()) {
+      logger.warn('DB', 'Text search unavailable - no Chroma and no FTS5 tables');
+      return [];
+    }
+    // SQL param order: query, ...filter, limit, offset (orderClause MUST add no params).
+    const ftsParams: any[] = [query];
+    const filterClause = this.buildFilterClause(filters, ftsParams, 'o');
+    const whereExtra = filterClause ? `AND ${filterClause}` : '';
+    const orderClause = this.buildOrderClause(orderBy, true, 'observations_fts');
+    const ftsSql = `
+      SELECT o.*, o.discovery_tokens
+      FROM observations_fts
+      JOIN observations o ON o.id = observations_fts.rowid
+      WHERE observations_fts MATCH ?
+      ${whereExtra}
+      ${orderClause}
+      LIMIT ? OFFSET ?
+    `;
+    ftsParams.push(limit, offset);
+    try {
+      return this.db.prepare(ftsSql).all(...ftsParams) as ObservationSearchResult[];
+    } catch (error) {
+      // FTS5 has its own query grammar, so ordinary user strings (e.g. foo"bar,
+      // cache:miss, unbalanced quotes/operators) raise a SQLite syntax error.
+      // Degrade to a best-effort LIKE scan instead of surfacing a 500.
+      logger.warn('DB', 'FTS5 MATCH failed for query — falling back to LIKE', {}, error as Error);
+      return this.likeFallbackObservations(query, { limit, offset, orderBy, ...filters });
+    }
+  }
+
+  /**
+   * Best-effort LIKE fallback for observation text search when an FTS5 MATCH
+   * query is syntactically invalid. Scans the same fields FTS indexes.
+   */
+  private likeFallbackObservations(query: string, options: SearchOptions): ObservationSearchResult[] {
+    const { limit = 50, offset = 0, orderBy = 'relevance', ...filters } = options;
+    const params: any[] = [];
+    const filterClause = this.buildFilterClause(filters, params, 'o');
+    const whereExtra = filterClause ? `AND ${filterClause}` : '';
+    const like = `%${query}%`;
+    // relevance has no FTS rank in the fallback — order by recency.
+    const orderClause = orderBy === 'date_asc'
+      ? 'ORDER BY o.created_at_epoch ASC'
+      : 'ORDER BY o.created_at_epoch DESC';
+    const sql = `
+      SELECT o.*, o.discovery_tokens
+      FROM observations o
+      WHERE (o.title LIKE ? OR o.subtitle LIKE ? OR o.narrative LIKE ? OR o.text LIKE ? OR o.facts LIKE ? OR o.concepts LIKE ?)
+      ${whereExtra}
+      ${orderClause}
+      LIMIT ? OFFSET ?
+    `;
+    const allParams = [like, like, like, like, like, like, ...params, limit, offset];
+    return this.db.prepare(sql).all(...allParams) as ObservationSearchResult[];
   }
 
   /**
@@ -342,10 +405,69 @@ export class SessionSearch {
       return this.db.prepare(sql).all(...params) as SessionSummarySearchResult[];
     }
 
-    // Vector search with query text should be handled by ChromaDB
-    // This method only supports filter-only queries (query=undefined)
-    logger.warn('DB', 'Text search not supported - use ChromaDB for vector search');
-    return [];
+    // Query-text path: fall back to FTS5 when ChromaDB is absent.
+    if (!this.hasFtsTables()) {
+      logger.warn('DB', 'Text search unavailable - no Chroma and no FTS5 tables');
+      return [];
+    }
+    // SQL param order: query, ...filter, limit, offset (orderClause MUST add no params).
+    const ftsParams: any[] = [query];
+    const sessionFilterOptions = { ...filters };
+    delete sessionFilterOptions.type;
+    const filterClause = this.buildFilterClause(sessionFilterOptions, ftsParams, 's');
+    const whereExtra = filterClause ? `AND ${filterClause}` : '';
+    let orderClause: string;
+    if (orderBy === 'date_asc') {
+      orderClause = 'ORDER BY s.created_at_epoch ASC';
+    } else if (orderBy === 'date_desc') {
+      orderClause = 'ORDER BY s.created_at_epoch DESC';
+    } else {
+      orderClause = 'ORDER BY session_summaries_fts.rank ASC';
+    }
+    const ftsSql = `
+      SELECT s.*, s.discovery_tokens
+      FROM session_summaries_fts
+      JOIN session_summaries s ON s.id = session_summaries_fts.rowid
+      WHERE session_summaries_fts MATCH ?
+      ${whereExtra}
+      ${orderClause}
+      LIMIT ? OFFSET ?
+    `;
+    ftsParams.push(limit, offset);
+    try {
+      return this.db.prepare(ftsSql).all(...ftsParams) as SessionSummarySearchResult[];
+    } catch (error) {
+      // Malformed FTS5 query (see searchObservations) — degrade to LIKE.
+      logger.warn('DB', 'FTS5 MATCH failed for session query — falling back to LIKE', {}, error as Error);
+      return this.likeFallbackSessions(query, { limit, offset, orderBy, ...filters });
+    }
+  }
+
+  /**
+   * Best-effort LIKE fallback for session-summary text search when an FTS5
+   * MATCH query is syntactically invalid. Scans the same fields FTS indexes.
+   */
+  private likeFallbackSessions(query: string, options: SearchOptions): SessionSummarySearchResult[] {
+    const { limit = 50, offset = 0, orderBy = 'relevance', ...filters } = options;
+    const params: any[] = [];
+    const sessionFilterOptions = { ...filters };
+    delete sessionFilterOptions.type;
+    const filterClause = this.buildFilterClause(sessionFilterOptions, params, 's');
+    const whereExtra = filterClause ? `AND ${filterClause}` : '';
+    const like = `%${query}%`;
+    const orderClause = orderBy === 'date_asc'
+      ? 'ORDER BY s.created_at_epoch ASC'
+      : 'ORDER BY s.created_at_epoch DESC';
+    const sql = `
+      SELECT s.*, s.discovery_tokens
+      FROM session_summaries s
+      WHERE (s.request LIKE ? OR s.investigated LIKE ? OR s.learned LIKE ? OR s.completed LIKE ? OR s.next_steps LIKE ? OR s.notes LIKE ?)
+      ${whereExtra}
+      ${orderClause}
+      LIMIT ? OFFSET ?
+    `;
+    const allParams = [like, like, like, like, like, like, ...params, limit, offset];
+    return this.db.prepare(sql).all(...allParams) as SessionSummarySearchResult[];
   }
 
   /**
@@ -581,10 +703,24 @@ export class SessionSearch {
       return this.db.prepare(sql).all(...params) as UserPromptSearchResult[];
     }
 
-    // Vector search with query text should be handled by ChromaDB
-    // This method only supports filter-only queries (query=undefined)
-    logger.warn('DB', 'Text search not supported - use ChromaDB for vector search');
-    return [];
+    // Query-text path: user_prompts has no FTS table — fall back to LIKE on prompt_text
+    // when ChromaDB is absent. Redacted placeholders are excluded (no content to match).
+    // SQL param order: ...baseConditions, likeQuery, limit, offset (orderClause adds none).
+    const likeConditions = [...baseConditions, 'up.is_redacted = 0', 'up.prompt_text LIKE ?'];
+    params.push(`%${query}%`);
+    const orderClause = orderBy === 'date_asc'
+      ? 'ORDER BY up.created_at_epoch ASC'
+      : 'ORDER BY up.created_at_epoch DESC';
+    const likeSql = `
+      SELECT up.*
+      FROM user_prompts up
+      JOIN sdk_sessions s ON up.content_session_id = s.content_session_id
+      WHERE ${likeConditions.join(' AND ')}
+      ${orderClause}
+      LIMIT ? OFFSET ?
+    `;
+    params.push(limit, offset);
+    return this.db.prepare(likeSql).all(...params) as UserPromptSearchResult[];
   }
 
   /**

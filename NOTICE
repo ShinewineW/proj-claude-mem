@@ -1,0 +1,19 @@
+proj-claude-mem
+Copyright (C) 2024–2026 ShinewineW and contributors
+
+This fork incorporates code from claude-mem (https://github.com/thedotmack/claude-mem),
+Copyright (C) 2024 Alex Newman, licensed under the Apache License, Version 2.0.
+
+Per-file attribution: source files derived from Apache-2.0-licensed upstream commits carry
+an `SPDX-License-Identifier: Apache-2.0` header — currently src/shared/openai-compatible-base-url.ts
+and src/sdk/hardened-options.ts (TS files), and the plugin/skills/mem-weekly-digests skill
+(SPDX in an HTML comment, as Markdown has no comment-header convention). Fork-original and
+AGPL-3.0-derived files carry `SPDX-License-Identifier: AGPL-3.0`, or no header (defaulting to
+the fork's AGPL-3.0). Every upstream-derived commit — with its upstream hash and source
+license (Apache-2.0 or AGPL-3.0) — is indexed in docs/PROVENANCE.md.
+
+Apache-2.0 licensed portions remain sublicensable under Apache-2.0 as permitted by that
+license. The combined work as distributed by this repository is licensed under the
+GNU Affero General Public License, Version 3.0 (AGPL-3.0).
+
+SPDX-License-Identifier: AGPL-3.0

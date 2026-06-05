@@ -75,7 +75,7 @@ export function parseObservations(text: string, correlationId?: string): ParsedO
     const cleanedConcepts = concepts.filter(c => c !== finalType);
 
     if (cleanedConcepts.length !== concepts.length) {
-      logger.error('PARSER', 'Removed observation type from concepts array', {
+      logger.debug('PARSER', 'Removed observation type from concepts array', {
         correlationId,
         type: finalType,
         originalConcepts: concepts,
@@ -176,7 +176,16 @@ export function parseSummary(
     );
   }
 
-  // NOTE FROM THEDOTMACK: 100% of the time we must SAVE the summary, even if fields are missing. 10/24/2025 
+  // Guard: if NO sub-tags matched at all, the <summary> match is a false positive
+  // (e.g. <summary> appeared inside an observation response with only plain text).
+  // This is NOT the same as missing SOME fields (intentionally allowed below per
+  // the maintainer note). Upstream fix for #1360.
+  if (!request && !investigated && !learned && !completed && !next_steps) {
+    logger.warn('PARSER', 'Summary match has no sub-tags — skipping false positive', { sessionId });
+    return null;
+  }
+
+  // NOTE FROM THEDOTMACK: 100% of the time we must SAVE the summary, even if fields are missing. 10/24/2025
   // NEVER DO THIS NONSENSE AGAIN.
 
   // Validate required fields are present (notes is optional)

@@ -6,11 +6,12 @@
  * Value: { enabledAt: ISO timestamp }
  */
 
-import { existsSync, readFileSync, writeFileSync, writeSync, mkdirSync, renameSync, openSync, closeSync, unlinkSync, constants } from 'fs';
-import { basename, dirname, join, resolve, sep } from 'path';
+import { existsSync, readFileSync, writeSync, openSync, closeSync, unlinkSync, constants } from 'fs';
+import { basename, join, resolve, sep } from 'path';
 import { homedir } from 'os';
 import { logger } from '../utils/logger.js';
 import { resolveProjectRoot, resolveProjectDbPath } from './paths.js';
+import { writeJsonFileAtomic } from '../utils/json-utils.js';
 
 /**
  * Resolve the allowlist path at call time (not module load time).
@@ -53,11 +54,7 @@ function readAllowlist(): Allowlist {
 }
 
 function writeAllowlist(data: Allowlist): void {
-  const path = getEnabledProjectsPath();
-  mkdirSync(dirname(path), { recursive: true });
-  const tmpPath = path + '.tmp.' + process.pid;
-  writeFileSync(tmpPath, JSON.stringify(data, null, 2));
-  renameSync(tmpPath, path);
+  writeJsonFileAtomic(getEnabledProjectsPath(), data);
 }
 
 // --- File lock for atomic read-modify-write ---

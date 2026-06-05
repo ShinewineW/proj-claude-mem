@@ -30,6 +30,7 @@ mock.module('../../../src/services/domain/ModeManager.js', () => ({
         };
         return icons[type] || '📌';
       },
+      getWorkEmoji: (_type: string) => '🛠️',
       loadMode: () => {},
     }),
   },
@@ -601,5 +602,72 @@ describe('P3: unified pagination — no double-offset', () => {
     expect(result.observations.map((o: any) => o.title)).toEqual(
       seed.slice(2, 5).map((o: any) => o.title)
     );
+  });
+
+  it('Chroma path preserves semantic rank order when orderBy is default (relevance)', async () => {
+    // Build date_desc baseline to obtain real observation IDs
+    const all = await searchManager.search({
+      project: 'test-project',
+      limit: '100',
+      orderBy: 'date_desc',
+      format: 'json'
+    });
+    const seed = all.observations.slice(0, 5);
+    expect(seed.length).toBe(5);
+
+    // Chroma returns IDs in REVERSED date order — i.e. relevance != date order.
+    const rankedSeed = [...seed].reverse();
+
+    const relevanceManager = new SearchManager(
+      sessionSearch,
+      sessionStore,
+      {
+        queryChroma: async () => ({
+          ids: rankedSeed.map((o: any) => o.id),
+          distances: rankedSeed.map((_o: any, i: number) => i / 100),
+          metadatas: rankedSeed.map((o: any) => ({
+            doc_type: 'observation',
+            created_at_epoch: o.created_at_epoch
+          }))
+        })
+      } as any,
+      new FormattingService(),
+      new TimelineService()
+    );
+
+    // No orderBy → default relevance: output must echo Chroma rank order, NOT date order.
+    const result = await relevanceManager.search({
+      query: 'semantic test query',
+      project: 'test-project',
+      limit: '10',
+      format: 'json'
+    });
+
+    expect(result.observations.map((o: any) => o.id)).toEqual(
+      rankedSeed.map((o: any) => o.id)
+    );
+  });
+});
+
+describe('Bug 5: singular concept maps to plural concepts', () => {
+  beforeAll(() => {
+    // Add an observation carrying a concept tag (shared db from top-level beforeAll)
+    const epoch = Date.now();
+    db.run(`INSERT INTO observations (memory_session_id, project, type, title, text, files_read, files_modified, concepts, created_at, created_at_epoch)
+            VALUES ('test-ms','test-project','discovery','Concept tagged obs','body','[]','[]', ?, datetime(? / 1000, 'unixepoch'), ?)`,
+      [JSON.stringify(['authentication']), epoch, epoch]);
+  });
+
+  it('findByConcept with singular concept param applies the filter', async () => {
+    const result = await searchManager.findByConcept({
+      concept: 'authentication',
+      project: 'test-project'
+    });
+    const text = result.content?.[0]?.text || '';
+    // After fix: concept→concepts mapping makes the filter apply → only the tagged obs.
+    expect(text).toContain('Concept tagged obs');
+    // Before fix: concepts=undefined → filter dropped → ALL project observations
+    // returned, so a non-tagged seed obs ('Test Observation 1') would leak in.
+    expect(text).not.toContain('Test Observation 1');
   });
 });

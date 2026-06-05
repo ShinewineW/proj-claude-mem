@@ -349,7 +349,7 @@ describe('SettingsDefaultsManager', () => {
       // Provider settings
       expect(defaults.CLAUDE_MEM_PROVIDER).toBeDefined();
       expect(defaults.CLAUDE_MEM_GEMINI_API_KEY).toBeDefined();
-      expect(defaults.CLAUDE_MEM_OPENROUTER_API_KEY).toBeDefined();
+      expect(defaults.CLAUDE_MEM_OPENCODE_API_KEY).toBeDefined();
 
       // System settings
       expect(defaults.CLAUDE_MEM_DATA_DIR).toBeDefined();
@@ -494,5 +494,15 @@ describe('SettingsDefaultsManager', () => {
       expect(defaults.CLAUDE_MEM_WORKER_PORT).toBe('37777'); // Confirm default
       expect(result.CLAUDE_MEM_WORKER_PORT).toBe('33333'); // Env wins
     });
+  });
+});
+
+describe('CLAUDE_MEM_SESSION_MAX_AGE_MS default', () => {
+  const SRC = readFileSync(join(import.meta.dir, '../../src/shared/SettingsDefaultsManager.ts'), 'utf-8');
+  it('declares the setting in the SettingsDefaults interface', () => {
+    expect(SRC).toContain('CLAUDE_MEM_SESSION_MAX_AGE_MS: string;');
+  });
+  it('defaults to 4 hours (14400000 ms)', () => {
+    expect(SRC).toContain('CLAUDE_MEM_SESSION_MAX_AGE_MS: "14400000"');
   });
 });

@@ -9,7 +9,7 @@
  * causing memory operations to bill personal API accounts instead of CLI subscription.
  */
 
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync, chmodSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 import { logger } from '../utils/logger.js';
@@ -30,6 +30,12 @@ const BLOCKED_ENV_VARS = [
   'CLAUDECODE',         // Prevent "cannot be launched inside another Claude Code session" error
   'CLAUDE_CODE_SESSION',  // Prevent nested session detection in child processes
   'MCP_SESSION_ID',       // Prevent MCP session ID inheritance
+  // Issue #2357: parent-shell effort config forwarded by the SDK as the
+  // Messages API `effort` param; models without effort support (Haiku 4.5,
+  // Sonnet 4.5) reject with a permanent HTTP 400 that retries forever.
+  // Safe because ENTRYPOINT/OAUTH are set explicitly AFTER the filter loop.
+  'CLAUDE_CODE_EFFORT_LEVEL',
+  'CLAUDE_CODE_ALWAYS_ENABLE_EFFORT',
 ];
 
 // Prefix blocklist — strips interop ports, session keys, etc.
@@ -40,7 +46,6 @@ const BLOCKED_ENV_PREFIXES = ['CLAUDECODE_'];
 export const MANAGED_CREDENTIAL_KEYS = [
   'ANTHROPIC_API_KEY',
   'GEMINI_API_KEY',
-  'OPENROUTER_API_KEY',
   'OPENCODE_API_KEY',
 ];
 
@@ -48,7 +53,6 @@ export interface ClaudeMemEnv {
   // Credentials (optional - empty means use CLI billing for Claude)
   ANTHROPIC_API_KEY?: string;
   GEMINI_API_KEY?: string;
-  OPENROUTER_API_KEY?: string;
   OPENCODE_API_KEY?: string;
 }
 
@@ -125,7 +129,6 @@ export function loadClaudeMemEnv(): ClaudeMemEnv {
     const result: ClaudeMemEnv = {};
     if (parsed.ANTHROPIC_API_KEY) result.ANTHROPIC_API_KEY = parsed.ANTHROPIC_API_KEY;
     if (parsed.GEMINI_API_KEY) result.GEMINI_API_KEY = parsed.GEMINI_API_KEY;
-    if (parsed.OPENROUTER_API_KEY) result.OPENROUTER_API_KEY = parsed.OPENROUTER_API_KEY;
     if (parsed.OPENCODE_API_KEY) result.OPENCODE_API_KEY = parsed.OPENCODE_API_KEY;
 
     return result;
@@ -140,10 +143,16 @@ export function loadClaudeMemEnv(): ClaudeMemEnv {
  */
 export function saveClaudeMemEnv(env: ClaudeMemEnv): void {
   try {
-    // Ensure directory exists
+    // Ensure directory exists with restricted permissions (owner only).
     if (!existsSync(DATA_DIR)) {
-      mkdirSync(DATA_DIR, { recursive: true });
+      mkdirSync(DATA_DIR, { recursive: true, mode: 0o700 });
     }
+    // The mkdirSync `mode` option only applies at creation time; if DATA_DIR
+    // already exists, that mode param is silently ignored. chmodSync therefore
+    // explicitly tightens pre-existing dirs. Do NOT remove it thinking
+    // mkdirSync's mode covers the existing-dir case — it does not.
+    // No-op on Windows (permissions are ACL-controlled, not POSIX).
+    chmodSync(DATA_DIR, 0o700);
 
     // Load existing to preserve any extra keys
     const existing = existsSync(ENV_FILE_PATH)
@@ -168,13 +177,6 @@ export function saveClaudeMemEnv(env: ClaudeMemEnv): void {
         delete updated.GEMINI_API_KEY;
       }
     }
-    if (env.OPENROUTER_API_KEY !== undefined) {
-      if (env.OPENROUTER_API_KEY) {
-        updated.OPENROUTER_API_KEY = env.OPENROUTER_API_KEY;
-      } else {
-        delete updated.OPENROUTER_API_KEY;
-      }
-    }
     if (env.OPENCODE_API_KEY !== undefined) {
       if (env.OPENCODE_API_KEY) {
         updated.OPENCODE_API_KEY = env.OPENCODE_API_KEY;
@@ -183,7 +185,12 @@ export function saveClaudeMemEnv(env: ClaudeMemEnv): void {
       }
     }
 
-    writeFileSync(ENV_FILE_PATH, serializeEnvFile(updated), 'utf-8');
+    writeFileSync(ENV_FILE_PATH, serializeEnvFile(updated), { encoding: 'utf-8', mode: 0o600 });
+    // writeFileSync's `mode` only applies when the file is newly created
+    // (O_CREAT); for a pre-existing .env it is silently ignored, so chmodSync
+    // explicitly fixes pre-existing files. Required — do not drop. No-op on
+    // Windows (ACL-controlled).
+    chmodSync(ENV_FILE_PATH, 0o600);
   } catch (error) {
     logger.error('ENV', 'Failed to save .env file', { path: ENV_FILE_PATH }, error as Error);
     throw error;
@@ -228,13 +235,10 @@ export function buildIsolatedEnv(includeCredentials: boolean = true): Record<str
     if (credentials.ANTHROPIC_API_KEY) {
       isolatedEnv.ANTHROPIC_API_KEY = credentials.ANTHROPIC_API_KEY;
     }
-    // Note: GEMINI_API_KEY / OPENROUTER_API_KEY / OPENCODE_API_KEY pass through
+    // Note: GEMINI_API_KEY / OPENCODE_API_KEY pass through
     // from process.env, but claude-mem's .env takes precedence if configured
     if (credentials.GEMINI_API_KEY) {
       isolatedEnv.GEMINI_API_KEY = credentials.GEMINI_API_KEY;
-    }
-    if (credentials.OPENROUTER_API_KEY) {
-      isolatedEnv.OPENROUTER_API_KEY = credentials.OPENROUTER_API_KEY;
     }
     if (credentials.OPENCODE_API_KEY) {
       isolatedEnv.OPENCODE_API_KEY = credentials.OPENCODE_API_KEY;

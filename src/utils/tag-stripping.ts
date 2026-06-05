@@ -14,6 +14,16 @@
 import { logger } from './logger.js';
 
 /**
+ * Regex to match <system-reminder> tags and their content.
+ *
+ * @remarks Exported PURELY for reuse by transcript parsers that strip
+ * system-reminder at read-time; it is an internal implementation detail of the
+ * stripping module, not a stable public API. Treat as `@internal`. Carries the
+ * `/g` flag — see the lastIndex caveat at the stripTagsInternal call site.
+ */
+export const SYSTEM_REMINDER_REGEX = /<system-reminder>[\s\S]*?<\/system-reminder>/g;
+
+/**
  * Maximum number of tags allowed in a single content block
  * This protects against ReDoS (Regular Expression Denial of Service) attacks
  * where malicious input with many nested/unclosed tags could cause catastrophic backtracking
@@ -30,7 +40,9 @@ function countTags(content: string): number {
   const sysInstructionCount = (content.match(/<system_instruction>/g) || []).length;
   const sysInstructionHyphenCount = (content.match(/<system-instruction>/g) || []).length;
   const taskNotificationCount = (content.match(/<task-notification>/g) || []).length;
-  return privateCount + contextCount + sysInstructionCount + sysInstructionHyphenCount + taskNotificationCount;
+  const systemReminderCount = (content.match(/<system-reminder>/g) || []).length;
+  const persistedOutputCount = (content.match(/<persisted-output>/g) || []).length;
+  return privateCount + contextCount + sysInstructionCount + sysInstructionHyphenCount + taskNotificationCount + systemReminderCount + persistedOutputCount;
 }
 
 /**
@@ -55,6 +67,8 @@ function stripTagsInternal(content: string): string {
     .replace(/<system_instruction>[\s\S]*?<\/system_instruction>/g, '')
     .replace(/<system-instruction>[\s\S]*?<\/system-instruction>/g, '')
     .replace(/<task-notification>[\s\S]*?<\/task-notification>/g, '')
+    .replace(SYSTEM_REMINDER_REGEX, '')
+    .replace(/<persisted-output>[\s\S]*?<\/persisted-output>/g, '')
     .trim();
 }
 

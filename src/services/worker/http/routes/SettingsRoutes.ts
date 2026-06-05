@@ -7,7 +7,7 @@
 
 import express, { Request, Response } from 'express';
 import path from 'path';
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, chmodSync } from 'fs';
 import { homedir } from 'os';
 import { logger } from '../../../../utils/logger.js';
 import { BaseRouteHandler } from '../BaseRouteHandler.js';
@@ -79,18 +79,12 @@ export class SettingsRoutes extends BaseRouteHandler {
       'CLAUDE_MEM_GEMINI_API_KEY',
       'CLAUDE_MEM_GEMINI_MODEL',
       'CLAUDE_MEM_GEMINI_RATE_LIMITING_ENABLED',
-      // OpenRouter Configuration
-      'CLAUDE_MEM_OPENROUTER_API_KEY',
-      'CLAUDE_MEM_OPENROUTER_MODEL',
-      'CLAUDE_MEM_OPENROUTER_SITE_URL',
-      'CLAUDE_MEM_OPENROUTER_APP_NAME',
-      'CLAUDE_MEM_OPENROUTER_MAX_CONTEXT_MESSAGES',
-      'CLAUDE_MEM_OPENROUTER_MAX_TOKENS',
       // OpenCode Go Configuration
       'CLAUDE_MEM_OPENCODE_API_KEY',
       'CLAUDE_MEM_OPENCODE_MODEL',
       'CLAUDE_MEM_OPENCODE_MAX_CONTEXT_MESSAGES',
       'CLAUDE_MEM_OPENCODE_MAX_TOKENS',
+      'CLAUDE_MEM_OPENCODE_BASE_URL',
       // System Configuration
       'CLAUDE_MEM_LOG_LEVEL',
       'CLAUDE_CODE_PATH',
@@ -124,6 +118,8 @@ export class SettingsRoutes extends BaseRouteHandler {
       'CLAUDE_MEM_MAX_HISTORY_TOKENS',
       // SummaryLane adaptive observation cap
       'CLAUDE_MEM_MAX_SUMMARY_OBSERVATIONS',
+      // Session lifecycle guard
+      'CLAUDE_MEM_SESSION_MAX_AGE_MS',
     ];
 
     for (const key of settingKeys) {
@@ -132,8 +128,12 @@ export class SettingsRoutes extends BaseRouteHandler {
       }
     }
 
-    // Write back
-    writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf-8');
+    // Write back. settings.json holds CLAUDE_MEM_*_API_KEY values, so restrict
+    // to owner-only (same policy as ~/.claude-mem/.env). The writeFileSync mode
+    // only applies on creation; chmodSync fixes pre-existing files. No-op on
+    // Windows (ACL-controlled).
+    writeFileSync(settingsPath, JSON.stringify(settings, null, 2), { encoding: 'utf-8', mode: 0o600 });
+    chmodSync(settingsPath, 0o600);
 
     // Clear port cache to force re-reading from updated settings
     clearPortCache();
@@ -150,9 +150,9 @@ export class SettingsRoutes extends BaseRouteHandler {
   private validateSettings(settings: any): { valid: boolean; error?: string } {
     // Validate CLAUDE_MEM_PROVIDER
     if (settings.CLAUDE_MEM_PROVIDER) {
-    const validProviders = ['claude', 'gemini', 'openrouter', 'opencode'];
+    const validProviders = ['claude', 'gemini', 'opencode'];
     if (!validProviders.includes(settings.CLAUDE_MEM_PROVIDER)) {
-      return { valid: false, error: 'CLAUDE_MEM_PROVIDER must be "claude", "gemini", "openrouter", or "opencode"' };
+      return { valid: false, error: 'CLAUDE_MEM_PROVIDER must be "claude", "gemini", or "opencode"' };
       }
     }
 
@@ -161,6 +161,23 @@ export class SettingsRoutes extends BaseRouteHandler {
       const validGeminiModels = ['gemini-2.5-flash-lite', 'gemini-2.5-flash', 'gemini-3-flash-preview'];
       if (!validGeminiModels.includes(settings.CLAUDE_MEM_GEMINI_MODEL)) {
         return { valid: false, error: 'CLAUDE_MEM_GEMINI_MODEL must be one of: gemini-2.5-flash-lite, gemini-2.5-flash, gemini-3-flash-preview' };
+      }
+    }
+
+    // Validate CLAUDE_MEM_OPENCODE_BASE_URL — must be a valid http(s) URL when
+    // set (blank = use the default OpenCode endpoint). The bypass lane sends the
+    // OpenCode Bearer key + observation content here, so a non-http(s) / malformed
+    // value is rejected rather than persisted (mirrors the resolver's guard).
+    if (settings.CLAUDE_MEM_OPENCODE_BASE_URL && String(settings.CLAUDE_MEM_OPENCODE_BASE_URL).trim() !== '') {
+      const candidate = String(settings.CLAUDE_MEM_OPENCODE_BASE_URL).trim();
+      let parsed: URL | null = null;
+      try {
+        parsed = new URL(candidate);
+      } catch {
+        parsed = null;
+      }
+      if (!parsed || (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') || parsed.hostname.length === 0) {
+        return { valid: false, error: 'CLAUDE_MEM_OPENCODE_BASE_URL must be a valid http(s) URL' };
       }
     }
 
@@ -234,33 +251,6 @@ export class SettingsRoutes extends BaseRouteHandler {
     if (settings.CLAUDE_MEM_CONTEXT_FULL_FIELD) {
       if (!['narrative', 'facts'].includes(settings.CLAUDE_MEM_CONTEXT_FULL_FIELD)) {
         return { valid: false, error: 'CLAUDE_MEM_CONTEXT_FULL_FIELD must be "narrative" or "facts"' };
-      }
-    }
-
-    // Validate CLAUDE_MEM_OPENROUTER_MAX_CONTEXT_MESSAGES
-    if (settings.CLAUDE_MEM_OPENROUTER_MAX_CONTEXT_MESSAGES) {
-      const count = parseInt(settings.CLAUDE_MEM_OPENROUTER_MAX_CONTEXT_MESSAGES, 10);
-      if (isNaN(count) || count < 1 || count > 100) {
-        return { valid: false, error: 'CLAUDE_MEM_OPENROUTER_MAX_CONTEXT_MESSAGES must be between 1 and 100' };
-      }
-    }
-
-    // Validate CLAUDE_MEM_OPENROUTER_MAX_TOKENS
-    if (settings.CLAUDE_MEM_OPENROUTER_MAX_TOKENS) {
-      const tokens = parseInt(settings.CLAUDE_MEM_OPENROUTER_MAX_TOKENS, 10);
-      if (isNaN(tokens) || tokens < 1000 || tokens > 1000000) {
-        return { valid: false, error: 'CLAUDE_MEM_OPENROUTER_MAX_TOKENS must be between 1000 and 1000000' };
-      }
-    }
-
-    // Validate CLAUDE_MEM_OPENROUTER_SITE_URL if provided
-    if (settings.CLAUDE_MEM_OPENROUTER_SITE_URL) {
-      try {
-        new URL(settings.CLAUDE_MEM_OPENROUTER_SITE_URL);
-      } catch (error) {
-        // Invalid URL format
-        logger.debug('SETTINGS', 'Invalid URL format', { url: settings.CLAUDE_MEM_OPENROUTER_SITE_URL, error: error instanceof Error ? error.message : String(error) });
-        return { valid: false, error: 'CLAUDE_MEM_OPENROUTER_SITE_URL must be a valid URL' };
       }
     }
 
@@ -377,13 +367,17 @@ export class SettingsRoutes extends BaseRouteHandler {
     if (!existsSync(settingsPath)) {
       const defaults = SettingsDefaultsManager.getAllDefaults();
 
-      // Ensure directory exists
+      // Ensure directory exists (owner-only — settings.json can hold API keys)
       const dir = path.dirname(settingsPath);
       if (!existsSync(dir)) {
-        mkdirSync(dir, { recursive: true });
+        mkdirSync(dir, { recursive: true, mode: 0o700 });
       }
+      chmodSync(dir, 0o700);
 
-      writeFileSync(settingsPath, JSON.stringify(defaults, null, 2), 'utf-8');
+      // Create owner-only. The mode arg applies only on creation (umask-masked);
+      // chmodSync also tightens a pre-existing world-readable file.
+      writeFileSync(settingsPath, JSON.stringify(defaults, null, 2), { encoding: 'utf-8', mode: 0o600 });
+      chmodSync(settingsPath, 0o600);
       logger.info('SETTINGS', 'Created settings file with defaults', { settingsPath });
     }
   }

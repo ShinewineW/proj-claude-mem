@@ -1,6 +1,6 @@
 # Claude-Mem: AI Development Instructions
 
-Fork of [claude-mem](https://github.com/thedotmack/claude-mem) with per-project database isolation. Base: upstream v10.5.2. **Audited and synchronized through upstream v10.6.1 (`9f529a30`)**. See workspace `.claude/CLAUDE.md` → "Upstream Sync Status" for full divergence tracking.
+Fork of [claude-mem](https://github.com/thedotmack/claude-mem) with per-project database isolation. Base: upstream v10.5.2. **Audited and synchronized through upstream v10.6.1 (`9f529a30`)**; the `feat/upstream-cherrypick` branch additionally ports 41 actionable v10.6.1→v13.4.0 fixes (security / data-integrity / reliability) selected by audit — see `docs/PROVENANCE.md` for the per-commit upstream source + license index. See workspace `.claude/CLAUDE.md` → "Upstream Sync Status" for full divergence tracking.
 
 Claude-mem is a Claude Code plugin providing persistent memory across sessions. It captures tool usage, compresses observations using the Claude Agent SDK, and injects relevant context into future sessions.
 
@@ -12,7 +12,7 @@ Claude-mem is a Claude Code plugin providing persistent memory across sessions. 
 
 **Worker Service** (`src/services/worker-service.ts`) - Express API on port 37777, Bun-managed, handles AI processing asynchronously
 
-**Bypass Lane** (`src/services/worker/BypassLane.ts`) - Parallel REST consumer for observations (Gemini/OpenRouter/OpenCode Go), main channel always Claude SDK. OpenCode path sends `thinking:{type:"disabled"}` to suppress reasoning-model CoT, and classifies failures into `quota`/`auth`/`transient`/`client` buckets with tiered cooldowns (6h / 6h / 20min / no-trip).
+**Bypass Lane** (`src/services/worker/BypassLane.ts`) - Parallel REST consumer for observations (Gemini/OpenCode Go), main channel always Claude SDK. OpenCode path sends `thinking:{type:"disabled"}` to suppress reasoning-model CoT, and classifies failures into `quota`/`auth`/`transient`/`client` buckets with tiered cooldowns (6h / 6h / 20min / no-trip).
 
 **Fresh Summarize Path** (`src/services/worker/fresh-summarize.ts`, `fresh-summarize-store.ts`, `summarize-salvage.ts`, `SDKAgent.runFreshSummarize`) - Summaries run on a fresh `query()` subprocess (no resume, no observer priming) to bypass the observer-session role conditioning that empirically produced 0% valid `<summary>` XML in production. Pre-queue salvage runs first; on fallthrough dispatches to `onRunFreshSummarizeCallback`. Atomic store re-reads `memory_session_id` inside a transaction to avoid FK race. Accept-loss-on-failure policy — pre-queue salvage catches the next trigger. Full architecture → workspace `.claude/rules/architecture-details.md` § "Fresh SDK Query Summarize".
 
@@ -42,7 +42,7 @@ Claude-mem is a Claude Code plugin providing persistent memory across sessions. 
 
 ```bash
 /opt/homebrew/bin/bun run build-and-sync   # Build, deploy to cache + marketplace discovery, restart worker
-/opt/homebrew/bin/bun test                  # Run all tests (1933 pass, 0 fail, 0 skip)
+/opt/homebrew/bin/bun test                  # Run all tests (2163 pass, 0 fail on feat/upstream-cherrypick)
 ```
 
 ## Configuration

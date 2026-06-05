@@ -22,6 +22,7 @@ import { buildFreshSummaryPrompt } from '../../sdk/prompts.js';
 import { parseSummary, type ParsedSummary } from '../../sdk/parser.js';
 import { logger } from '../../utils/logger.js';
 import type { ModeConfig } from '../domain/types.js';
+import { buildHardenedSdkOptions } from '../../sdk/hardened-options.js';
 
 export interface FreshSummarizeObservation {
   type: string;
@@ -145,18 +146,24 @@ export async function runFreshSummarizeQuery(
     };
   }
 
-  const options: Record<string, unknown> = {
+  // Hardened, no-tools SDK options — same lockdown as the observer path.
+  // cwd jail (deps.cwd = observer-sessions dir) preserved; NO resume (the
+  // entire point of the fresh path — buildHardenedSdkOptions omits resume
+  // unless passed, and we never pass it here). The hardened helper supplies
+  // OBSERVER_DISALLOWED_TOOLS (a superset of SUMMARIZE_DISALLOWED_TOOLS), so
+  // deps.disallowedTools is no longer read here (kept on the interface for
+  // the SummaryLane builder; see Step 9 test update).
+  const options = buildHardenedSdkOptions({
+    source: 'Summarize',
     model: deps.modelId,
     cwd: deps.cwd,
-    disallowedTools: deps.disallowedTools,
     abortController: deps.abortController,
     pathToClaudeCodeExecutable: deps.pathToClaudeCodeExecutable,
     env: deps.isolatedEnv,
-    // Explicitly NO resume — this is the entire point of the fresh path.
-  };
-  if (deps.spawnClaudeCodeProcess) {
-    options.spawnClaudeCodeProcess = deps.spawnClaudeCodeProcess;
-  }
+    ...(deps.spawnClaudeCodeProcess
+      ? { spawnClaudeCodeProcess: deps.spawnClaudeCodeProcess }
+      : {}),
+  });
 
   let collectedText = '';
   let inputTokens: number | undefined;

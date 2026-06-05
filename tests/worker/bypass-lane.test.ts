@@ -30,8 +30,8 @@ mock.module('../../src/shared/SettingsDefaultsManager.js', () => ({
       CLAUDE_MEM_GEMINI_API_KEY: 'test-gemini-key',
       CLAUDE_MEM_GEMINI_MODEL: 'gemini-2.5-flash',
       CLAUDE_MEM_GEMINI_RATE_LIMITING_ENABLED: 'false',
-      CLAUDE_MEM_OPENROUTER_API_KEY: '',
-      CLAUDE_MEM_OPENROUTER_MODEL: 'xiaomi/mimo-v2-flash:free',
+      CLAUDE_MEM_OPENCODE_API_KEY: '',
+      CLAUDE_MEM_OPENCODE_MODEL: 'deepseek-v4-flash',
       CLAUDE_MEM_BYPASS_COOLDOWN_MS: '5000',
       CLAUDE_MEM_CHROMA_ENABLED: 'false',
     }),
@@ -374,7 +374,7 @@ describe('F1: empty observation defense', () => {
   it('throws when parseObservations returns empty array', async () => {
     const lane = new BypassLane();
     (lane as any).state = 'ACTIVE';
-    (lane as any).config = { provider: 'openrouter', apiKey: 'test', model: 'test', cooldownMs: 5000 };
+    (lane as any).config = { provider: 'opencode', apiKey: 'test', model: 'test', cooldownMs: 5000 };
 
     // Mock dependencies
     const mockMarkFailed = mock(() => {});
@@ -429,7 +429,7 @@ describe('F1: empty observation defense', () => {
   it('consumeLoop calls markFailed + recordFailure when processObservation throws', async () => {
     const lane = new BypassLane();
     (lane as any).state = 'ACTIVE';
-    (lane as any).config = { provider: 'openrouter', apiKey: 'test', model: 'test', cooldownMs: 5000 };
+    (lane as any).config = { provider: 'opencode', apiKey: 'test', model: 'test', cooldownMs: 5000 };
 
     const mockMarkFailed = mock(() => {});
     let claimCount = 0;
@@ -534,7 +534,7 @@ describe('§1: unified state transition', () => {
     (lane as any).consumeLoop = async () => {};
 
     // Initialize — should backfill all 3
-    (lane as any).resolveConfig = () => ({ provider: 'openrouter', apiKey: 'k', model: 'm', cooldownMs: 1000 });
+    (lane as any).resolveConfig = () => ({ provider: 'opencode', apiKey: 'k', model: 'm', cooldownMs: 1000 });
     await lane.initialize();
 
     expect(lane.getState()).toBe('ACTIVE');
@@ -555,7 +555,7 @@ describe('§1: unified state transition', () => {
       getPendingMessageStore: () => ({ claimNextObservation: () => null }),
     };
     (lane as any).consumeLoop = async () => {};
-    (lane as any).resolveConfig = () => ({ provider: 'openrouter', apiKey: 'k', model: 'm', cooldownMs: 100 });
+    (lane as any).resolveConfig = () => ({ provider: 'opencode', apiKey: 'k', model: 'm', cooldownMs: 100 });
 
     await lane.initialize();
     // State should be DISABLED (not TRIPPED — never was active)
@@ -576,7 +576,7 @@ describe('§1: unified state transition', () => {
 describe('§3 partial: counters and getStatus', () => {
   it('G6: getStatus returns correct counter values', async () => {
     const lane = new BypassLane();
-    (lane as any).config = { provider: 'openrouter', apiKey: 'test', model: 'test-model', cooldownMs: 1000 };
+    (lane as any).config = { provider: 'opencode', apiKey: 'test', model: 'test-model', cooldownMs: 1000 };
     (lane as any).state = 'ACTIVE';
 
     // Simulate 2 successes and 1 failure
@@ -586,7 +586,7 @@ describe('§3 partial: counters and getStatus', () => {
 
     const status = lane.getStatus();
     expect(status.state).toBe('ACTIVE');
-    expect(status.provider).toBe('openrouter');
+    expect(status.provider).toBe('opencode');
     expect(status.model).toBe('test-model');
     expect(status.totalSucceeded).toBe(2);
     expect(status.totalFailed).toBe(1);
@@ -607,7 +607,7 @@ describe('§3 partial: counters and getStatus', () => {
 
   it('totalTrips increments on circuit breaker trip', () => {
     const lane = new BypassLane();
-    (lane as any).config = { provider: 'openrouter', apiKey: 'test', model: 'test', cooldownMs: 1000 };
+    (lane as any).config = { provider: 'opencode', apiKey: 'test', model: 'test', cooldownMs: 1000 };
     (lane as any).state = 'ACTIVE';
 
     // Trip circuit breaker
@@ -627,7 +627,7 @@ describe('§3 partial: counters and getStatus', () => {
 describe('§4: ProbeResult structured return', () => {
   it('returns ok:true on successful probe', async () => {
     const lane = new BypassLane();
-    (lane as any).config = { provider: 'openrouter', apiKey: 'test', model: 'test', cooldownMs: 1000 };
+    (lane as any).config = { provider: 'opencode', apiKey: 'test', model: 'test', cooldownMs: 1000 };
     const originalFetch = globalThis.fetch;
     globalThis.fetch = mock(async () => new Response('OK', { status: 200 })) as any;
     try {
@@ -640,7 +640,7 @@ describe('§4: ProbeResult structured return', () => {
 
   it('returns failureReason with HTTP status on non-ok response', async () => {
     const lane = new BypassLane();
-    (lane as any).config = { provider: 'openrouter', apiKey: 'test', model: 'test', cooldownMs: 1000 };
+    (lane as any).config = { provider: 'opencode', apiKey: 'test', model: 'test', cooldownMs: 1000 };
     const originalFetch = globalThis.fetch;
     globalThis.fetch = mock(async () => new Response('', { status: 429, statusText: 'Too Many Requests' })) as any;
     try {
@@ -654,7 +654,7 @@ describe('§4: ProbeResult structured return', () => {
 
   it('returns sanitized failureReason on network error', async () => {
     const lane = new BypassLane();
-    (lane as any).config = { provider: 'openrouter', apiKey: 'test', model: 'test', cooldownMs: 1000 };
+    (lane as any).config = { provider: 'opencode', apiKey: 'test', model: 'test', cooldownMs: 1000 };
     const originalFetch = globalThis.fetch;
     globalThis.fetch = mock(async () => { throw new Error('fetch failed: ECONNREFUSED'); }) as any;
     try {
@@ -685,7 +685,7 @@ describe('§4: ProbeResult structured return', () => {
 
   it('returns timeout reason on AbortError', async () => {
     const lane = new BypassLane();
-    (lane as any).config = { provider: 'openrouter', apiKey: 'test', model: 'test', cooldownMs: 1000 };
+    (lane as any).config = { provider: 'opencode', apiKey: 'test', model: 'test', cooldownMs: 1000 };
     const originalFetch = globalThis.fetch;
     globalThis.fetch = mock(async () => {
       const err = new DOMException('The operation was aborted', 'AbortError');
@@ -702,7 +702,7 @@ describe('§4: ProbeResult structured return', () => {
 
   it('returns timeout reason on TimeoutError (real AbortSignal.timeout)', async () => {
     const lane = new BypassLane();
-    (lane as any).config = { provider: 'openrouter', apiKey: 'test', model: 'test', cooldownMs: 1000 };
+    (lane as any).config = { provider: 'opencode', apiKey: 'test', model: 'test', cooldownMs: 1000 };
     const originalFetch = globalThis.fetch;
     globalThis.fetch = mock(async () => {
       const err = new DOMException('The operation timed out.', 'TimeoutError');
@@ -731,14 +731,14 @@ describe('F5: Gemini rate limiting', () => {
     expect((lane as any).lastGeminiRequestTime).toBe(0);
   });
 
-  it('does not have rate limiting for openrouter provider', () => {
+  it('does not have rate limiting for opencode provider', () => {
     const lane = new BypassLane();
-    (lane as any).config = { provider: 'openrouter', apiKey: 'test', model: 'test', cooldownMs: 5000 };
+    (lane as any).config = { provider: 'opencode', apiKey: 'test', model: 'test', cooldownMs: 5000 };
 
-    // lastGeminiRequestTime should remain 0 — OpenRouter doesn't use it
+    // lastGeminiRequestTime should remain 0 — OpenCode doesn't use it
     expect((lane as any).lastGeminiRequestTime).toBe(0);
     // Config check: rate limiting only applies when provider === 'gemini'
-    expect((lane as any).config.provider).toBe('openrouter');
+    expect((lane as any).config.provider).toBe('opencode');
     expect((lane as any).config.provider === 'gemini').toBe(false);
   });
 });

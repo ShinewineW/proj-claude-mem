@@ -549,23 +549,36 @@ export class WorkerService {
         });
       }
 
-      // Connect to MCP server
+      // Best-effort loopback MCP self-check.
+      // Codex/Claude Desktop connect to the bundled stdio binary directly; this
+      // loopback connect is only a self-check and MUST NOT be fatal — a hung or
+      // failed connect must not starve the orphan/stale reapers, fallback cleanup,
+      // or SummaryLane that start below (#4589b34e).
       const mcpServerPath = path.join(__dirname, 'mcp-server.cjs');
-      const transport = new StdioClientTransport({
-        command: 'node',
-        args: [mcpServerPath],
-        env: process.env
-      });
+      try {
+        const transport = new StdioClientTransport({
+          command: 'node',
+          args: [mcpServerPath],
+          env: process.env
+        });
 
-      const MCP_INIT_TIMEOUT_MS = 300000;
-      const mcpConnectionPromise = this.mcpClient.connect(transport);
-      const timeoutPromise = new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('MCP connection timeout after 5 minutes')), MCP_INIT_TIMEOUT_MS)
-      );
+        const MCP_INIT_TIMEOUT_MS = 300000;
+        const mcpConnectionPromise = this.mcpClient.connect(transport);
+        const timeoutPromise = new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('MCP connection timeout after 5 minutes')), MCP_INIT_TIMEOUT_MS)
+        );
 
-      await Promise.race([mcpConnectionPromise, timeoutPromise]);
-      this.mcpReady = true;
-      logger.success('WORKER', 'MCP server connected');
+        await Promise.race([mcpConnectionPromise, timeoutPromise]);
+        this.mcpReady = true;
+        logger.success('WORKER', 'MCP loopback self-check connected');
+      } catch (mcpError) {
+        // Non-fatal: external stdio clients can still use the bundled binary.
+        this.mcpReady = false;
+        logger.warn('WORKER', 'MCP loopback self-check failed — continuing without loopback MCP', {
+          path: mcpServerPath,
+          error: mcpError instanceof Error ? mcpError.message : String(mcpError)
+        });
+      }
 
       // Start orphan reaper to clean up zombie processes (Issue #737)
       this.stopOrphanReaper = startOrphanReaper(() => {
@@ -804,7 +817,7 @@ export class WorkerService {
       })
       .finally(async () => {
         // CRITICAL: Verify subprocess exit to prevent zombie accumulation (Issue #1168)
-        const trackedProcess = getProcessBySession(session.sessionDbId);
+        const trackedProcess = getProcessBySession(session.sessionDbId, session.dbPath);
         if (trackedProcess && trackedProcess.process.exitCode === null) {
           await ensureProcessExit(trackedProcess, 5000);
         }
@@ -1763,7 +1776,18 @@ async function main() {
       });
 
       const worker = new WorkerService();
-      worker.start().catch((error) => {
+      worker.start().catch(async (error) => {
+        // Port race: when the MCP server and SessionStart hook both spawn a daemon
+        // concurrently, one loses the bind race with EADDRINUSE or Bun's equivalent
+        // "port in use" error. If the winner is already healthy, exit cleanly (#1447).
+        const isPortConflict = error instanceof Error && (
+          (error as NodeJS.ErrnoException).code === 'EADDRINUSE' ||
+          /port.*in use|address.*in use/i.test(error.message)
+        );
+        if (isPortConflict && await waitForHealth(port, 3000)) {
+          logger.info('SYSTEM', 'Duplicate daemon exiting — another worker already claimed port', { port });
+          process.exit(0);
+        }
         logger.failure('SYSTEM', 'Worker failed to start', {}, error as Error);
         removePidFile();
         // Exit gracefully: Windows Terminal won't keep tab open on exit 0

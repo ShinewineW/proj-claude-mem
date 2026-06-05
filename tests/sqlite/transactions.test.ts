@@ -305,5 +305,24 @@ describe('Transactions Module', () => {
       expect(result.observationIds).toHaveLength(1);
       expect(result.summaryId).toBeNull();
     });
+
+    it('throws when the pending message is not in processing state (no phantom completion)', () => {
+      const { memorySessionId } = createSessionWithMemoryId('content-phantom', 'phantom-session');
+      const project = 'test-project';
+      const observations = [createObservationInput({ title: 'Phantom Obs' })];
+
+      // messageId 999999 does not exist as a 'processing' row, so the UPDATE
+      // affects 0 rows and the function must reject instead of reporting success.
+      expect(() =>
+        storeObservationsAndMarkComplete(
+          db,
+          memorySessionId,
+          project,
+          observations,
+          null,
+          999999
+        )
+      ).toThrow(/failed to complete pending message 999999/);
+    });
   });
 });

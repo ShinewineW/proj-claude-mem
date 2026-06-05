@@ -38,8 +38,8 @@ mock.module('../../src/shared/SettingsDefaultsManager.js', () => ({
       CLAUDE_MEM_GEMINI_API_KEY: 'test-gemini-key',
       CLAUDE_MEM_GEMINI_MODEL: 'gemini-2.5-flash',
       CLAUDE_MEM_GEMINI_RATE_LIMITING_ENABLED: 'false',
-      CLAUDE_MEM_OPENROUTER_API_KEY: '',
-      CLAUDE_MEM_OPENROUTER_MODEL: 'test-model',
+      CLAUDE_MEM_OPENCODE_API_KEY: '',
+      CLAUDE_MEM_OPENCODE_MODEL: 'deepseek-v4-flash',
       CLAUDE_MEM_BYPASS_COOLDOWN_MS: '5000',
       CLAUDE_MEM_CHROMA_ENABLED: 'false',
     }),
@@ -100,7 +100,7 @@ function applyActions(lane: BypassLane, actions: Action[]): void {
 /** Create a fresh BypassLane in ACTIVE state with config set. */
 function createActiveLane(): BypassLane {
   const lane = new BypassLane();
-  (lane as any).config = { provider: 'openrouter', apiKey: 'test', model: 'test', cooldownMs: 999999 };
+  (lane as any).config = { provider: 'opencode', apiKey: 'test', model: 'test', cooldownMs: 999999 };
   (lane as any).state = 'ACTIVE';
   (lane as any).consecutiveFailures = 0;
   return lane;
@@ -412,7 +412,7 @@ describe('Property 4: Counter reset semantics', () => {
     for (const source of ['init', 'recovery'] as const) {
       for (let trial = 0; trial < 50; trial++) {
         const lane = new BypassLane();
-        (lane as any).config = { provider: 'openrouter', apiKey: 'k', model: 'm', cooldownMs: 999999 };
+        (lane as any).config = { provider: 'opencode', apiKey: 'k', model: 'm', cooldownMs: 999999 };
         (lane as any).sessionManager = { getActiveSessions: () => [].values() };
 
         // Set random consecutive failure count
@@ -483,7 +483,7 @@ describe('Property 5: Probe result completeness', () => {
       { name: 'non-Error throw', impl: async () => { throw 'string error'; } },
     ];
 
-    for (const provider of ['gemini', 'openrouter'] as const) {
+    for (const provider of ['gemini', 'opencode'] as const) {
       for (const behavior of fetchBehaviors) {
         const lane = new BypassLane();
         (lane as any).config = {
@@ -534,9 +534,9 @@ describe('Property 5: Probe result completeness', () => {
   });
 
   it('failureReason never contains raw API keys', async () => {
-    const secrets = ['my-secret-gemini-key-12345', 'sk-openrouter-secret-key-67890'];
+    const secrets = ['my-secret-gemini-key-12345', 'sk-opencode-secret-key-67890'];
 
-    for (const provider of ['gemini', 'openrouter'] as const) {
+    for (const provider of ['gemini', 'opencode'] as const) {
       const secret = provider === 'gemini' ? secrets[0] : secrets[1];
       const lane = new BypassLane();
       (lane as any).config = {
