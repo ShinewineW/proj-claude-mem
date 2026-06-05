@@ -193,7 +193,7 @@ bash ~/.claude/plugins/cache/thedotmack/claude-mem/<version>/scripts/uninstall.s
 proj-claude-mem/
 ├── src/
 │   ├── cli/handlers/          # Hook 处理器（session-init, observation, context, stop）
-│   ├── hooks/                 # TS hook 源（构建为 plugin/scripts/*-hook.js）
+│   ├── hooks/                 # TS hook 源（打包进 plugin/scripts/hook-client.cjs）
 │   ├── sdk/                   # SDK 封装：hardened-options（无工具锁定）、prompts、parser
 │   ├── servers/
 │   │   └── mcp-server.ts      # MCP 搜索服务器（白名单驱动的 dbPath 解析）

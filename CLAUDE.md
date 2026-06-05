@@ -8,7 +8,7 @@ Claude-mem is a Claude Code plugin providing persistent memory across sessions. 
 
 **Lifecycle**: 4 registered Claude Code hook events (`plugin/hooks/hooks.json`) — SessionStart (`context`) → UserPromptSubmit (`session-init`) → PostToolUse (`observation`) → Stop (`stop`). The Summary phase is internal (worker `SummaryLane`, driven off the Stop hook), not a separate CC event; there is no SessionEnd hook.
 
-**Hooks** (`src/hooks/*.ts`) - TypeScript → ESM, built to `plugin/scripts/*-hook.js`
+**Hooks** (`src/hooks/*.ts`, `src/cli/handlers/*.ts`) - TypeScript, bundled into `plugin/scripts/hook-client.cjs`; invoked per event via `hook-client.cjs hook claude-code <event>` (see `plugin/hooks/hooks.json`)
 
 **Worker Service** (`src/services/worker-service.ts`) - Express API on port 37777, Bun-managed, handles AI processing asynchronously
 
