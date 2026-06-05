@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: Apache-2.0
+// The "no-tools" enforcement modeled here derives from upstream
+// thedotmack/claude-mem@ce13c887 (Apache-2.0), combined with fork-original
+// per-project cwd-jail / settings-isolation wiring. See docs/PROVENANCE.md.
 /**
  * Single source of truth for the SECURITY-SENSITIVE SDK options that lock the
  * Observer and fresh-summarize sessions down to "no tool access".
