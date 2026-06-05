@@ -4,7 +4,7 @@
 
 ## Overview
 
-Use claude-mem's persistent memory in Cursor without a Claude Code subscription. Choose between free-tier providers (Gemini, OpenRouter) or paid options.
+Use claude-mem's persistent memory in Cursor without a Claude Code subscription. Choose between free-tier providers (Gemini, OpenCode Go) or paid options.
 
 **What You Get**:
 - **Persistent memory** that survives across sessions - your AI remembers what it worked on
@@ -69,25 +69,25 @@ EOF
 
 **Get your free API key**: https://aistudio.google.com/apikey
 
-### Option B: OpenRouter (100+ Models)
+### Option B: OpenCode Go (OpenAI-compatible)
 
-OpenRouter provides access to many models, including free options.
+OpenCode Go is an OpenAI-compatible endpoint with a free/subscription tier.
 
 ```bash
 mkdir -p ~/.claude-mem
 cat > ~/.claude-mem/settings.json << 'EOF'
 {
-  "CLAUDE_MEM_PROVIDER": "openrouter",
-  "CLAUDE_MEM_OPENROUTER_API_KEY": "YOUR_OPENROUTER_API_KEY"
+  "CLAUDE_MEM_PROVIDER": "opencode",
+  "CLAUDE_MEM_OPENCODE_API_KEY": "YOUR_OPENCODE_API_KEY"
 }
 EOF
 ```
 
-**Get your API key**: https://openrouter.ai/keys
+**Get your API key**: https://opencode.ai
 
-**Free models available**:
-- `google/gemini-2.0-flash-exp:free`
-- `xiaomi/mimo-v2-flash:free`
+**Notes**:
+- Default model is `deepseek-v4-flash`; override with `CLAUDE_MEM_OPENCODE_MODEL`.
+- A custom OpenAI-compatible endpoint can be set via `CLAUDE_MEM_OPENCODE_BASE_URL` (http(s) only).
 
 ### Option C: Claude API (If You Have API Access)
 
@@ -184,7 +184,7 @@ tail -f ~/.claude-mem/logs/worker-$(date +%Y-%m-%d).log
 If you hit the 1500 requests/day limit:
 - Wait until the next day
 - Upgrade to a paid plan
-- Switch to OpenRouter with a paid model
+- Switch to OpenCode Go, or a paid Gemini/Claude tier
 
 ## Next Steps
 

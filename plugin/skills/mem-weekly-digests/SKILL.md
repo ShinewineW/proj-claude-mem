@@ -3,6 +3,12 @@ name: mem-weekly-digests
 description: Generate a serial week-by-week narrative digest of a project's full claude-mem timeline. Splits the timeline into per-ISO-week files, then runs one consecutive subagent per week — each receiving the prior week's carry-forward block — to produce one chapter per ISO week of data. Use when asked for "weekly digests", "week-by-week story", "serial timeline", or "narrative chapters" of a project's history.
 ---
 
+<!--
+SPDX-License-Identifier: Apache-2.0
+Adapted from upstream thedotmack/claude-mem@09e74bbf (Apache-2.0). The per-project
+DB-path threading is a fork-original adaptation. Provenance: docs/PROVENANCE.md; NOTICE.
+-->
+
 # Weekly Digests
 
 Produce a serial, multi-chapter narrative digest of a project's complete claude-mem history. Differs from `mem-timeline` (one long report) — this generates one digest *per ISO week*, with each subagent reading the prior week's carry-forward block so the story stays coherent.
@@ -77,9 +83,19 @@ fi
 
 ### Step 2: Fetch the Full Timeline and Save It
 
+Substitute `PROJECT_NAME` with the project name from Step 1 and `DB_PATH` with the
+per-project DB path from Step 1.5. Passing `dbPath` is **required** under per-project
+isolation: `/api/context/inject` only loads this project's `<repo>/.claude/mem.db`
+when `dbPath` is supplied — without it the worker falls back to its default store and
+the timeline comes back empty or wrong. `-G --data-urlencode` URL-encodes the path's
+slashes for you.
+
 ```bash
 mkdir -p .scratch
-curl -s "http://localhost:${WORKER_PORT}/api/context/inject?project=PROJECT_NAME&full=true" \
+curl -s -G "http://localhost:${WORKER_PORT}/api/context/inject" \
+  --data-urlencode "project=PROJECT_NAME" \
+  --data-urlencode "dbPath=DB_PATH" \
+  --data-urlencode "full=true" \
   > .scratch/cm-timeline.md
 wc -l .scratch/cm-timeline.md
 ```
