@@ -206,7 +206,7 @@ Build a beautiful, animated CLI installer for claude-mem using `@clack/prompts` 
    - `p.select()` for provider:
      - **Claude** (hint: "recommended — uses your Claude subscription")
      - **Gemini** (hint: "free tier available")
-     - **OpenRouter** (hint: "free models available")
+     - **OpenCode Go** (hint: "OpenAI-compatible, free/subscription tier")
    - **If Claude selected**:
      - `p.select()` for auth method: "CLI (Max Plan subscription)" vs "API Key"
      - If API key: `p.password()` for key input
@@ -214,9 +214,9 @@ Build a beautiful, animated CLI installer for claude-mem using `@clack/prompts` 
      - `p.password()` for API key (required)
      - `p.select()` for model: gemini-2.5-flash-lite (default), gemini-2.5-flash, gemini-3-flash-preview
      - `p.confirm()` for rate limiting (default: true)
-   - **If OpenRouter selected**:
+   - **If OpenCode Go selected**:
      - `p.password()` for API key (required)
-     - `p.text()` for model (default: `xiaomi/mimo-v2-flash:free`)
+     - `p.text()` for model (default: `deepseek-v4-flash`)
    - Validate API keys where possible (non-empty, format check)
 
 ### Verification
