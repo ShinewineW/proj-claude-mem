@@ -113,14 +113,32 @@ bun run build-and-sync
 
 ### 配置
 
-设置文件位于 `~/.claude-mem/settings.json`，首次运行时自动创建。
+设置文件位于 `~/.claude-mem/settings.json`（首次运行自动创建，owner-only `0600`）。配置优先级：环境变量 `CLAUDE_MEM_*` > `settings.json` > 内置默认。Provider 凭证（Gemini / OpenCode / Anthropic）放 `~/.claude-mem/.env`。
+
+常用键：`CLAUDE_MEM_WORKER_PORT`(37777)、`CLAUDE_MEM_PROVIDER`、`CLAUDE_MEM_CHROMA_ENABLED`、`CLAUDE_MEM_GEMINI_API_KEY` / `CLAUDE_MEM_OPENCODE_*`、`CLAUDE_MEM_RETENTION_*`。**全部 58 个设置项 + 数据路径见 [`docs/reference/configuration.md`](docs/reference/configuration.md)。**
+
+### Worker API / MCP / Viewer
+
+所有运行期入口都经 worker 服务（`http://127.0.0.1:37777`，`bun run worker:start|stop|restart|status`）：
+
+- **HTTP API** — ~36 GET + 多个 POST 端点（搜索 / 上下文 / 数据 / 会话 / 设置）。例：
+  ```bash
+  curl "http://127.0.0.1:37777/api/search?query=worker&limit=5&dbPath=$PWD/.claude/mem.db"
+  ```
+- **MCP 服务器 `mcp-search`**（`plugin/.mcp.json`）— Claude Code 加载，提供 `search` / `timeline` / `get_observations` / `list_projects` / `smart_search` / `smart_outline` / `smart_unfold` 7 个检索工具。
+- **Web Viewer** — `http://localhost:37777/`。
+
+**完整端点列表 + MCP 工具说明见 [`docs/reference/worker-api.md`](docs/reference/worker-api.md)。**
 
 ## 卸载
 
 完全移除插件（代码、注册信息和进程）：
 
 ```bash
-bash ~/.claude/plugins/cache/thedotmack/claude-mem/10.5.2/scripts/uninstall.sh
+# 从仓库副本运行（版本无关，推荐）：
+bash plugin/scripts/uninstall.sh
+# 或从已安装的版本化缓存运行（<version> 替换为实际安装版本）：
+bash ~/.claude/plugins/cache/thedotmack/claude-mem/<version>/scripts/uninstall.sh
 ```
 
 脚本会先预览所有即将执行的操作，确认后才会执行。
@@ -141,7 +159,7 @@ bash ~/.claude/plugins/cache/thedotmack/claude-mem/10.5.2/scripts/uninstall.sh
 
 启用后无需额外操作。claude-mem 通过 Claude Code 的 hook 系统自动工作：
 
-1. **SessionStart** — 启动 worker 服务，注入历史上下文
+1. **SessionStart** — 先经 `smart-install.js` 自动检测/安装依赖并（重）启动 worker，再注入历史上下文
 2. **UserPromptSubmit** — 初始化会话，自动检测当前项目并打开对应数据库
 3. **PostToolUse** — 捕获工具调用（文件编辑、命令执行等）作为观察记录
 4. **Stop** — 会话结束时生成记忆摘要并关闭会话
@@ -174,21 +192,23 @@ bash ~/.claude/plugins/cache/thedotmack/claude-mem/10.5.2/scripts/uninstall.sh
 ```
 proj-claude-mem/
 ├── src/
-│   ├── cli/handlers/          # Hook 处理器（session-init, observation, context）
+│   ├── cli/handlers/          # Hook 处理器（session-init, observation, context, stop）
+│   ├── hooks/                 # TS hook 源（构建为 plugin/scripts/*-hook.js）
+│   ├── sdk/                   # SDK 封装：hardened-options（无工具锁定）、prompts、parser
+│   ├── servers/
+│   │   └── mcp-server.ts      # MCP 搜索服务器（白名单驱动的 dbPath 解析）
 │   ├── services/
-│   │   ├── sqlite/            # SessionStore, SessionSearch, 数据库迁移
-│   │   ├── worker/            # Worker 服务核心（DatabaseManager, SDKAgent, SessionManager）
-│   │   │   ├── http/routes/   # Express API 路由（Session, Search, Data）
+│   │   ├── sqlite/            # SessionStore, SessionSearch, MigrationRunner, 数据库迁移
+│   │   ├── worker/            # Worker 服务核心（SDKAgent, SessionManager, SummaryLane, BypassLane）
+│   │   │   ├── http/routes/   # Express API 路由（Session, Search, Data, Settings, Viewer, Logs）
 │   │   │   └── agents/        # ResponseProcessor 等
 │   │   ├── sync/              # ChromaSync 向量搜索
 │   │   └── context/           # 上下文构建器
-│   ├── shared/
-│   │   ├── paths.ts           # resolveProjectDbPath(), resolveProjectRoot(), resolveWorkspaceRoot()
-│   │   ├── project-db.ts      # DbConnectionPool, ensureGitignore()
-│   │   └── project-allowlist.ts  # 白名单 CRUD（getEnabledProjectsPath(), isProjectEnabled 等）
-│   ├── servers/
-│   │   └── mcp-server.ts      # MCP 搜索服务器（白名单驱动的 dbPath 解析）
-│   └── utils/                 # 日志、标签处理等工具
+│   ├── shared/                # paths（DB 路径解析）、project-db（连接池）、project-allowlist（白名单）、SettingsDefaultsManager、EnvManager
+│   ├── bin/                   # 一次性 CLI（import-xml-observations 等）
+│   ├── types/                 # 共享类型定义
+│   ├── ui/viewer/             # React Viewer 源（构建为 plugin/ui/viewer.html）
+│   └── utils/                 # 日志、标签处理、json-utils 等工具
 ├── tests/
 │   ├── shared/                # 路径解析、连接池、白名单、env override 测试
 │   ├── integration/           # 项目隔离集成测试
@@ -244,6 +264,8 @@ bun run worker:logs
 ## 文档导航
 
 - [`docs/README.md`](docs/README.md) — 文档总索引（参考 / 报告 / 设计 / 外部快照）
+- [`docs/reference/worker-api.md`](docs/reference/worker-api.md) — HTTP API 端点 + MCP 工具 + Viewer
+- [`docs/reference/configuration.md`](docs/reference/configuration.md) — 全部 58 个 `CLAUDE_MEM_*` 设置项 + 数据路径
 - [`CLAUDE.md`](CLAUDE.md) — 架构总览与文件位置
 - [`plugin/README.md`](plugin/README.md) — 插件载荷的生成物 vs 手写源边界
 - [`docs/PROVENANCE.md`](docs/PROVENANCE.md) — 上游 cherry-pick 来源 + 许可证追溯

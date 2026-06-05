@@ -16,6 +16,12 @@
 ## 2. 文件清单
 
 ### 参考文档（References，常青）
+- `reference/worker-api.md`
+  - 作用：worker HTTP API 端点（搜索/上下文/数据/会话/设置）、MCP `mcp-search` 工具、Web Viewer 入口。
+  - 何时读：对接 API、调用 MCP 工具、或排查入口可用性时。
+- `reference/configuration.md`
+  - 作用：全部 58 个 `CLAUDE_MEM_*` 设置项（按功能分组）、provider 凭证、配置优先级、数据路径。
+  - 何时读：配置 Chroma/Gemini/OpenCode、调参、或定位数据/凭证路径时。
 - `PROVENANCE.md`
   - 作用：本轮 v10.6.1→v13.4.0 cherry-pick 的逐条上游来源 + 许可证追溯索引（fork 维持 AGPL-3.0，Apache-2.0 部分逐项署名）。
   - 何时读：判断某段移植代码来自哪个上游 commit / 适用哪个许可证时。
