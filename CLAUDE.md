@@ -42,7 +42,7 @@ Claude-mem is a Claude Code plugin providing persistent memory across sessions. 
 
 ```bash
 /opt/homebrew/bin/bun run build-and-sync   # Build, deploy to cache + marketplace discovery, restart worker
-/opt/homebrew/bin/bun test                  # Run all tests (2160 pass, 0 fail on feat/upstream-cherrypick)
+/opt/homebrew/bin/bun test                  # Run all tests (2163 pass, 0 fail on feat/upstream-cherrypick)
 ```
 
 ## Configuration
