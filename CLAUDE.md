@@ -6,7 +6,7 @@ Claude-mem is a Claude Code plugin providing persistent memory across sessions. 
 
 ## Architecture
 
-**5 Lifecycle Hooks**: SessionStart → UserPromptSubmit → PostToolUse → Summary → SessionEnd
+**Lifecycle**: 4 registered Claude Code hook events (`plugin/hooks/hooks.json`) — SessionStart (`context`) → UserPromptSubmit (`session-init`) → PostToolUse (`observation`) → Stop (`stop`). The Summary phase is internal (worker `SummaryLane`, driven off the Stop hook), not a separate CC event; there is no SessionEnd hook.
 
 **Hooks** (`src/hooks/*.ts`) - TypeScript → ESM, built to `plugin/scripts/*-hook.js`
 
@@ -39,8 +39,8 @@ Claude-mem is a Claude Code plugin providing persistent memory across sessions. 
 ## Build Commands
 
 ```bash
-/opt/homebrew/bin/bun run build-and-sync   # Build, deploy to cache + marketplace discovery, restart worker
-/opt/homebrew/bin/bun test                  # Run all tests (2163 pass, 0 fail)
+bun run build-and-sync   # Build, deploy to cache + marketplace discovery, restart worker
+bun test ./tests/         # Run the fork's own tests (2163 pass, 0 fail; 235 files). Scope to ./tests/ — a bare `bun test` at root also scans the upstream clone in attn_sink/ (~52 unrelated failures).
 ```
 
 ## Configuration

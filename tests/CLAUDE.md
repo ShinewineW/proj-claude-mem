@@ -1,6 +1,6 @@
 # Test Conventions
 
-**Framework**: `bun:test` (native, no external deps). Run: `/opt/homebrew/bin/bun test`
+**Framework**: `bun:test` (native, no external deps). Run: `bun test`
 
 ## Patterns
 
@@ -39,7 +39,7 @@ bun runs all test files in the same process — leaked env vars break `SettingsD
 **Runtime leak verification**: Static guards can have false negatives. After modifying test cleanup logic, verify with a before/after tmpdir count:
 ```bash
 BEFORE=$(ls -d $TMPDIR/test-* $TMPDIR/claude-mem-* 2>/dev/null | wc -l)
-/opt/homebrew/bin/bun test
+bun test
 AFTER=$(ls -d $TMPDIR/test-* $TMPDIR/claude-mem-* 2>/dev/null | wc -l)
 echo "Delta: $((AFTER - BEFORE))"  # Must be 0
 ```
@@ -48,18 +48,18 @@ echo "Delta: $((AFTER - BEFORE))"  # Must be 0
 
 **Audit test location**: `tests/audit/` 保留 file-to-prod Stage 3 产出的 property-based tests 作为长期回归覆盖（命名约定 `phaseN-<topic>.test.ts`）。
 
-**Logger coverage gate**: Files under `src/services/worker/`, `src/services/sqlite/`, `src/hooks/`, `src/sdk/`, `src/servers/` must `import { logger }`. Enforced by `logger-usage-standards.test.ts` — new files without logger import fail full suite. Current exclusions for pure function modules: `stale-detection.ts`, `pool-cooldown-utils.ts`, `backpressure.ts`, `generator-action.ts`.
+**Logger coverage gate**: Files under `src/services/worker/`, `src/services/sqlite/`, `src/services/sync/`, `src/hooks/`, `src/sdk/`, `src/servers/` must `import { logger }`. Enforced by `tests/logger-usage-standards.test.ts` — new files without logger import fail full suite. Current exclusions for pure function / coordinator modules: `stale-detection.ts`, `pool-cooldown-utils.ts`, `backpressure.ts`, `generator-action.ts`, `spawn-args-filter.ts`, `fresh-summarize-store.ts`, `fresh-summarize-deps.ts`, `obs-cap-policy.ts`, `SessionCompletionHandler.ts`.
 
 ## Structure
 
 Tests mirror source: `src/services/sqlite/` → `tests/services/sqlite/` or `tests/sqlite/`. Each file is self-contained (no shared conftest/fixtures).
 
-Key test directories: `tests/sqlite/` (DB), `tests/hooks/` (hook structure), `tests/shared/` (project isolation), `tests/worker/` (generator/pool/bypass), `tests/infrastructure/` (filesystem-hygiene, logger-usage-standards), `tests/services/` (routes, sync, transcripts).
+Key test directories: `tests/sqlite/` (DB), `tests/hooks/` (hook structure), `tests/shared/` (project isolation), `tests/worker/` (generator/pool/bypass), `tests/infrastructure/` (filesystem-hygiene, plugin distribution, process manager), `tests/services/` (routes, sync, transcripts). Note: `logger-usage-standards.test.ts` lives at `tests/` root, not under `tests/infrastructure/`.
 
 ## Run Commands
 
 ```bash
-/opt/homebrew/bin/bun test                    # All tests (1933 pass, 0 fail)
-/opt/homebrew/bin/bun test tests/sqlite/      # Database tests
-/opt/homebrew/bin/bun test tests/hooks/       # Hook structure tests
+bun test                    # All tests (2163 pass, 0 fail; 235 files)
+bun test tests/sqlite/      # Database tests
+bun test tests/hooks/       # Hook structure tests
 ```

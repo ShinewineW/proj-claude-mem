@@ -4,12 +4,14 @@
 
 | File | Purpose |
 |------|---------|
-| `SessionStore.ts` | Main CRUD for sessions, observations, summaries, prompts. Schema versions up to 26. |
+| `SessionStore.ts` | Main CRUD for sessions, observations, summaries, prompts. Delegates all migrations to `MigrationRunner` (single source of truth). Schema versions up to 33. |
 | `PendingMessageStore.ts` | Persistent message queue with claim-confirm lifecycle (pending→processing→deleted). |
 | `SessionSearch.ts` | Filter-only structured search (vector search via ChromaDB, not local FTS). |
-| `Database.ts` | Entry point: `ClaudeMemDatabase` (recommended) wraps SessionStore + migrations. |
-| `migrations/runner.ts` | `MigrationRunner` — extracted from SessionStore, 23 migrations (schema versions up to 26, + sentinel 9999). |
-| `Import.ts` | Bulk import: `importObservation()`, `importSessionSummary()` with content_hash dedup. |
+| `Database.ts` | Entry point: `ClaudeMemDatabase` (recommended) — opens a tuned `bun:sqlite` connection and runs `MigrationRunner.runAllMigrations()` directly (replaces SessionStore as the DB coordinator). |
+| `migrations/runner.ts` | `MigrationRunner` — extracted from SessionStore, 25 migration steps (`runAllMigrations`, schema versions up to 33; legacy version-9999 sentinel migrated/dropped in step 25). |
+| `Import.ts` → `import/bulk.ts` | Bulk import: `importObservation()`, `importSessionSummary()`, `importSdkSession()`, `importUserPrompt()` with content_hash dedup. `Import.ts` is a re-export shim; logic lives in `import/bulk.ts`. |
+| `transactions.ts` | Shared transaction helpers. |
+| `observations/`, `summaries/`, `sessions/`, `prompts/`, `timeline/` | Per-domain split modules (store/get/recent/types) re-exported by `Observations.ts`, `Summaries.ts`, `Sessions.ts`, `Prompts.ts`, `Timeline.ts`. |
 
 ## Key Tables
 
@@ -35,4 +37,4 @@
 - Each migration checks `schema_versions` + actual column existence (defends against #979)
 - Use `INSERT OR IGNORE` into `schema_versions` for idempotence
 - Large schema changes: `CREATE TABLE AS SELECT` + rename in transaction
-- **Dual maintenance**: Migrations must be added to BOTH `MigrationRunner` AND `SessionStore` — `DbConnectionPool` creates DBs via `new SessionStore()` directly, so missing migrations in SessionStore leave per-project DBs with incomplete schema
+- **Single source of truth**: All migrations live in `MigrationRunner.runAllMigrations()`. `SessionStore` constructor delegates to it (no inline migration logic), and `DbConnectionPool` creates per-project DBs via `new SessionStore()`, so adding a step to the `runAllMigrations` array is sufficient to schema-migrate every DB

@@ -15,15 +15,16 @@ Foundational modules for per-project isolation, configuration, and hook/worker c
 
 | File | Purpose |
 |------|---------|
-| `SettingsDefaultsManager.ts` | 56 unique `CLAUDE_MEM_*` settings, priority: env vars > settings.json > defaults. Phase 1 SDK optimization: `SKIP_TOOL_PATTERNS`, `BATCH_MAX_SIZE`, `OBS_MAX_FIELD_CHARS` |
+| `SettingsDefaultsManager.ts` | 58 unique `CLAUDE_MEM_*` settings, priority: env vars > settings.json > defaults. Phase 1 SDK optimization: `SKIP_TOOL_PATTERNS`, `BATCH_MAX_SIZE`, `OBS_MAX_FIELD_CHARS` |
 | `EnvManager.ts` | Credential isolation in `~/.claude-mem/.env`. Blocklist approach strips project API keys. |
+| `openai-compatible-base-url.ts` | `resolveOpenAICompatibleChatCompletionsUrl()`: resolves `CLAUDE_MEM_OPENCODE_BASE_URL` to a `/chat/completions` endpoint for any OpenAI-compatible provider; rejects non-http(s)/hostless URLs to avoid credential leakage |
 
 ## Hook/Worker Communication
 
 | File | Purpose |
 |------|---------|
 | `worker-utils.ts` | `ensureWorkerRunning()`, health check, auto-start, version matching |
-| `hook-constants.ts` | Timeouts (DEFAULT 5min), exit codes (0/1/2/3), Windows multiplier |
+| `hook-constants.ts` | Timeouts (DEFAULT 5min), exit codes (0/1/2), Windows multiplier |
 
 ## Utilities
 
