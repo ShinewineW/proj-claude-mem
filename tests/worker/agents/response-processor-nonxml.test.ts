@@ -143,4 +143,42 @@ describe('ResponseProcessor non-XML handling', () => {
     // skip_summary is a valid (storable) path → reaches CLAIM-CONFIRM
     expect(confirmProcessed).toHaveBeenCalledTimes(1);
   });
+
+  it('marks pending messages failed on UNCLOSED <observation> (no parse, #1874)', async () => {
+    // Model hit the output-token limit mid-tag: the opening-tag substring guard
+    // says "is XML" but the parser requires a CLOSING tag, so 0 observations
+    // are produced. The guard must check the PARSED result, not the substring,
+    // otherwise these queued messages get confirmed (deleted) with nothing stored.
+    const session = createMockSession({ processingMessageIds: [33, 44] });
+    const unclosed = '<observation><type>file</type><title>foo';
+
+    await processAgentResponse(
+      unclosed, session, mockDbManager, mockSessionManager,
+      undefined, 0, null, 'TestAgent'
+    );
+
+    expect(markFailed).toHaveBeenCalledTimes(2);
+    expect(markFailed.mock.calls[0][0]).toBe(33);
+    expect(markFailed.mock.calls[1][0]).toBe(44);
+    expect(confirmProcessed).not.toHaveBeenCalled();
+    expect(storeObservations).not.toHaveBeenCalled();
+    expect(session.processingMessageIds).toHaveLength(0);
+  });
+
+  it('marks pending messages failed on prose containing the literal "<summary>" substring', async () => {
+    // Prose mentioning the word but never producing a closing <summary> tag —
+    // parses to no summary and no observations; must retry, not confirm.
+    const session = createMockSession({ processingMessageIds: [55] });
+    const prose = 'I would write a <summary> here but the connection dropped';
+
+    await processAgentResponse(
+      prose, session, mockDbManager, mockSessionManager,
+      undefined, 0, null, 'TestAgent'
+    );
+
+    expect(markFailed).toHaveBeenCalledTimes(1);
+    expect(markFailed.mock.calls[0][0]).toBe(55);
+    expect(confirmProcessed).not.toHaveBeenCalled();
+    expect(storeObservations).not.toHaveBeenCalled();
+  });
 });

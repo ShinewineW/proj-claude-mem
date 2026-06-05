@@ -96,16 +96,30 @@ export async function processAgentResponse(
 
   const summary = parseSummary(text, session.sessionDbId);
 
-  // Detect non-XML responses (auth errors, rate limits, garbled output).
-  // When the response has non-empty text, produced no observations, no summary,
-  // and contains no <observation>/<summary>/<skip_summary> tag, mark the in-flight
+  // Detect responses that yielded nothing storable (auth errors, rate limits,
+  // garbled output, OR truncated XML where the model hit the output-token limit
+  // mid-tag). When the response has non-empty text, produced no observations,
+  // no summary, and is not an intentional skip_summary, mark the in-flight
   // pending messages as failed (retry, bounded by maxRetries) instead of
   // confirming them — confirming would silently discard the queued batch (#1874).
+  //
+  // The guard checks the PARSED result, not an opening-tag substring: the
+  // parsers require CLOSING tags, so an unclosed `<observation>…` (or prose that
+  // merely contains the substring) parses to 0 observations. A substring guard
+  // would mis-classify those as "is XML" and fall through to confirmProcessed,
+  // deleting the queue with nothing stored.
+  //
+  // Use allObservations (the unfiltered parse), not the ghost-filtered
+  // `observations`: a well-formed empty observation (`<observation><type>X</type>
+  // </observation>`) parses to a ghost that the filter drops, but it IS valid XML
+  // and is the context-overflow signal handled further down. Only a parse that
+  // produced ZERO raw observations AND no summary is a genuine non-XML response.
+  const skipSummaryRequested = /<skip_summary\b/.test(text);
   const isNonXmlResponse = (
-    text.trim() &&
-    observations.length === 0 &&
+    text.trim().length > 0 &&
+    allObservations.length === 0 &&
     !summary &&
-    !/<observation>|<summary>|<skip_summary\b/.test(text)
+    !skipSummaryRequested
   );
 
   if (isNonXmlResponse) {
