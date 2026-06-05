@@ -817,7 +817,7 @@ export class WorkerService {
       })
       .finally(async () => {
         // CRITICAL: Verify subprocess exit to prevent zombie accumulation (Issue #1168)
-        const trackedProcess = getProcessBySession(session.sessionDbId);
+        const trackedProcess = getProcessBySession(session.sessionDbId, session.dbPath);
         if (trackedProcess && trackedProcess.process.exitCode === null) {
           await ensureProcessExit(trackedProcess, 5000);
         }

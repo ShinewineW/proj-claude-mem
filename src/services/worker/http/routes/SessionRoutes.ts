@@ -288,7 +288,7 @@ export class SessionRoutes extends BaseRouteHandler {
       })
       .finally(async () => {
         // CRITICAL: Verify subprocess exit to prevent zombie accumulation (Issue #1168)
-        const tracked = getProcessBySession(session.sessionDbId);
+        const tracked = getProcessBySession(session.sessionDbId, session.dbPath);
         if (tracked && tracked.process.exitCode === null) {
           await ensureProcessExit(tracked, 5000);
         }
@@ -299,7 +299,13 @@ export class SessionRoutes extends BaseRouteHandler {
         const sessionDbId = session.sessionDbId;
         const key = this.spawnKey(sessionDbId, session.dbPath);
         this.spawnInProgress.delete(key);
-        const wasAborted = session.abortController.signal.aborted;
+        // Use the CAPTURED controller for the respawn decision, not the live
+        // session.abortController. Stale-recovery / proactive-reset can swap
+        // session.abortController to a brand-new (un-aborted) controller before
+        // this .finally() runs; reading the live one would report wasAborted=false
+        // for a generator that WAS intentionally aborted, causing an unwanted
+        // respawn (#1590). myController is the AbortController bound to THIS run.
+        const wasAborted = myController.signal.aborted;
 
         if (wasAborted) {
           logger.info('SESSION', `Generator aborted`, { sessionId: sessionDbId });

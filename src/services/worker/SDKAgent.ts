@@ -464,7 +464,7 @@ export class SDKAgent {
       if (watchdogTimer) clearTimeout(watchdogTimer);
 
       // Ensure subprocess is terminated after query completes (or on error)
-      const tracked = getProcessBySession(session.sessionDbId);
+      const tracked = getProcessBySession(session.sessionDbId, session.dbPath);
       if (tracked && tracked.process.exitCode === null) {
         await ensureProcessExit(tracked, 5000);
       }

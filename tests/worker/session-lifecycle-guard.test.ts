@@ -9,17 +9,22 @@ import { join } from 'path';
 // inline a faithful copy of the registry contract from ProcessRegistry.ts. The
 // production duplicate-prevention logic is additionally source-pinned by the
 // "ProcessRegistry kill-duplicate-before-spawn (source)" describe block below.
-interface TrackedProc { pid: number; sessionDbId: number; spawnedAt: number; process: any }
+interface TrackedProc { pid: number; sessionDbId: number; spawnedAt: number; process: any; dbPath?: string }
 const processRegistry = new Map<number, TrackedProc>();
-function registerProcess(pid: number, sessionDbId: number, process: any): void {
-  processRegistry.set(pid, { pid, sessionDbId, spawnedAt: Date.now(), process });
+function registerProcess(pid: number, sessionDbId: number, process: any, dbPath?: string): void {
+  processRegistry.set(pid, { pid, sessionDbId, spawnedAt: Date.now(), process, dbPath });
 }
 function unregisterProcess(pid: number): void {
   processRegistry.delete(pid);
 }
-function getProcessBySession(sessionDbId: number): TrackedProc | undefined {
+// Faithful copy of the dbPath-aware lookup contract from ProcessRegistry.ts:
+// numeric sessionDbId is not globally unique across projects, so a dbPath filter
+// scopes the match. Omitting dbPath preserves legacy sessionDbId-only behavior.
+function getProcessBySession(sessionDbId: number, dbPath?: string): TrackedProc | undefined {
   for (const [, info] of processRegistry) {
-    if (info.sessionDbId === sessionDbId) return info;
+    if (info.sessionDbId !== sessionDbId) continue;
+    if (dbPath !== undefined && info.dbPath !== dbPath) continue;
+    return info;
   }
   return undefined;
 }
@@ -96,6 +101,79 @@ describe('Duplicate process prevention (#1590)', () => {
   it('is a no-op when no existing process is registered', () => {
     expect(getProcessBySession(55)).toBeUndefined();
     expect(getActiveCount()).toBe(0);
+  });
+});
+
+describe('Per-project duplicate lookup (cross-project collision, fix C)', () => {
+  beforeEach(clearRegistry);
+  afterEach(clearRegistry);
+
+  it('does NOT match a same-id process from a DIFFERENT project when dbPath given', () => {
+    const projA = createMockProcess();
+    const projB = createMockProcess();
+    // Two projects, SAME numeric sessionDbId (7) — only possible per-project.
+    registerProcess(projA.pid, 7, projA as any, '/A/.claude/mem.db');
+    registerProcess(projB.pid, 7, projB as any, '/B/.claude/mem.db');
+
+    // dbPath-scoped lookup returns ONLY the matching project's process.
+    expect(getProcessBySession(7, '/A/.claude/mem.db')!.pid).toBe(projA.pid);
+    expect(getProcessBySession(7, '/B/.claude/mem.db')!.pid).toBe(projB.pid);
+  });
+
+  it('kill-duplicate-before-spawn for project A leaves project B untouched', () => {
+    const projA = createMockProcess();
+    const projB = createMockProcess();
+    registerProcess(projA.pid, 7, projA as any, '/A/.claude/mem.db');
+    registerProcess(projB.pid, 7, projB as any, '/B/.claude/mem.db');
+
+    // Simulate createPidCapturingSpawn's dbPath-scoped kill-duplicate for project A.
+    const existing = getProcessBySession(7, '/A/.claude/mem.db');
+    if (existing && existing.process.exitCode === null) {
+      try { (existing.process as any).kill('SIGTERM'); } catch {}
+      unregisterProcess(existing.pid);
+    }
+
+    expect(projA.killed).toBe(true);   // project A's duplicate signaled
+    expect(projB.killed).toBe(false);  // project B's unrelated process NOT killed
+    expect(getProcessBySession(7, '/B/.claude/mem.db')!.pid).toBe(projB.pid);
+  });
+
+  it('unscoped lookup (no dbPath) still matches by sessionDbId only (legacy behavior)', () => {
+    const p = createMockProcess();
+    registerProcess(p.pid, 7, p as any, '/A/.claude/mem.db');
+    expect(getProcessBySession(7)!.pid).toBe(p.pid);
+  });
+});
+
+describe('ProcessRegistry dbPath-aware duplicate lookup (source)', () => {
+  const SRC = readFileSync(join(import.meta.dir, '../../src/services/worker/ProcessRegistry.ts'), 'utf-8');
+  it('getProcessBySession accepts an optional dbPath param', () => {
+    expect(SRC).toContain('export function getProcessBySession(sessionDbId: number, dbPath?: string)');
+  });
+  it('filters the registry match on info.dbPath when dbPath is supplied', () => {
+    expect(SRC).toContain('if (dbPath !== undefined && info.dbPath !== dbPath) continue;');
+  });
+  it('kill-duplicate-before-spawn passes dbPath to the lookup', () => {
+    expect(SRC).toContain('const existing = getProcessBySession(sessionDbId, dbPath);');
+  });
+  it('unregisters the stale duplicate unconditionally after SIGTERM (J)', () => {
+    // The old synchronous `exitCode !== null` gate was always false (kill is
+    // async); the stale entry must be removed regardless. The fixed code drops
+    // the `if (exited)` gate and calls unregisterProcess(existing.pid) directly.
+    expect(SRC).toContain('Unregister unconditionally now');
+    expect(SRC).not.toContain('exited = existing.process.exitCode !== null;');
+  });
+});
+
+describe('SessionRoutes captured-controller respawn decision (source, fix B)', () => {
+  const SRC = readFileSync(join(import.meta.dir, '../../src/services/worker/http/routes/SessionRoutes.ts'), 'utf-8');
+  it('computes wasAborted from the captured myController, not the live one', () => {
+    expect(SRC).toContain('const wasAborted = myController.signal.aborted;');
+    // The pre-fix stale read must be gone from the respawn-decision path.
+    expect(SRC).not.toContain('const wasAborted = session.abortController.signal.aborted;');
+  });
+  it('verifies subprocess exit with a dbPath-scoped lookup', () => {
+    expect(SRC).toContain('getProcessBySession(session.sessionDbId, session.dbPath)');
   });
 });
 

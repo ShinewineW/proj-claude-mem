@@ -583,7 +583,7 @@ export class SessionManager {
       });
     }
 
-    const tracked = getProcessBySession(sessionDbId);
+    const tracked = getProcessBySession(sessionDbId, session.dbPath);
     if (tracked && tracked.process.exitCode === null) {
       logger.debug('SESSION', `Waiting for subprocess PID ${tracked.pid} to exit`, {
         sessionId: sessionDbId,

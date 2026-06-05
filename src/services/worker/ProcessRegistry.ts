@@ -61,17 +61,28 @@ export function unregisterProcess(pid: number): void {
 }
 
 /**
- * Get process info by session ID
- * Warns if multiple processes found (indicates race condition)
+ * Get process info by session ID.
+ *
+ * The numeric sessionDbId is NOT globally unique — two different projects (DBs)
+ * can each have a live session with the same numeric id. When a dbPath is
+ * supplied, the lookup also matches on `info.dbPath === dbPath` so callers that
+ * act destructively on the result (SIGTERM/SIGKILL) only touch the process that
+ * belongs to the same project. Omitting dbPath preserves the legacy
+ * sessionDbId-only behavior.
+ *
+ * Warns if multiple processes match (indicates a race condition).
  */
-export function getProcessBySession(sessionDbId: number): TrackedProcess | undefined {
+export function getProcessBySession(sessionDbId: number, dbPath?: string): TrackedProcess | undefined {
   const matches: TrackedProcess[] = [];
   for (const [, info] of processRegistry) {
-    if (info.sessionDbId === sessionDbId) matches.push(info);
+    if (info.sessionDbId !== sessionDbId) continue;
+    if (dbPath !== undefined && info.dbPath !== dbPath) continue;
+    matches.push(info);
   }
   if (matches.length > 1) {
     logger.warn('PROCESS', `Multiple processes found for session ${sessionDbId}`, {
       count: matches.length,
+      dbPath,
       pids: matches.map(m => m.pid)
     });
   }
@@ -445,27 +456,30 @@ export function createUntrackedStderrTailSpawn(label: string) {
  */
 export function createPidCapturingSpawn(sessionDbId: number, dbPath?: string) {
   return (spawnOptions: ClaudeSpawnOptions) => {
-    // Kill any existing live process for this session before spawning a new one.
-    // Multiple processes sharing the same --resume UUID waste API credits and can
-    // conflict with each other (#1590).
-    const existing = getProcessBySession(sessionDbId);
+    // Kill any existing live process for THIS session AND THIS project before
+    // spawning a new one. Multiple processes sharing the same --resume UUID waste
+    // API credits and can conflict with each other (#1590). The lookup is
+    // dbPath-scoped: the numeric sessionDbId is not globally unique across
+    // projects, so an unscoped match could SIGTERM an unrelated live subprocess
+    // belonging to a different project that happens to share the same id.
+    const existing = getProcessBySession(sessionDbId, dbPath);
     if (existing && existing.process.exitCode === null) {
       logger.warn('PROCESS', `Killing duplicate process PID ${existing.pid} before spawning new one for session ${sessionDbId}`, {
         existingPid: existing.pid,
         sessionDbId
       });
-      let exited = false;
       try {
         existing.process.kill('SIGTERM');
-        exited = existing.process.exitCode !== null;
       } catch {
-        // Already dead — safe to unregister immediately
-        exited = true;
+        // Already dead — nothing to signal.
       }
-      if (exited) {
-        unregisterProcess(existing.pid);
-      }
-      // If still alive, the existing 'exit' handler (below) unregisters it.
+      // kill('SIGTERM') is asynchronous, so exitCode is still null here; the old
+      // synchronous `exitCode !== null` check was effectively always false and
+      // left the stale entry in the registry until the async 'exit' handler
+      // fired. Unregister unconditionally now — unregisterProcess is idempotent
+      // (Map.delete on an absent key is a no-op), so the later 'exit' handler
+      // unregistering the same pid is harmless.
+      unregisterProcess(existing.pid);
     }
 
     const child = spawnClaudeChild(spawnOptions);
