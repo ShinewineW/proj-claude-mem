@@ -84,6 +84,11 @@ export class SearchRoutes extends BaseRouteHandler {
    * GET /api/search?query=...&type=observations&limit=20
    */
   private handleUnifiedSearch = this.wrapHandler(async (req: Request, res: Response): Promise<void> => {
+    const q = req.query;
+    if (!q.query && !q.concept && !q.concepts && !q.file && !q.filePath && !q.files && !q.type && !q.obs_type) {
+      this.badRequest(res, "Search requires 'query' or at least one filter (concept, filePath, or type)");
+      return;
+    }
     const result = await this.getSearchManager(req).search(req.query);
     res.json(result);
   });
@@ -129,6 +134,10 @@ export class SearchRoutes extends BaseRouteHandler {
    * GET /api/search/observations?query=...&limit=20&project=...
    */
   private handleSearchObservations = this.wrapHandler(async (req: Request, res: Response): Promise<void> => {
+    if (!req.query.query) {
+      this.badRequest(res, "Query parameter 'query' is required (use /api/search?type=observations for filter-only search)");
+      return;
+    }
     const result = await this.getSearchManager(req).searchObservations(req.query);
     res.json(result);
   });
@@ -138,6 +147,10 @@ export class SearchRoutes extends BaseRouteHandler {
    * GET /api/search/sessions?query=...&limit=20
    */
   private handleSearchSessions = this.wrapHandler(async (req: Request, res: Response): Promise<void> => {
+    if (!req.query.query) {
+      this.badRequest(res, "Query parameter 'query' is required (use /api/search?type=sessions for filter-only search)");
+      return;
+    }
     const result = await this.getSearchManager(req).searchSessions(req.query);
     res.json(result);
   });
@@ -147,6 +160,10 @@ export class SearchRoutes extends BaseRouteHandler {
    * GET /api/search/prompts?query=...&limit=20
    */
   private handleSearchPrompts = this.wrapHandler(async (req: Request, res: Response): Promise<void> => {
+    if (!req.query.query) {
+      this.badRequest(res, "Query parameter 'query' is required (use /api/search?type=prompts for filter-only search)");
+      return;
+    }
     const result = await this.getSearchManager(req).searchUserPrompts(req.query);
     res.json(result);
   });
@@ -156,6 +173,10 @@ export class SearchRoutes extends BaseRouteHandler {
    * GET /api/search/by-concept?concept=discovery&limit=5
    */
   private handleSearchByConcept = this.wrapHandler(async (req: Request, res: Response): Promise<void> => {
+    if (!req.query.concept && !req.query.concepts) {
+      this.badRequest(res, "Query parameter 'concept' is required");
+      return;
+    }
     const result = await this.getSearchManager(req).findByConcept(req.query);
     res.json(result);
   });
@@ -165,6 +186,10 @@ export class SearchRoutes extends BaseRouteHandler {
    * GET /api/search/by-file?filePath=...&limit=10
    */
   private handleSearchByFile = this.wrapHandler(async (req: Request, res: Response): Promise<void> => {
+    if (!req.query.filePath && !req.query.files) {
+      this.badRequest(res, "Query parameter 'filePath' is required");
+      return;
+    }
     const result = await this.getSearchManager(req).findByFile(req.query);
     res.json(result);
   });
@@ -174,6 +199,10 @@ export class SearchRoutes extends BaseRouteHandler {
    * GET /api/search/by-type?type=bugfix&limit=10
    */
   private handleSearchByType = this.wrapHandler(async (req: Request, res: Response): Promise<void> => {
+    if (!req.query.type && !req.query.obs_type) {
+      this.badRequest(res, "Query parameter 'type' is required");
+      return;
+    }
     const result = await this.getSearchManager(req).findByType(req.query);
     res.json(result);
   });

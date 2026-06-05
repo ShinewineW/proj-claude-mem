@@ -297,7 +297,10 @@ export class SessionSearch {
     if (!query) {
       const filterClause = this.buildFilterClause(filters, params, 'o');
       if (!filterClause) {
-        throw new Error('Either query or filters required for search');
+        // No filter applies to this entity type (e.g. an observation-only filter
+        // such as concept/type/file in a unified search) → no targeted matches.
+        // Truly-empty requests are rejected upstream with 400 (SearchRoutes guards).
+        return [];
       }
 
       const orderClause = this.buildOrderClause(orderBy, false);
@@ -386,7 +389,10 @@ export class SessionSearch {
       delete filterOptions.type;
       const filterClause = this.buildFilterClause(filterOptions, params, 's');
       if (!filterClause) {
-        throw new Error('Either query or filters required for search');
+        // No filter applies to this entity type (e.g. an observation-only filter
+        // such as concept/type/file in a unified search) → no targeted matches.
+        // Truly-empty requests are rejected upstream with 400 (SearchRoutes guards).
+        return [];
       }
 
       const orderClause = orderBy === 'date_asc'
@@ -679,7 +685,9 @@ export class SessionSearch {
     // FILTER-ONLY PATH: When no query text, query user_prompts table directly
     if (!query) {
       if (baseConditions.length === 0) {
-        throw new Error('Either query or filters required for search');
+        // No prompt-applicable filter (project/date) → no targeted matches.
+        // Truly-empty requests are rejected upstream with 400 (SearchRoutes guards).
+        return [];
       }
 
       // Search results never include redacted placeholders — they have no

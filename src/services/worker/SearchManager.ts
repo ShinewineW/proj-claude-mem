@@ -1318,7 +1318,12 @@ export class SearchManager {
    */
   async findByType(args: any): Promise<any> {
     const normalized = this.normalizeParams(args);
-    const { type, ...filters } = normalized;
+    // normalizeParams redirects observation-type values from `type` to `obs_type`
+    // (the type→obs_type auto-redirect). findByType keys off `type`, so recover it
+    // from obs_type here — otherwise the type filter is dropped and SessionSearch
+    // builds an empty WHERE clause ("near ORDER" SQL syntax error).
+    const { type: rawType, obs_type, ...filters } = normalized;
+    const type = rawType ?? obs_type;
     const typeStr = Array.isArray(type) ? type.join(', ') : type;
     let results: ObservationSearchResult[] = [];
 
