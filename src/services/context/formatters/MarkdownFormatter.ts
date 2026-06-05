@@ -148,7 +148,6 @@ export function renderMarkdownFullObservation(
   const title = obs.title || 'Untitled';
   const icon = ModeManager.getInstance().getTypeIcon(obs.type);
   const time = timeDisplay ? compactTime(timeDisplay) : '"';
-  // formatObservationTokenDisplay stays imported & used here (removed only from renderMarkdownTableRow)
   const { readTokens, discoveryDisplay } = formatObservationTokenDisplay(obs, config);
 
   output.push(`**${obs.id}** ${time} ${icon} **${title}**`);

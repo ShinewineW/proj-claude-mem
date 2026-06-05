@@ -193,7 +193,6 @@ export class SessionSearch {
     return rows.length === 2;
   }
 
-
   /**
    * Build WHERE clause for structured filters
    */
@@ -417,11 +416,14 @@ export class SessionSearch {
     delete sessionFilterOptions.type;
     const filterClause = this.buildFilterClause(sessionFilterOptions, ftsParams, 's');
     const whereExtra = filterClause ? `AND ${filterClause}` : '';
-    const orderClause = orderBy === 'date_asc'
-      ? 'ORDER BY s.created_at_epoch ASC'
-      : orderBy === 'date_desc'
-        ? 'ORDER BY s.created_at_epoch DESC'
-        : 'ORDER BY session_summaries_fts.rank ASC';
+    let orderClause: string;
+    if (orderBy === 'date_asc') {
+      orderClause = 'ORDER BY s.created_at_epoch ASC';
+    } else if (orderBy === 'date_desc') {
+      orderClause = 'ORDER BY s.created_at_epoch DESC';
+    } else {
+      orderClause = 'ORDER BY session_summaries_fts.rank ASC';
+    }
     const ftsSql = `
       SELECT s.*, s.discovery_tokens
       FROM session_summaries_fts
