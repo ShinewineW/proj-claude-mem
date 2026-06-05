@@ -35,7 +35,6 @@ import { resolveOpenAICompatibleChatCompletionsUrl, DEFAULT_OPENCODE_API_URL } f
 
 // API endpoints
 const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1/models";
-const OPENCODE_API_URL = "https://opencode.ai/zen/go/v1/chat/completions";
 // Must be < STALE_PROCESSING_THRESHOLD_MS (60s in PendingMessageStore) to prevent
 // the main channel's self-healing from resetting a bypass in-flight message to 'pending',
 // which would cause double-processing.
@@ -468,7 +467,7 @@ export class BypassLane {
         // empty content → probe fails. No referer/title headers needed.
         const opencodeProbeUrl = resolveOpenAICompatibleChatCompletionsUrl(
           SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH).CLAUDE_MEM_OPENCODE_BASE_URL,
-          OPENCODE_API_URL,
+          DEFAULT_OPENCODE_API_URL,
         );
         response = await fetch(opencodeProbeUrl, {
           method: "POST",
@@ -872,7 +871,7 @@ export class BypassLane {
       // models (deepseek-v4-flash etc.) emitting content instead of CoT-only output.
       const opencodeUrl = resolveOpenAICompatibleChatCompletionsUrl(
         SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH).CLAUDE_MEM_OPENCODE_BASE_URL,
-        OPENCODE_API_URL,
+        DEFAULT_OPENCODE_API_URL,
       );
       const response = await fetch(opencodeUrl, {
         method: "POST",
