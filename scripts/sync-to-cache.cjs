@@ -60,10 +60,24 @@ try {
   console.log(`Running npm install in cache folder (version ${version})...`);
   execSync('npm install', { cwd: CACHE_VERSION_PATH, stdio: 'inherit' });
 
-  // Write install version marker
+  // Write install version marker.
+  // Resolve bun from common install locations (matching plugin/scripts/bun-runner.js)
+  // instead of hardcoding the Homebrew path — the official installer puts it at
+  // ~/.bun/bin/bun, so a hardcoded /opt/homebrew/bin/bun errors on many machines.
   const bunVersion = (() => {
-    try { return execSync('/opt/homebrew/bin/bun --version', { encoding: 'utf-8' }).trim(); }
-    catch { return 'unknown'; }
+    const { existsSync } = require('fs');
+    const { homedir } = require('os');
+    const candidates = [
+      path.join(homedir(), '.bun', 'bin', 'bun'),
+      '/usr/local/bin/bun',
+      '/opt/homebrew/bin/bun',
+      '/home/linuxbrew/.linuxbrew/bin/bun',
+    ];
+    for (const bin of candidates) {
+      if (!existsSync(bin)) continue;
+      try { return execSync(`"${bin}" --version`, { encoding: 'utf-8' }).trim(); } catch { /* try next */ }
+    }
+    try { return execSync('bun --version', { encoding: 'utf-8' }).trim(); } catch { return 'unknown'; }
   })();
   writeFileSync(path.join(CACHE_VERSION_PATH, '.install-version'), JSON.stringify({
     version: version,
