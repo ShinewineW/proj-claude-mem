@@ -130,8 +130,27 @@ export class ChromaMcpManager {
     // This also fixes Git Bash compatibility (#1062) since cmd.exe handles
     // Windows-native command resolution regardless of the calling shell.
     const isWindows = process.platform === 'win32';
-    const uvxSpawnCommand = isWindows ? (process.env.ComSpec || 'cmd.exe') : 'uvx';
-    const uvxSpawnArgs = isWindows ? ['/c', 'uvx', ...commandArgs] : commandArgs;
+    let uvxSpawnCommand = isWindows ? (process.env.ComSpec || 'cmd.exe') : 'uvx';
+    let uvxSpawnArgs = isWindows ? ['/c', 'uvx', ...commandArgs] : commandArgs;
+
+    // Linux: pin the embedding subprocess to a small CPU set. onnxruntime's
+    // intra-op pool ignores thread-limit env vars (non-OpenMP wheel) and
+    // oversubscribes on big-host/small-cgroup setups (~150 spinning threads
+    // pinning the whole cgroup quota during backfill). CPU affinity is the only
+    // OS-enforced cap; taskset exec-replaces itself with uvx so no process
+    // layer is added. Gate on taskset presence so hosts without util-linux fall
+    // back to the unpinned command. See getChromaCpuLimit().
+    if (process.platform === 'linux') {
+      const taskset = this.findTaskset();
+      if (taskset) {
+        const cpuSpec = this.chromaCpuListSpec(this.getChromaCpuLimit());
+        uvxSpawnCommand = taskset;
+        uvxSpawnArgs = ['-c', cpuSpec, 'uvx', ...commandArgs];
+        logger.info('CHROMA_MCP', 'Pinning chroma-mcp to CPU set to bound onnxruntime threads', {
+          cpus: cpuSpec
+        });
+      }
+    }
 
     logger.info('CHROMA_MCP', 'Connecting to chroma-mcp via MCP stdio', {
       command: uvxSpawnCommand,
@@ -634,6 +653,90 @@ export class ChromaMcpManager {
    * If a combined cert bundle exists (Zscaler), injects SSL_CERT_FILE, REQUESTS_CA_BUNDLE, etc.
    * Otherwise returns a plain string-keyed copy of process.env.
    */
+  /**
+   * Number of CPUs the chroma-mcp subprocess (onnxruntime embedding) may use.
+   *
+   * The PyPI onnxruntime wheel is built WITHOUT OpenMP, so it sizes its
+   * intra-op thread pool to the host physical-core count and ignores
+   * OMP_NUM_THREADS. On a large host carved into a small cgroup (e.g. a
+   * 180-core node with a 17-core container quota), that pool oversubscribes:
+   * ~150 threads busy-wait at the pool barrier, the cgroup gets CPU-throttled,
+   * and a one-time embedding backfill can pin the whole quota for hours.
+   * chromadb's embedding function never sets intra_op_num_threads and exposes
+   * no env knob, so the only reliable cap is OS-level CPU affinity on the
+   * spawned process (see connectInternal); this value sizes that pin.
+   *
+   * Defaults to a quarter of the detected cgroup CPU quota (clamped to 1..8)
+   * so background indexing never starves the rest of the container. Override
+   * with CLAUDE_MEM_CHROMA_CPU_LIMIT.
+   */
+  private getChromaCpuLimit(): number {
+    const override = Number.parseInt(process.env.CLAUDE_MEM_CHROMA_CPU_LIMIT ?? '', 10);
+    if (Number.isInteger(override) && override > 0) return override;
+    const quota = this.readCgroupCpuQuota();
+    const base = quota ? Math.floor(quota / 4) : 4;
+    return Math.max(1, Math.min(8, base));
+  }
+
+  /**
+   * Detect this process's CPU quota in whole cores from the cgroup, or null
+   * when unconstrained / not on cgroups (macOS, Windows, bare metal).
+   */
+  private readCgroupCpuQuota(): number | null {
+    try {
+      // cgroup v2: "<quota> <period>" in µs, or "max" when unconstrained.
+      const [quota, period] = fs.readFileSync('/sys/fs/cgroup/cpu.max', 'utf8').trim().split(/\s+/);
+      if (quota && quota !== 'max') {
+        const cores = Number(quota) / Number(period || '100000');
+        if (cores > 0) return cores;
+      }
+    } catch { /* not cgroup v2 */ }
+    try {
+      // cgroup v1: separate quota/period files; quota = -1 when unconstrained.
+      const quota = Number(fs.readFileSync('/sys/fs/cgroup/cpu/cpu.cfs_quota_us', 'utf8').trim());
+      const period = Number(fs.readFileSync('/sys/fs/cgroup/cpu/cpu.cfs_period_us', 'utf8').trim());
+      if (quota > 0 && period > 0) return quota / period;
+    } catch { /* not cgroup v1 */ }
+    return null;
+  }
+
+  /**
+   * Resolve `taskset` on PATH (Linux util-linux), or null when unavailable.
+   */
+  private findTaskset(): string | null {
+    try {
+      return execSync('command -v taskset', { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim() || null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Build the `taskset -c` CPU list pinning chroma-mcp to `n` CPUs. Picks the
+   * first `n` CPUs from this container's effective cpuset so taskset can't fail
+   * with EINVAL on cpuset-restricted pods; falls back to the low `0..n-1` range.
+   */
+  private chromaCpuListSpec(n: number): string {
+    const readSet = (p: string): number[] | null => {
+      try {
+        const raw = fs.readFileSync(p, 'utf8').trim();
+        if (!raw) return null;
+        const cpus: number[] = [];
+        for (const part of raw.split(',')) {
+          const [a, b] = part.split('-').map(Number);
+          for (let c = a; c <= (Number.isInteger(b) ? b : a); c++) cpus.push(c);
+        }
+        return cpus.length ? cpus : null;
+      } catch {
+        return null;
+      }
+    };
+    const allowed = readSet('/sys/fs/cgroup/cpuset.cpus.effective')
+      ?? readSet('/sys/fs/cgroup/cpuset/cpuset.cpus');
+    const pick = allowed ? allowed.slice(0, n) : Array.from({ length: n }, (_, i) => i);
+    return pick.join(',');
+  }
+
   private getSpawnEnv(): Record<string, string> {
     const baseEnv: Record<string, string> = {};
     for (const [key, value] of Object.entries(process.env)) {
@@ -647,6 +750,17 @@ export class ChromaMcpManager {
     // user hasn't pinned it explicitly. Must be set BEFORE the combinedCertPath
     // early-return below so it applies to both the cert and no-cert paths.
     if (!baseEnv.ANONYMIZED_TELEMETRY) baseEnv.ANONYMIZED_TELEMETRY = 'false';
+
+    // Cap the auxiliary native thread pools (OpenBLAS/numpy/tokenizers) the
+    // embedding subprocess spins up so each doesn't fan out to host-core count.
+    // onnxruntime's own intra-op pool ignores these (non-OpenMP wheel) and is
+    // bounded by CPU affinity instead (see connectInternal). Only set when the
+    // user hasn't pinned them. Must precede the combinedCertPath early-return.
+    const chromaThreads = String(this.getChromaCpuLimit());
+    for (const key of ['OMP_NUM_THREADS', 'OPENBLAS_NUM_THREADS', 'MKL_NUM_THREADS', 'NUMEXPR_NUM_THREADS', 'VECLIB_MAXIMUM_THREADS']) {
+      if (!baseEnv[key]) baseEnv[key] = chromaThreads;
+    }
+    if (!baseEnv.TOKENIZERS_PARALLELISM) baseEnv.TOKENIZERS_PARALLELISM = 'false';
 
     const combinedCertPath = this.getCombinedCertPath();
     if (!combinedCertPath) {
