@@ -634,12 +634,8 @@ export class ChromaMcpManager {
   }
 
   /**
-   * Build subprocess environment with SSL certificate overrides for enterprise proxy compatibility.
-   * If a combined cert bundle exists (Zscaler), injects SSL_CERT_FILE, REQUESTS_CA_BUNDLE, etc.
-   * Otherwise returns a plain string-keyed copy of process.env.
-   */
-  /**
-   * Number of CPUs the chroma-mcp subprocess (onnxruntime embedding) may use.
+   * Default onnxruntime intra-op thread count for the chroma-mcp embedding
+   * subprocess.
    *
    * The PyPI onnxruntime wheel is built WITHOUT OpenMP, so it sizes its
    * intra-op thread pool to the host physical-core count and ignores
@@ -648,12 +644,14 @@ export class ChromaMcpManager {
    * ~150 threads busy-wait at the pool barrier, the cgroup gets CPU-throttled,
    * and a one-time embedding backfill can pin the whole quota for hours.
    * chromadb's embedding function never sets intra_op_num_threads and exposes
-   * no env knob, so the only reliable cap is OS-level CPU affinity on the
-   * spawned process (see connectInternal); this value sizes that pin.
+   * no env knob, so getSpawnEnv() injects a Python sitecustomize shim that
+   * patches onnxruntime SessionOptions before chromadb creates its session.
    *
    * Defaults to a quarter of the detected cgroup CPU quota (clamped to 1..8)
-   * so background indexing never starves the rest of the container. Override
-   * with CLAUDE_MEM_CHROMA_CPU_LIMIT.
+   * so background indexing never starves the rest of the container. This value
+   * also sizes auxiliary native thread pools. Override the shared default with
+   * CLAUDE_MEM_CHROMA_CPU_LIMIT, or override onnxruntime directly with
+   * CLAUDE_MEM_ORT_INTRA_OP_THREADS.
    */
   private getChromaCpuLimit(): number {
     const override = Number.parseInt(process.env.CLAUDE_MEM_CHROMA_CPU_LIMIT ?? '', 10);
@@ -737,6 +735,11 @@ if _n > 0:
     return dir;
   }
 
+  /**
+   * Build subprocess environment with SSL certificate overrides for enterprise proxy compatibility.
+   * If a combined cert bundle exists (Zscaler), injects SSL_CERT_FILE, REQUESTS_CA_BUNDLE, etc.
+   * Otherwise returns a plain string-keyed copy of process.env.
+   */
   private getSpawnEnv(): Record<string, string> {
     const baseEnv: Record<string, string> = {};
     for (const [key, value] of Object.entries(process.env)) {
