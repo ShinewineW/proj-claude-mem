@@ -10,7 +10,7 @@ and src/sdk/hardened-options.ts (TS files), and the plugin/skills/mem-weekly-dig
 (SPDX in an HTML comment, as Markdown has no comment-header convention). Fork-original and
 AGPL-3.0-derived files carry `SPDX-License-Identifier: AGPL-3.0`, or no header (defaulting to
 the fork's AGPL-3.0). Every upstream-derived commit — with its upstream hash and source
-license (Apache-2.0 or AGPL-3.0) — is indexed in docs/PROVENANCE.md.
+license (Apache-2.0 or AGPL-3.0) — is indexed in docs/reference/provenance.md.
 
 Apache-2.0 licensed portions remain sublicensable under Apache-2.0 as permitted by that
 license. The combined work as distributed by this repository is licensed under the

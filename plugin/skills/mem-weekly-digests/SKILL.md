@@ -6,7 +6,7 @@ description: Generate a serial week-by-week narrative digest of a project's full
 <!--
 SPDX-License-Identifier: Apache-2.0
 Adapted from upstream thedotmack/claude-mem@09e74bbf (Apache-2.0). The per-project
-DB-path threading is a fork-original adaptation. Provenance: docs/PROVENANCE.md; NOTICE.
+DB-path threading is a fork-original adaptation. Provenance: docs/reference/provenance.md; NOTICE.
 -->
 
 # Weekly Digests

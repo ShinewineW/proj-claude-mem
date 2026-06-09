@@ -268,11 +268,11 @@ bun run worker:logs
 - [`docs/reference/configuration.md`](docs/reference/configuration.md) — 全部 58 个 `CLAUDE_MEM_*` 设置项 + 数据路径
 - [`CLAUDE.md`](CLAUDE.md) — 架构总览与文件位置
 - [`plugin/README.md`](plugin/README.md) — 插件载荷的生成物 vs 手写源边界
-- [`docs/PROVENANCE.md`](docs/PROVENANCE.md) — 上游 cherry-pick 来源 + 许可证追溯
+- [`docs/reference/provenance.md`](docs/reference/provenance.md) — 上游 cherry-pick 来源 + 许可证追溯
 - 子系统导航文档：各目录下的 `CLAUDE.md`（`src/services/worker/`、`src/services/sqlite/`、`src/shared/`、`src/cli/handlers/`、`scripts/`、`tests/`）
 
 ## 致谢
 
 本项目 fork 自 [claude-mem](https://github.com/thedotmack/claude-mem)（作者：Alex Newman），基于 AGPL-3.0 许可证。
 
-上游项目提供了完整的 Claude Code 持久记忆系统，本 fork 在此基础上增加了 per-project 数据库隔离和 opt-in 白名单机制。fork 维护自己的版本线，并选择性回移上游的修复与特性（最近一轮为 v10.6.1→v13.4.0 的 41 项审计移植）；移植来源与许可证追溯见 [`docs/PROVENANCE.md`](docs/PROVENANCE.md)。
+上游项目提供了完整的 Claude Code 持久记忆系统，本 fork 在此基础上增加了 per-project 数据库隔离和 opt-in 白名单机制。fork 维护自己的版本线，并选择性回移上游的修复与特性（最近一轮为 v10.6.1→v13.4.0 的 41 项审计移植）；移植来源与许可证追溯见 [`docs/reference/provenance.md`](docs/reference/provenance.md)。

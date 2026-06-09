@@ -1,6 +1,6 @@
 # Claude-Mem: AI Development Instructions
 
-Fork of [claude-mem](https://github.com/thedotmack/claude-mem) with per-project database isolation. Base: upstream v10.5.2. **Audited through upstream v13.4.0 (`dc2eef8e`, 2026-06-05)**; selectively ports 41 audit-confirmed v10.6.1→v13.4.0 fixes (security / data-integrity / reliability) — see `docs/PROVENANCE.md` for the per-commit upstream source + license index. **Next upstream sync starts incrementally from v13.4.0, not from scratch.** See workspace `.claude/CLAUDE.md` → "Upstream Sync Status" for the audit watermark + full divergence tracking.
+Fork of [claude-mem](https://github.com/thedotmack/claude-mem) with per-project database isolation. Base: upstream v10.5.2. **Audited through upstream v13.4.0 (`dc2eef8e`, 2026-06-05)**; selectively ports 41 audit-confirmed v10.6.1→v13.4.0 fixes (security / data-integrity / reliability) — see `docs/reference/provenance.md` for the per-commit upstream source + license index. **Next upstream sync starts incrementally from v13.4.0, not from scratch.** See workspace `.claude/CLAUDE.md` → "Upstream Sync Status" for the audit watermark + full divergence tracking.
 
 Claude-mem is a Claude Code plugin providing persistent memory across sessions. It captures tool usage, compresses observations using the Claude Agent SDK, and injects relevant context into future sessions.
 

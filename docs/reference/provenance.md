@@ -60,11 +60,11 @@
 - **`cc37e220`** — agent_id/agent_type stdin probe（C2 Chunk 2）— 纯 instrumentation，TEMPORARY PROBE，TODO(Q23)，由维护者观察 pod 日志后关闭。
 - **`2a9dbe6f`** — OpenRouter 完整移除（C7 Task 3）— fork 自有清理，上游保留 OpenRouter；本 fork 将 OpenCode 泛化为通用 OpenAI-compatible 客户端后 OpenRouter 冗余。
 - **file-to-prod Stage 3–6 审计修复 + 测试隔离修复** — 均为 fork-original（无上游来源）：non-XML 解析守门、per-project kill 作用域 + captured-controller、logger 循环引用守护、FTS5 MATCH 容错、OpenCode base-URL 校验/接线、summary content-hash `\x00` 分隔、parseFileList 字符串契约、`tests/audit/phase3-*` 属性回归、ProcessRegistry/ChromaMcpManager 测试 mock 污染隔离、`OPENCODE_API_URL` 去重、可读性精简。
-- **`docs/PROVENANCE.md` 本身** — round-closing 文档，fork-original。
+- **`docs/reference/provenance.md` 本身** — round-closing 文档，fork-original。
 
 ## 附注
 
-- 本文件覆盖全轮所有 **39 个 upstream-derived 提交**（带 `Upstream:` trailer）+ fork-original 提交（上方列出）。校验命令：`git log 4028f4bc..HEAD --grep='Upstream: thedotmack' --format=%h | while read h; do grep -q "$h" docs/PROVENANCE.md || echo MISSING $h; done`（应无输出），表格数据行数应等于 39。
+- 本文件覆盖全轮所有 **39 个 upstream-derived 提交**（带 `Upstream:` trailer）+ fork-original 提交（上方列出）。校验命令：`git log 4028f4bc..HEAD --grep='Upstream: thedotmack' --format=%h | while read h; do grep -q "$h" docs/reference/provenance.md || echo MISSING $h; done`（应无输出），表格数据行数应等于 39。
 - 同一上游 hash 在多个 fork 提交中出现（`be99a5d69` × 4, `46d204ee9` × 3, `88b47f9e` × 2, `55334129` × 2, `f97c50bf` × 2, `64cce2bf` × 2）属正常情况 — 同一上游修复被拆分为独立 fork 提交，或被多处复用。
 - 多上游源提交：`e941395d`（observer 锁死 = `ce13c887` Apache + `703c64c7`/`46d204ee9` AGPL）、`d1af69e0`（tree-kill = `d384d3c5` AGPL + `55334129` Apache）、`e8bf1b37`（markFailed + preview-log = `be99a5d69` + `92f800d4`）、`cdcc7330`（双标签剥离 = `a66b98bcd` + `f81684c61`）。combined 派生作品整体受 AGPL-3.0 约束，per-source 许可证已逐一追溯。
 - Apache-2.0 派生新文件携带 per-file SPDX 标识：`src/shared/openai-compatible-base-url.ts`（`d13fc437`）与 `src/sdk/hardened-options.ts`（`ce13c887`）在文件顶部带 `SPDX-License-Identifier: Apache-2.0` 注释头；`plugin/skills/mem-weekly-digests/SKILL.md`（`09e74bbf`）因 Markdown 无注释头惯例，SPDX 置于 frontmatter 后的 HTML 注释中。AGPL-3.0 派生与 fork-original 文件带 `SPDX-License-Identifier: AGPL-3.0` 或无头（默认 fork 的 AGPL-3.0）。
