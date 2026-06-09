@@ -19,7 +19,7 @@ export interface SummaryInput {
  * Result from storing a summary
  */
 export interface StoreSummaryResult {
-  id: number;
+  id: number | null;
   createdAtEpoch: number;
 }
 

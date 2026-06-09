@@ -923,7 +923,16 @@ export class SessionStore {
     timestampIso: string,
     timestampEpoch: number,
     contentSessionId: string | null = null
-  ): { id: number; createdAtEpoch: number } {
+  ): { id: number | null; createdAtEpoch: number } {
+    // Defense-in-depth: a null/empty memory_session_id means the session was reset
+    // (context-overflow nulls it in SDKAgent). Skip the insert instead of crashing
+    // the generator on `NOT NULL constraint failed: session_summaries.memory_session_id`
+    // and losing the turn. Mirrors fresh-summarize-store.ts / bypass-observation-store.ts,
+    // which also return null when the session has no memory_session_id.
+    if (!memorySessionId) {
+      return { id: null, createdAtEpoch: timestampEpoch };
+    }
+
     const contentHash = computeSummaryContentHash(memorySessionId, summary.request, summary.investigated);
     const existing = findDuplicateSummary(this.db, contentHash, timestampEpoch);
     if (existing) {
@@ -953,7 +962,7 @@ export class SessionStore {
     discoveryTokens: number = 0,
     overrideTimestampEpoch?: number,
     contentSessionId: string | null = null
-  ): { id: number; createdAtEpoch: number } {
+  ): { id: number | null; createdAtEpoch: number } {
     const timestampEpoch = overrideTimestampEpoch ?? Date.now();
     const timestampIso = new Date(timestampEpoch).toISOString();
     return this.insertSummaryDeduped(memorySessionId, project, summary, promptNumber || null, discoveryTokens, timestampIso, timestampEpoch, contentSessionId);
@@ -1104,7 +1113,7 @@ export class SessionStore {
     discoveryTokens: number = 0,
     overrideTimestampEpoch?: number,
     contentSessionId: string | null = null
-  ): { observationIds: number[]; summaryId?: number; createdAtEpoch: number } {
+  ): { observationIds: number[]; summaryId: number | null; createdAtEpoch: number } {
     if (!project || project.trim() === '') {
       throw new Error('storeObservationsAndMarkComplete: project parameter is required');
     }
@@ -1149,7 +1158,7 @@ export class SessionStore {
       // 2. Store summary if provided (with content-hash dedup)
       const summaryId = summary
         ? this.insertSummaryDeduped(memorySessionId, project, summary, promptNumber || null, discoveryTokens, timestampIso, timestampEpoch, contentSessionId).id
-        : undefined;
+        : null;
 
       // 3. Mark pending message as processed
       // This UPDATE is part of the same transaction, so if it fails,

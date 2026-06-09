@@ -45,7 +45,8 @@ export function findDuplicateSummary(
 
 /**
  * Store a session summary (from SDK parsing)
- * Assumes session already exists - will fail with FK error if not
+ * Assumes session already exists - will fail with FK error if a non-empty id
+ * does not match a session. Skips when memory_session_id is null/empty.
  * Performs content-hash deduplication: skips INSERT if an identical summary exists within 30s
  *
  * @param db - Database instance
@@ -69,6 +70,10 @@ export function storeSummary(
   // Use override timestamp if provided (for processing backlog messages with original timestamps)
   const timestampEpoch = overrideTimestampEpoch ?? Date.now();
   const timestampIso = new Date(timestampEpoch).toISOString();
+
+  if (!memorySessionId) {
+    return { id: null, createdAtEpoch: timestampEpoch };
+  }
 
   // Content-hash deduplication (mirrors observation dedup pattern)
   const contentHash = computeSummaryContentHash(memorySessionId, summary.request, summary.investigated);

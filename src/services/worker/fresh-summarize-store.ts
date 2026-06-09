@@ -111,7 +111,9 @@ export function storeFreshSummaryForSession(
       );
       return {
         action: 'inserted',
-        id: stored.id,
+        // storeSummary skips (id=null) only when memory_session_id is falsy, but
+        // line 69 already returned null in that case — so on this path id is a real row id.
+        id: stored.id!,
         createdAtEpoch: stored.createdAtEpoch,
         memorySessionId: row.memory_session_id,
       };

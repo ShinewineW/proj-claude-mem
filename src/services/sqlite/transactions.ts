@@ -109,7 +109,7 @@ export function storeObservationsAndMarkComplete(
 
     // 2. Store summary if provided (with content-hash dedup)
     let summaryId: number | null = null;
-    if (summary) {
+    if (summary && memorySessionId) {
       const summaryHash = computeSummaryContentHash(memorySessionId, summary.request, summary.investigated);
       const existingSummary = findDuplicateSummary(db, summaryHash, timestampEpoch);
       if (existingSummary) {
@@ -237,7 +237,7 @@ export function storeObservations(
 
     // 2. Store summary if provided (with content-hash dedup)
     let summaryId: number | null = null;
-    if (summary) {
+    if (summary && memorySessionId) {
       const summaryHash = computeSummaryContentHash(memorySessionId, summary.request, summary.investigated);
       const existingSummary = findDuplicateSummary(db, summaryHash, timestampEpoch);
       if (existingSummary) {
