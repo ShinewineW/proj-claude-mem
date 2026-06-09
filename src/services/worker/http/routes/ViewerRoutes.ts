@@ -9,7 +9,7 @@ import express, { Request, Response } from 'express';
 import path from 'path';
 import { readFileSync, existsSync } from 'fs';
 import { logger } from '../../../../utils/logger.js';
-import { getPackageRoot, resolveProjectDbPath } from '../../../../shared/paths.js';
+import { getPackageRoot } from '../../../../shared/paths.js';
 import { listEnabledProjects } from '../../../../shared/project-allowlist.js';
 import { SSEBroadcaster } from '../../SSEBroadcaster.js';
 import { DatabaseManager } from '../../DatabaseManager.js';
@@ -82,7 +82,12 @@ export class ViewerRoutes extends BaseRouteHandler {
     const enabled = listEnabledProjects();
     for (const projectRoot of Object.keys(enabled)) {
       try {
-        const dbPath = resolveProjectDbPath(projectRoot);
+        // Allowlist roots are already canonical project roots — join directly.
+        // Never pass them through resolveProjectDbPath(): its workspace-parent
+        // heuristic would climb to an ancestor holding a .claude/ (e.g. an umbrella
+        // dir that contains several independent enabled repos), opening a stray
+        // mem.db there. See shared/CLAUDE.md pattern rule + resolveAllProjectDbPaths().
+        const dbPath = path.join(projectRoot, '.claude', 'mem.db');
         const store = this.dbManager.getSessionStore(dbPath);
         for (const name of store.getAllProjects()) {
           projects.add(name);

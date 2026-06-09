@@ -4,6 +4,7 @@ import { getEventHandler } from './handlers/index.js';
 import { HOOK_EXIT_CODES } from '../shared/hook-constants.js';
 import { logger } from '../utils/logger.js';
 import { resolveProjectContext } from '../shared/project-allowlist.js';
+import { getPinnedSessionProjectContext, pinSessionProjectContext } from '../shared/session-project-context.js';
 
 export interface HookCommandOptions {
   /** If true, don't call process.exit() - let caller handle process lifecycle */
@@ -66,6 +67,10 @@ export function isWorkerUnavailableError(error: unknown): boolean {
   return false;
 }
 
+function isSessionProjectPinEvent(event: string): boolean {
+  return event === 'session-init' || event === 'UserPromptSubmit' || event === 'beforeSubmitPrompt';
+}
+
 export async function hookCommand(platform: string, event: string, options: HookCommandOptions = {}): Promise<number> {
   // Suppress stderr in hook context — Claude Code shows stderr as error UI (#1181)
   // Exit 1: stderr shown to user. Exit 2: stderr fed to Claude for processing.
@@ -97,13 +102,19 @@ export async function hookCommand(platform: string, event: string, options: Hook
       });
     }
 
-    // Allowlist guard: resolve project from post-adapter cwd, exit if not in any enabled project
-    const projectContext = resolveProjectContext(input.cwd);
+    // Session routing is pinned from the first user prompt. Later hook cwd values
+    // can drift into nested repos or sibling directories, so use the pinned
+    // contentSessionId context before falling back to cwd resolution.
+    const pinnedProjectContext = getPinnedSessionProjectContext(input.sessionId);
+    const projectContext = pinnedProjectContext ?? resolveProjectContext(input.cwd);
     if (!projectContext) {
       if (!options.skipExit) {
         process.exit(HOOK_EXIT_CODES.SUCCESS);
       }
       return HOOK_EXIT_CODES.SUCCESS;
+    }
+    if (!pinnedProjectContext && isSessionProjectPinEvent(event)) {
+      pinSessionProjectContext(input.sessionId, projectContext);
     }
     input._projectContext = projectContext;
     const result = await handler.execute(input);
