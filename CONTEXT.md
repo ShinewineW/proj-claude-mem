@@ -2,14 +2,6 @@
 
 > 本文件只放项目专属领域术语,一词一两句,opinionated。不放实现细节、spec 或随手笔记。
 
-## Engram
-
-本插件的 canonical 产品名(2026-06-09 定)。取神经科学义:记忆在介质上留下的物理印痕——恰是本系统所做:把每次会话的 observation 压缩、刻存为可被唤回的记忆痕迹。
-
-- **Tagline**(承载 per-project 语义,命名目标1 由此兜住):`Engram — per-project memory for Claude Code`
-- **派生命名**(待 Q2 定):plugin key、marketplace namespace、npm 包名、cache 路径均从此名派生。
-- _Avoid_: `claude-mem`(上游品牌,本 fork 不再以此自称)、`repo-memory` / `project-memory`(功能直白但通用、易撞名,已否决)、`codex`(本工作区 Codex CLI 占用,撞名)。
-
 ## Transport
 
 一次记忆处理请求走的线路 + 代码路径,是 `CLAUDE_MEM_PROVIDER` 的取值,**闭集只有两个**:`claude`(主 Agent SDK 通道)、`openai`(任意 OpenAI 兼容 `/chat/completions`,唯一旁路)。新增 OpenAI 兼容服务**不新增 transport**,只是换 `openai` 这条路的 base URL。
