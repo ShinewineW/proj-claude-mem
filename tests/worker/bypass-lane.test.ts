@@ -722,4 +722,3 @@ describe('§4: ProbeResult structured return', () => {
     expect(result).toEqual({ ok: false, failureReason: 'no config' });
   });
 });
-

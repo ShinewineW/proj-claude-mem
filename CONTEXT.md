@@ -18,6 +18,6 @@
 
 ## Bypass provider
 
-非 Claude 的旁路 lane(`gemini` 或 `openai` transport),用直连 REST 处理 observation,与主 Claude SDK 通道**竞争消费**同一队列。其**身份一律从配置的 `baseUrl` host 自动派生**(如 `api.deepseek.com`),没有独立的显示名字段——用户连哪个 host 就是哪个,避免自定义 endpoint 命名乱套。
+非 Claude 的旁路 lane(唯一 transport 为 `openai`),用直连 REST 处理 observation,与主 Claude SDK 通道**竞争消费**同一队列。其**身份一律从配置的 `baseUrl` host 自动派生**(如 `api.deepseek.com`),没有独立的显示名字段——用户连哪个 host 就是哪个,避免自定义 endpoint 命名乱套。
 
 - _Avoid_: `fallback`(它是竞争消费者,不是兜底);为它单设 `displayName` / 厂商枚举 / 预置 catalog(均已否决)。
