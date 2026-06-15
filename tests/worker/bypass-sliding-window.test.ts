@@ -26,11 +26,11 @@ mock.module('../../src/utils/logger.js', () => ({
 mock.module('../../src/shared/SettingsDefaultsManager.js', () => ({
   SettingsDefaultsManager: {
     loadFromFile: () => ({
-      CLAUDE_MEM_PROVIDER: 'opencode',
-      CLAUDE_MEM_OPENCODE_API_KEY: 'test-key',
-      CLAUDE_MEM_OPENCODE_MODEL: 'deepseek-v4-flash',
+      CLAUDE_MEM_PROVIDER: 'openai',
+      CLAUDE_MEM_OPENAI_BASE_URL: 'https://api.deepseek.com',
+      CLAUDE_MEM_OPENAI_API_KEY: 'test-key',
+      CLAUDE_MEM_OPENAI_MODEL: 'deepseek-v4-flash',
       CLAUDE_MEM_BYPASS_COOLDOWN_MS: '5000',
-      CLAUDE_MEM_GEMINI_RATE_LIMITING_ENABLED: 'false',
       CLAUDE_MEM_CHROMA_ENABLED: 'false',
     }),
   },

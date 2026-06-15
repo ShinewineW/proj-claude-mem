@@ -26,12 +26,10 @@ mock.module('../../src/utils/logger.js', () => ({
 mock.module('../../src/shared/SettingsDefaultsManager.js', () => ({
   SettingsDefaultsManager: {
     loadFromFile: () => ({
-      CLAUDE_MEM_PROVIDER: 'gemini',
-      CLAUDE_MEM_GEMINI_API_KEY: 'test-gemini-key',
-      CLAUDE_MEM_GEMINI_MODEL: 'gemini-2.5-flash',
-      CLAUDE_MEM_GEMINI_RATE_LIMITING_ENABLED: 'false',
-      CLAUDE_MEM_OPENCODE_API_KEY: '',
-      CLAUDE_MEM_OPENCODE_MODEL: 'deepseek-v4-flash',
+      CLAUDE_MEM_PROVIDER: 'openai',
+      CLAUDE_MEM_OPENAI_BASE_URL: 'https://api.deepseek.com',
+      CLAUDE_MEM_OPENAI_API_KEY: 'test-openai-key',
+      CLAUDE_MEM_OPENAI_MODEL: 'deepseek-v4-flash',
       CLAUDE_MEM_BYPASS_COOLDOWN_MS: '5000',
       CLAUDE_MEM_CHROMA_ENABLED: 'false',
     }),
@@ -49,7 +47,7 @@ mock.module('../../src/shared/SettingsDefaultsManager.js', () => ({
 
 mock.module('../../src/shared/EnvManager.js', () => ({
   getCredential: (key: string) => {
-    if (key === 'GEMINI_API_KEY') return 'test-gemini-key';
+    if (key === 'OPENAI_API_KEY') return 'test-openai-key';
     return '';
   },
 }));
@@ -235,13 +233,13 @@ describe('BypassLane', () => {
   });
 
   describe('config resolution', () => {
-    it('resolves gemini config from settings', () => {
+    it('resolves openai config from settings', () => {
       const lane = new BypassLane();
       const config = (lane as any).resolveConfig();
       expect(config).not.toBeNull();
-      expect(config.provider).toBe('gemini');
-      expect(config.apiKey).toBe('test-gemini-key');
-      expect(config.model).toBe('gemini-2.5-flash');
+      expect(config.baseUrl).toBe('https://api.deepseek.com');
+      expect(config.apiKey).toBe('test-openai-key');
+      expect(config.model).toBe('deepseek-v4-flash');
       expect(config.cooldownMs).toBe(5000);
     });
   });
@@ -374,7 +372,7 @@ describe('F1: empty observation defense', () => {
   it('throws when parseObservations returns empty array', async () => {
     const lane = new BypassLane();
     (lane as any).state = 'ACTIVE';
-    (lane as any).config = { provider: 'opencode', apiKey: 'test', model: 'test', cooldownMs: 5000 };
+    (lane as any).config = { baseUrl: 'https://api.deepseek.com', apiKey: 'test', model: 'test', cooldownMs: 5000 };
 
     // Mock dependencies
     const mockMarkFailed = mock(() => {});
@@ -429,7 +427,7 @@ describe('F1: empty observation defense', () => {
   it('consumeLoop calls markFailed + recordFailure when processObservation throws', async () => {
     const lane = new BypassLane();
     (lane as any).state = 'ACTIVE';
-    (lane as any).config = { provider: 'opencode', apiKey: 'test', model: 'test', cooldownMs: 5000 };
+    (lane as any).config = { baseUrl: 'https://api.deepseek.com', apiKey: 'test', model: 'test', cooldownMs: 5000 };
 
     const mockMarkFailed = mock(() => {});
     let claimCount = 0;
@@ -534,7 +532,7 @@ describe('§1: unified state transition', () => {
     (lane as any).consumeLoop = async () => {};
 
     // Initialize — should backfill all 3
-    (lane as any).resolveConfig = () => ({ provider: 'opencode', apiKey: 'k', model: 'm', cooldownMs: 1000 });
+    (lane as any).resolveConfig = () => ({ baseUrl: 'https://api.deepseek.com', apiKey: 'k', model: 'm', cooldownMs: 1000 });
     await lane.initialize();
 
     expect(lane.getState()).toBe('ACTIVE');
@@ -555,7 +553,7 @@ describe('§1: unified state transition', () => {
       getPendingMessageStore: () => ({ claimNextObservation: () => null }),
     };
     (lane as any).consumeLoop = async () => {};
-    (lane as any).resolveConfig = () => ({ provider: 'opencode', apiKey: 'k', model: 'm', cooldownMs: 100 });
+    (lane as any).resolveConfig = () => ({ baseUrl: 'https://api.deepseek.com', apiKey: 'k', model: 'm', cooldownMs: 100 });
 
     await lane.initialize();
     // State should be DISABLED (not TRIPPED — never was active)
@@ -576,7 +574,7 @@ describe('§1: unified state transition', () => {
 describe('§3 partial: counters and getStatus', () => {
   it('G6: getStatus returns correct counter values', async () => {
     const lane = new BypassLane();
-    (lane as any).config = { provider: 'opencode', apiKey: 'test', model: 'test-model', cooldownMs: 1000 };
+    (lane as any).config = { baseUrl: 'https://api.deepseek.com', apiKey: 'test', model: 'test-model', cooldownMs: 1000 };
     (lane as any).state = 'ACTIVE';
 
     // Simulate 2 successes and 1 failure
@@ -586,7 +584,7 @@ describe('§3 partial: counters and getStatus', () => {
 
     const status = lane.getStatus();
     expect(status.state).toBe('ACTIVE');
-    expect(status.provider).toBe('opencode');
+    expect(status.endpoint).toBe('api.deepseek.com');
     expect(status.model).toBe('test-model');
     expect(status.totalSucceeded).toBe(2);
     expect(status.totalFailed).toBe(1);
@@ -599,7 +597,7 @@ describe('§3 partial: counters and getStatus', () => {
     const lane = new BypassLane();
     const status = lane.getStatus();
     expect(status.state).toBe('DISABLED');
-    expect(status.provider).toBeNull();
+    expect(status.endpoint).toBeNull();
     expect(status.model).toBeNull();
     expect(status.totalClaimed).toBe(0);
     expect(status.totalTrips).toBe(0);
@@ -607,7 +605,7 @@ describe('§3 partial: counters and getStatus', () => {
 
   it('totalTrips increments on circuit breaker trip', () => {
     const lane = new BypassLane();
-    (lane as any).config = { provider: 'opencode', apiKey: 'test', model: 'test', cooldownMs: 1000 };
+    (lane as any).config = { baseUrl: 'https://api.deepseek.com', apiKey: 'test', model: 'test', cooldownMs: 1000 };
     (lane as any).state = 'ACTIVE';
 
     // Trip circuit breaker
@@ -627,7 +625,7 @@ describe('§3 partial: counters and getStatus', () => {
 describe('§4: ProbeResult structured return', () => {
   it('returns ok:true on successful probe', async () => {
     const lane = new BypassLane();
-    (lane as any).config = { provider: 'opencode', apiKey: 'test', model: 'test', cooldownMs: 1000 };
+    (lane as any).config = { baseUrl: 'https://api.deepseek.com', apiKey: 'test', model: 'test', cooldownMs: 1000 };
     const originalFetch = globalThis.fetch;
     globalThis.fetch = mock(async () => new Response('OK', { status: 200 })) as any;
     try {
@@ -640,7 +638,7 @@ describe('§4: ProbeResult structured return', () => {
 
   it('returns failureReason with HTTP status on non-ok response', async () => {
     const lane = new BypassLane();
-    (lane as any).config = { provider: 'opencode', apiKey: 'test', model: 'test', cooldownMs: 1000 };
+    (lane as any).config = { baseUrl: 'https://api.deepseek.com', apiKey: 'test', model: 'test', cooldownMs: 1000 };
     const originalFetch = globalThis.fetch;
     globalThis.fetch = mock(async () => new Response('', { status: 429, statusText: 'Too Many Requests' })) as any;
     try {
@@ -654,7 +652,7 @@ describe('§4: ProbeResult structured return', () => {
 
   it('returns sanitized failureReason on network error', async () => {
     const lane = new BypassLane();
-    (lane as any).config = { provider: 'opencode', apiKey: 'test', model: 'test', cooldownMs: 1000 };
+    (lane as any).config = { baseUrl: 'https://api.deepseek.com', apiKey: 'test', model: 'test', cooldownMs: 1000 };
     const originalFetch = globalThis.fetch;
     globalThis.fetch = mock(async () => { throw new Error('fetch failed: ECONNREFUSED'); }) as any;
     try {
@@ -666,9 +664,9 @@ describe('§4: ProbeResult structured return', () => {
     }
   });
 
-  it('redacts Gemini API key from error messages', async () => {
+  it('redacts the configured API key from error messages', async () => {
     const lane = new BypassLane();
-    (lane as any).config = { provider: 'gemini', apiKey: 'secret-key-123', model: 'gemini-2.5-flash-lite', cooldownMs: 1000 };
+    (lane as any).config = { baseUrl: 'https://api.deepseek.com', apiKey: 'secret-key-123', model: 'deepseek-v4-flash', cooldownMs: 1000 };
     const originalFetch = globalThis.fetch;
     globalThis.fetch = mock(async () => {
       throw new Error('request to https://api.example.com?key=secret-key-123 failed');
@@ -685,7 +683,7 @@ describe('§4: ProbeResult structured return', () => {
 
   it('returns timeout reason on AbortError', async () => {
     const lane = new BypassLane();
-    (lane as any).config = { provider: 'opencode', apiKey: 'test', model: 'test', cooldownMs: 1000 };
+    (lane as any).config = { baseUrl: 'https://api.deepseek.com', apiKey: 'test', model: 'test', cooldownMs: 1000 };
     const originalFetch = globalThis.fetch;
     globalThis.fetch = mock(async () => {
       const err = new DOMException('The operation was aborted', 'AbortError');
@@ -702,7 +700,7 @@ describe('§4: ProbeResult structured return', () => {
 
   it('returns timeout reason on TimeoutError (real AbortSignal.timeout)', async () => {
     const lane = new BypassLane();
-    (lane as any).config = { provider: 'opencode', apiKey: 'test', model: 'test', cooldownMs: 1000 };
+    (lane as any).config = { baseUrl: 'https://api.deepseek.com', apiKey: 'test', model: 'test', cooldownMs: 1000 };
     const originalFetch = globalThis.fetch;
     globalThis.fetch = mock(async () => {
       const err = new DOMException('The operation timed out.', 'TimeoutError');
@@ -725,20 +723,3 @@ describe('§4: ProbeResult structured return', () => {
   });
 });
 
-describe('F5: Gemini rate limiting', () => {
-  it('has lastGeminiRequestTime field initialized to 0', () => {
-    const lane = new BypassLane();
-    expect((lane as any).lastGeminiRequestTime).toBe(0);
-  });
-
-  it('does not have rate limiting for opencode provider', () => {
-    const lane = new BypassLane();
-    (lane as any).config = { provider: 'opencode', apiKey: 'test', model: 'test', cooldownMs: 5000 };
-
-    // lastGeminiRequestTime should remain 0 — OpenCode doesn't use it
-    expect((lane as any).lastGeminiRequestTime).toBe(0);
-    // Config check: rate limiting only applies when provider === 'gemini'
-    expect((lane as any).config.provider).toBe('opencode');
-    expect((lane as any).config.provider === 'gemini').toBe(false);
-  });
-});

@@ -2,8 +2,8 @@
  * BypassLane: Parallel REST provider consumer
  *
  * Runs alongside the main Claude SDK channel, claiming observation messages
- * from the same pending_messages queue. Uses Gemini or OpenCode REST API
- * for one-shot processing (no conversation history).
+ * from the same pending_messages queue. Uses any OpenAI-compatible provider's
+ * REST API for one-shot processing (no conversation history).
  *
  * State machine: DISABLED → ACTIVE → TRIPPED → (probe) → ACTIVE
  * Circuit breaker: 3 consecutive failures → cooldown → probe recovery
@@ -31,22 +31,19 @@ import type { PersistentPendingMessage } from "../sqlite/PendingMessageStore.js"
 import type { SessionManager } from "./SessionManager.js";
 import type { DatabaseManager } from "./DatabaseManager.js";
 import { storeBypassObservationsForSession } from "./bypass-observation-store.js";
-import { resolveOpenAICompatibleChatCompletionsUrl, DEFAULT_OPENCODE_API_URL } from "../../shared/openai-compatible-base-url.js";
+import { resolveOpenAICompatibleChatCompletionsUrl } from "../../shared/openai-compatible-base-url.js";
+import { probeOpenAICompatible, redactSecret } from "./openai-compatible-probe.js";
 
-// API endpoints
-const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1/models";
 // Must be < STALE_PROCESSING_THRESHOLD_MS (60s in PendingMessageStore) to prevent
 // the main channel's self-healing from resetting a bypass in-flight message to 'pending',
 // which would cause double-processing.
 const FETCH_TIMEOUT_MS = 45_000;
-// Gemini free tier: 15 RPM = minimum 4s between requests
-const GEMINI_RATE_LIMIT_INTERVAL_MS = 4_000;
 // Sliding window defaults for bypass conversation history
 const DEFAULT_MAX_CONTEXT_MESSAGES = 20;
 const DEFAULT_MAX_ESTIMATED_TOKENS = 100_000;
 const CHARS_PER_TOKEN_ESTIMATE = 4;
 
-// Tiered cooldowns for failure classification (opencode-driven, applies on opencode path only).
+// Tiered cooldowns for failure classification (applies on the openai path).
 // `transient` reuses the configurable default (`config.cooldownMs`, 20min by default).
 // `quota`/`auth` are long-tail failures where a 20min retry is wasteful — set to 6h.
 // `client` (HTTP 400 / ModelError) is a code bug, not a provider issue, so it bypasses the breaker entirely.
@@ -57,7 +54,7 @@ export type BypassFailureCategory = "quota" | "auth" | "transient" | "client";
 
 /**
  * Parse an error response body, handling both error envelope shapes observed
- * in production probes against OpenCode Go:
+ * in production probes against OpenAI-compatible providers:
  *   - Anthropic-style: {type:"error", error:{type, message}}
  *   - OpenAI-style:    {error:{type, code, message, param}}
  * Returns an empty object for unparseable bodies.
@@ -93,7 +90,7 @@ export function parseBypassErrorBody(body: string): {
 
 /**
  * Classify a failure given HTTP status + parsed envelope. Envelope hints take
- * priority over status because OpenCode returns 401 for unknown-model errors
+ * priority over status because some providers return 401 for unknown-model errors
  * (a client bug, not auth), so naive status-bucketing would mis-classify.
  */
 export function classifyBypassFailure(
@@ -116,7 +113,7 @@ export type BypassState = "DISABLED" | "ACTIVE" | "TRIPPED";
 
 export interface BypassStatus {
   state: BypassState;
-  provider: string | null;
+  endpoint: string | null;  // host derived from baseUrl, e.g. "api.deepseek.com"
   model: string | null;
   activeConsumers: number;
   consecutiveFailures: number;
@@ -129,18 +126,10 @@ export interface BypassStatus {
   lastTripAt: string | null;
   lastProbeAt: string | null;
   lastFailureReason: string | null;
-  // OpenCode Go subscription channel evidence: when cost === "0" the call
-  // was billed against subscription quota, not pay-per-token balance.
-  // Populated only on provider=opencode successful completions.
-  lastOpencodeCost: string | null;
-  lastOpencodeCostAt: string | null;
-  // Count of opencode completions with cost === "0" since worker start.
-  // Non-zero confirms subscription channel is in use.
-  opencodeFreeCalls: number;
 }
 
 interface BypassConfig {
-  provider: "gemini" | "opencode";
+  baseUrl: string;
   apiKey: string;
   model: string;
   cooldownMs: number;
@@ -158,7 +147,6 @@ export class BypassLane {
   private cooldownTimer: ReturnType<typeof setTimeout> | null = null;
   private activeConsumers = new Map<number, AbortController>();
   private config: BypassConfig | null = null;
-  private lastGeminiRequestTime = 0;
   private lastFailureReason: string | null = null;
   // In-memory counters — reset on worker restart. Operational diagnostics only.
   private counters = {
@@ -170,9 +158,6 @@ export class BypassLane {
     lastFailureAt: null as string | null,
     lastTripAt: null as string | null,
     lastProbeAt: null as string | null,
-    lastOpencodeCost: null as string | null,
-    lastOpencodeCostAt: null as string | null,
-    opencodeFreeCalls: 0,
   };
 
   // Injected after construction (avoids circular dep with WorkerService)
@@ -191,35 +176,15 @@ export class BypassLane {
   /** Read settings and determine bypass config. Returns null if bypass not applicable. */
   private resolveConfig(): BypassConfig | null {
     const settings = SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH);
+    if (settings.CLAUDE_MEM_PROVIDER !== "openai") return null;
 
-    const provider = settings.CLAUDE_MEM_PROVIDER;
-    if (provider === "claude" || !provider) return null;
-
-    const cooldownMs =
-      parseInt(settings.CLAUDE_MEM_BYPASS_COOLDOWN_MS) || 1200000;
-
-    if (provider === "gemini") {
-      const apiKey =
-        settings.CLAUDE_MEM_GEMINI_API_KEY ||
-        getCredential("GEMINI_API_KEY") ||
-        "";
-      if (!apiKey) return null;
-      const model = settings.CLAUDE_MEM_GEMINI_MODEL || "gemini-2.5-flash-lite";
-      return { provider: "gemini", apiKey, model, cooldownMs };
-    }
-
-    if (provider === "opencode") {
-      const apiKey =
-        settings.CLAUDE_MEM_OPENCODE_API_KEY ||
-        getCredential("OPENCODE_API_KEY") ||
-        "";
-      if (!apiKey) return null;
-      const model =
-        settings.CLAUDE_MEM_OPENCODE_MODEL || "deepseek-v4-flash";
-      return { provider: "opencode", apiKey, model, cooldownMs };
-    }
-
-    return null;
+    const cooldownMs = parseInt(settings.CLAUDE_MEM_BYPASS_COOLDOWN_MS) || 1200000;
+    const apiKey = settings.CLAUDE_MEM_OPENAI_API_KEY || getCredential("OPENAI_API_KEY") || "";
+    const baseUrl = (settings.CLAUDE_MEM_OPENAI_BASE_URL || "").trim();
+    const model = settings.CLAUDE_MEM_OPENAI_MODEL || "";
+    if (!apiKey || !baseUrl || !model) return null;
+    if (!resolveOpenAICompatibleChatCompletionsUrl(baseUrl)) return null; // reject malformed early
+    return { baseUrl, apiKey, model, cooldownMs };
   }
 
   /** Initialize: check conditions, run probe, transition to ACTIVE if successful. */
@@ -235,7 +200,7 @@ export class BypassLane {
 
     logger.info(
       "BYPASS",
-      `Probing ${this.config.provider} for bypass lane activation`,
+      `Probing ${new URL(this.config.baseUrl).host} for bypass lane activation`,
       {
         model: this.config.model,
       },
@@ -247,7 +212,7 @@ export class BypassLane {
     } else {
       this.lastFailureReason = probe.failureReason ?? null;
       logger.warn("BYPASS", "Initial probe failed, scheduling retry", {
-        provider: this.config.provider,
+        endpoint: this.config ? new URL(this.config.baseUrl).host : null,
         reason: probe.failureReason,
       });
       this.scheduleCooldownProbe();
@@ -264,7 +229,7 @@ export class BypassLane {
   getStatus(): BypassStatus {
     return {
       state: this.state,
-      provider: this.config?.provider ?? null,
+      endpoint: this.config ? new URL(this.config.baseUrl).host : null,
       model: this.config?.model ?? null,
       activeConsumers: this.activeConsumers.size,
       consecutiveFailures: this.consecutiveFailures,
@@ -277,9 +242,6 @@ export class BypassLane {
       lastTripAt: this.counters.lastTripAt,
       lastProbeAt: this.counters.lastProbeAt,
       lastFailureReason: this.lastFailureReason,
-      lastOpencodeCost: this.counters.lastOpencodeCost,
-      lastOpencodeCostAt: this.counters.lastOpencodeCostAt,
-      opencodeFreeCalls: this.counters.opencodeFreeCalls,
     };
   }
 
@@ -288,7 +250,7 @@ export class BypassLane {
     this.consecutiveFailures = 0;
     this.lastFailureReason = null;
     logger.success("BYPASS", `Bypass lane ACTIVE (${source})`, {
-      provider: this.config?.provider,
+      endpoint: this.config ? new URL(this.config.baseUrl).host : null,
       model: this.config?.model,
     });
     this.restartConsumersForActiveSessions();
@@ -445,63 +407,11 @@ export class BypassLane {
   private async probeProvider(): Promise<ProbeResult> {
     if (!this.config) return { ok: false, failureReason: "no config" };
     this.counters.lastProbeAt = new Date().toISOString();
-
-    try {
-      const signal = AbortSignal.timeout(15_000);
-      let response: Response;
-
-      if (this.config.provider === "gemini") {
-        const url = `${GEMINI_API_URL}/${this.config.model}:generateContent?key=${this.config.apiKey}`;
-        response = await fetch(url, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            contents: [{ role: "user", parts: [{ text: "Reply with OK" }] }],
-            generationConfig: { temperature: 0, maxOutputTokens: 10 },
-          }),
-          signal,
-        });
-      } else {
-        // OpenCode Go: OpenAI-compatible probe. Must include `thinking:disabled`,
-        // otherwise reasoning models burn max_tokens=10 on internal CoT and emit
-        // empty content → probe fails. No referer/title headers needed.
-        const opencodeProbeUrl = resolveOpenAICompatibleChatCompletionsUrl(
-          SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH).CLAUDE_MEM_OPENCODE_BASE_URL,
-          DEFAULT_OPENCODE_API_URL,
-        );
-        response = await fetch(opencodeProbeUrl, {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${this.config.apiKey}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            model: this.config.model,
-            messages: [{ role: "user", content: "Reply with OK" }],
-            max_tokens: 10,
-            thinking: { type: "disabled" },
-          }),
-          signal,
-        });
-      }
-
-      if (response.ok) return { ok: true };
-      return {
-        ok: false,
-        failureReason: `HTTP ${response.status} ${response.statusText}`,
-      };
-    } catch (error) {
-      // DOMException with name 'AbortError' or 'TimeoutError' indicates probe timeout
-      const isTimeout =
-        error instanceof DOMException &&
-        (error.name === "AbortError" || error.name === "TimeoutError");
-      if (isTimeout) {
-        return { ok: false, failureReason: "timeout (15s)" };
-      }
-      const reason = error instanceof Error ? error.message : "unknown error";
-      const sanitized = reason.replace(/key=[^&\s]+/g, "key=***").slice(0, 200);
-      return { ok: false, failureReason: sanitized };
-    }
+    const r = await probeOpenAICompatible(
+      { baseUrl: this.config.baseUrl, apiKey: this.config.apiKey, model: this.config.model },
+    );
+    if (r.ok) return { ok: true };
+    return { ok: false, failureReason: r.status ? `HTTP ${r.status} ${r.message ?? ''}`.trim() : (r.message ?? 'probe failed') };
   }
 
   /** Abort-aware sleep: resolves on timeout OR signal abort (whichever first). */
@@ -625,30 +535,12 @@ export class BypassLane {
         logger.info("BYPASS", "Observation processed", {
           messageId: message.id,
           sessionDbId: session.sessionDbId,
-          provider: this.config?.provider,
+          endpoint: this.config ? new URL(this.config.baseUrl).host : null,
           truncatedFields: obsStats.truncatedFields,
         });
-
-        // F5 fix: Rate limiting for Gemini free tier (15 RPM = 4s interval)
-        if (this.config?.provider === "gemini") {
-          const settings = SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH);
-          if (settings.CLAUDE_MEM_GEMINI_RATE_LIMITING_ENABLED === "true") {
-            const now = Date.now();
-            const elapsed = now - this.lastGeminiRequestTime;
-            this.lastGeminiRequestTime = now;
-            // Math.min caps delay to prevent unbounded sleep on clock skew
-            const delay = Math.min(
-              GEMINI_RATE_LIMIT_INTERVAL_MS,
-              Math.max(0, GEMINI_RATE_LIMIT_INTERVAL_MS - elapsed),
-            );
-            if (delay > 0) {
-              await this.abortableSleep(delay, signal);
-            }
-          }
-        }
       } catch (error) {
         if (signal.aborted) return;
-        // Extract bypassCategory if attached by callRestApi (opencode path only).
+        // Extract bypassCategory if attached by callRestApi.
         const category = (error as { bypassCategory?: BypassFailureCategory })
           ?.bypassCategory;
         logger.warn("BYPASS", "Processing failed, marking for retry", {
@@ -825,7 +717,7 @@ export class BypassLane {
     return { truncatedFields };
   }
 
-  /** Call Gemini or OpenCode REST API. Returns response text. */
+  /** Call the OpenAI-compatible REST API. Returns response text. */
   private async callRestApi(
     prompt: string,
     systemPrompt: string,
@@ -833,91 +725,41 @@ export class BypassLane {
     history: ConversationMessage[] = [],
   ): Promise<string> {
     if (!this.config) throw new Error("BypassLane not configured");
-
-    if (this.config.provider === "gemini") {
-      const url = `${GEMINI_API_URL}/${this.config.model}:generateContent?key=${this.config.apiKey}`;
-      // Build contents with history context (Gemini uses 'model' for assistant role)
-      const contents = [
-        ...history.map((m) => ({
-          role: m.role === "assistant" ? ("model" as const) : ("user" as const),
-          parts: [{ text: m.content }],
-        })),
-        { role: "user" as const, parts: [{ text: prompt }] },
-      ];
-      const response = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents,
-          systemInstruction: { parts: [{ text: systemPrompt }] },
-          generationConfig: { temperature: 0.3, maxOutputTokens: 4096 },
-        }),
-        signal,
-      });
-
-      if (!response.ok) {
-        // Sanitize error text: Gemini may echo the URL (including API key) in error responses
-        const errorText = (await response.text()).replace(
-          /key=[^&\s"]+/g,
-          "key=REDACTED",
-        );
-        throw new Error(`Gemini API error: ${response.status} - ${errorText}`);
-      }
-
-      const data = (await response.json()) as any;
-      return data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
-    } else {
-      // OpenCode Go: OpenAI-compatible. Send thinking:disabled to keep reasoning
-      // models (deepseek-v4-flash etc.) emitting content instead of CoT-only output.
-      const opencodeUrl = resolveOpenAICompatibleChatCompletionsUrl(
-        SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH).CLAUDE_MEM_OPENCODE_BASE_URL,
-        DEFAULT_OPENCODE_API_URL,
-      );
-      const response = await fetch(opencodeUrl, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${this.config.apiKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          model: this.config.model,
-          messages: [
-            { role: "system", content: systemPrompt },
-            ...history.map((m) => ({ role: m.role, content: m.content })),
-            { role: "user", content: prompt },
-          ],
-          temperature: 0.3,
-          // 16384 (2x default): deepseek-v4-flash truncated long observations at
-          // 8192 (finish_reason=length), leaving unclosed <observation> tags that
-          // parseObservations() drops → "No observations parsed". See bypass parse-fail analysis.
-          max_tokens: 16384,
-          thinking: { type: "disabled" },
-        }),
-        signal,
-      });
-
-      if (!response.ok) {
-        // Truncate to prevent accidental credential echo
-        const errorText = (await response.text()).substring(0, 500);
-        const parsed = parseBypassErrorBody(errorText);
-        const category = classifyBypassFailure(response.status, parsed);
-        const err = new Error(
-          `OpenCode API error: ${response.status} - ${errorText}`,
-        ) as Error & { bypassCategory: BypassFailureCategory };
-        err.bypassCategory = category;
-        throw err;
-      }
-
-      const data = (await response.json()) as any;
-      // OpenCode Go reports `cost` as a string ("0" for subscription-billed
-      // calls, positive USD for balance-fallback). Capture it so the viewer
-      // can display evidence of the subscription channel in use.
-      if (typeof data?.cost === "string") {
-        this.counters.lastOpencodeCost = data.cost;
-        this.counters.lastOpencodeCostAt = new Date().toISOString();
-        if (data.cost === "0") this.counters.opencodeFreeCalls++;
-      }
-      return data?.choices?.[0]?.message?.content || "";
+    const url = resolveOpenAICompatibleChatCompletionsUrl(this.config.baseUrl);
+    if (!url) throw new Error("BypassLane base URL invalid");
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${this.config.apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: this.config.model,
+        messages: [
+          { role: "system", content: systemPrompt },
+          ...history.map((m) => ({ role: m.role, content: m.content })),
+          { role: "user", content: prompt },
+        ],
+        temperature: 0.3,
+        // 16384 (2x default): reasoning models truncate long observations at 8192
+        // (finish_reason=length), leaving unclosed <observation> tags. See ADR 0003.
+        max_tokens: 16384,
+        // Hardcoded: deepseek-v4-flash etc. emit CoT-only empty content without it.
+        // FOOTGUN: providers that reject unknown fields (vanilla OpenAI/Groq) will 400 —
+        // the Test button surfaces that. If a non-thinking provider is ever needed,
+        // promote this to a CLAUDE_MEM_OPENAI_DISABLE_THINKING toggle (YAGNI for now).
+        thinking: { type: "disabled" },
+      }),
+      signal,
+    });
+    if (!response.ok) {
+      const rawText = (await response.text()).substring(0, 500);
+      const parsed = parseBypassErrorBody(rawText);
+      const category = classifyBypassFailure(response.status, parsed);
+      // Redact the configured key before it lands in the thrown error / logs / lastFailureReason.
+      const errorText = redactSecret(rawText, this.config.apiKey);
+      const err = new Error(`OpenAI-compatible API error: ${response.status} - ${errorText}`) as Error & { bypassCategory: BypassFailureCategory };
+      err.bypassCategory = category;
+      throw err;
     }
+    const data = (await response.json()) as any;
+    return data?.choices?.[0]?.message?.content || "";
   }
 }

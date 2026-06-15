@@ -34,12 +34,10 @@ mock.module('../../src/utils/logger.js', () => ({
 mock.module('../../src/shared/SettingsDefaultsManager.js', () => ({
   SettingsDefaultsManager: {
     loadFromFile: () => ({
-      CLAUDE_MEM_PROVIDER: 'gemini',
-      CLAUDE_MEM_GEMINI_API_KEY: 'test-gemini-key',
-      CLAUDE_MEM_GEMINI_MODEL: 'gemini-2.5-flash',
-      CLAUDE_MEM_GEMINI_RATE_LIMITING_ENABLED: 'false',
-      CLAUDE_MEM_OPENCODE_API_KEY: '',
-      CLAUDE_MEM_OPENCODE_MODEL: 'deepseek-v4-flash',
+      CLAUDE_MEM_PROVIDER: 'openai',
+      CLAUDE_MEM_OPENAI_BASE_URL: 'https://api.deepseek.com',
+      CLAUDE_MEM_OPENAI_API_KEY: 'test-openai-key',
+      CLAUDE_MEM_OPENAI_MODEL: 'deepseek-v4-flash',
       CLAUDE_MEM_BYPASS_COOLDOWN_MS: '5000',
       CLAUDE_MEM_CHROMA_ENABLED: 'false',
     }),
@@ -48,7 +46,7 @@ mock.module('../../src/shared/SettingsDefaultsManager.js', () => ({
 
 mock.module('../../src/shared/EnvManager.js', () => ({
   getCredential: (key: string) => {
-    if (key === 'GEMINI_API_KEY') return 'test-gemini-key';
+    if (key === 'OPENAI_API_KEY') return 'test-openai-key';
     return '';
   },
 }));
@@ -100,7 +98,7 @@ function applyActions(lane: BypassLane, actions: Action[]): void {
 /** Create a fresh BypassLane in ACTIVE state with config set. */
 function createActiveLane(): BypassLane {
   const lane = new BypassLane();
-  (lane as any).config = { provider: 'opencode', apiKey: 'test', model: 'test', cooldownMs: 999999 };
+  (lane as any).config = { baseUrl: 'https://api.deepseek.com', apiKey: 'test', model: 'test', cooldownMs: 999999 };
   (lane as any).state = 'ACTIVE';
   (lane as any).consecutiveFailures = 0;
   return lane;
@@ -236,7 +234,7 @@ describe('Property 2: State machine validity', () => {
     expect(lane.getState()).toBe('DISABLED');
 
     // transitionToActive should change it
-    (lane as any).config = { provider: 'gemini', apiKey: 'k', model: 'm', cooldownMs: 1000 };
+    (lane as any).config = { baseUrl: 'https://api.deepseek.com', apiKey: 'k', model: 'm', cooldownMs: 1000 };
     (lane as any).sessionManager = { getActiveSessions: () => [].values() };
     (lane as any).transitionToActive('init');
     expect(lane.getState()).toBe('ACTIVE');
@@ -412,7 +410,7 @@ describe('Property 4: Counter reset semantics', () => {
     for (const source of ['init', 'recovery'] as const) {
       for (let trial = 0; trial < 50; trial++) {
         const lane = new BypassLane();
-        (lane as any).config = { provider: 'opencode', apiKey: 'k', model: 'm', cooldownMs: 999999 };
+        (lane as any).config = { baseUrl: 'https://api.deepseek.com', apiKey: 'k', model: 'm', cooldownMs: 999999 };
         (lane as any).sessionManager = { getActiveSessions: () => [].values() };
 
         // Set random consecutive failure count
@@ -483,39 +481,37 @@ describe('Property 5: Probe result completeness', () => {
       { name: 'non-Error throw', impl: async () => { throw 'string error'; } },
     ];
 
-    for (const provider of ['gemini', 'opencode'] as const) {
-      for (const behavior of fetchBehaviors) {
-        const lane = new BypassLane();
-        (lane as any).config = {
-          provider,
-          apiKey: 'test-key',
-          model: 'test-model',
-          cooldownMs: 1000,
-        };
+    for (const behavior of fetchBehaviors) {
+      const lane = new BypassLane();
+      (lane as any).config = {
+        baseUrl: 'https://api.deepseek.com',
+        apiKey: 'test-key',
+        model: 'test-model',
+        cooldownMs: 1000,
+      };
 
-        globalThis.fetch = mock(behavior.impl) as any;
-        try {
-          const result = await (lane as any).probeProvider();
+      globalThis.fetch = mock(behavior.impl) as any;
+      try {
+        const result = await (lane as any).probeProvider();
 
-          // Property: result is never null or undefined
-          expect(result).not.toBeNull();
-          expect(result).not.toBeUndefined();
+        // Property: result is never null or undefined
+        expect(result).not.toBeNull();
+        expect(result).not.toBeUndefined();
 
-          // Property: ok is always a boolean
-          expect(typeof result.ok).toBe('boolean');
+        // Property: ok is always a boolean
+        expect(typeof result.ok).toBe('boolean');
 
-          // Property: failureReason is string or undefined (never null, number, etc.)
-          if (result.failureReason !== undefined) {
-            expect(typeof result.failureReason).toBe('string');
-          }
-
-          // Property: ok === true implies no failureReason
-          if (result.ok) {
-            expect(result.failureReason).toBeUndefined();
-          }
-        } finally {
-          globalThis.fetch = originalFetch;
+        // Property: failureReason is string or undefined (never null, number, etc.)
+        if (result.failureReason !== undefined) {
+          expect(typeof result.failureReason).toBe('string');
         }
+
+        // Property: ok === true implies no failureReason
+        if (result.ok) {
+          expect(result.failureReason).toBeUndefined();
+        }
+      } finally {
+        globalThis.fetch = originalFetch;
       }
     }
   });
@@ -533,32 +529,30 @@ describe('Property 5: Probe result completeness', () => {
     expect(typeof result.failureReason).toBe('string');
   });
 
-  it('failureReason never contains raw API keys', async () => {
-    const secrets = ['my-secret-gemini-key-12345', 'sk-opencode-secret-key-67890'];
+  it('failureReason never contains the configured API key (error-body echo)', async () => {
+    const secret = 'sk-secret-key-abcdef1234567890';
+    const lane = new BypassLane();
+    (lane as any).config = {
+      baseUrl: 'https://api.deepseek.com',
+      apiKey: secret,
+      model: 'test-model',
+      cooldownMs: 1000,
+    };
 
-    for (const provider of ['gemini', 'opencode'] as const) {
-      const secret = provider === 'gemini' ? secrets[0] : secrets[1];
-      const lane = new BypassLane();
-      (lane as any).config = {
-        provider,
-        apiKey: secret,
-        model: 'test-model',
-        cooldownMs: 1000,
-      };
+    // The endpoint echoes the key back in the error body; redactSecret() must strip it
+    // before it reaches failureReason. A vacuously-passing test (probe early-returns,
+    // never fetches) would NOT exercise redaction — so use a real baseUrl + 401 body.
+    globalThis.fetch = mock(async () =>
+      new Response(JSON.stringify({ error: { message: `bad key ${secret}` } }), { status: 401 }),
+    ) as any;
 
-      // Error message embeds the key in Gemini URL format
-      globalThis.fetch = mock(async () => {
-        throw new Error(`request to https://api.example.com?key=${secret}&foo=bar failed`);
-      }) as any;
-
-      try {
-        const result = await (lane as any).probeProvider();
-        if (result.failureReason) {
-          expect(result.failureReason).not.toContain(secret);
-        }
-      } finally {
-        globalThis.fetch = originalFetch;
-      }
+    try {
+      const result = await (lane as any).probeProvider();
+      expect(result.ok).toBe(false);
+      expect(result.failureReason).toBeDefined();
+      expect(result.failureReason).not.toContain(secret);
+    } finally {
+      globalThis.fetch = originalFetch;
     }
   });
 });
@@ -730,16 +724,16 @@ describe('Property 6: getStatus snapshot consistency', () => {
     }
   });
 
-  it('config fields are consistent: provider and model are both null or both non-null', () => {
+  it('config fields are consistent: endpoint and model are both null or both non-null', () => {
     // Without config
     const lane1 = new BypassLane();
     const s1 = lane1.getStatus();
-    expect(s1.provider === null && s1.model === null).toBe(true);
+    expect(s1.endpoint === null && s1.model === null).toBe(true);
 
     // With config
     const lane2 = createActiveLane();
     const s2 = lane2.getStatus();
-    expect(s2.provider !== null && s2.model !== null).toBe(true);
+    expect(s2.endpoint !== null && s2.model !== null).toBe(true);
 
     lane1.shutdown();
     lane2.shutdown();

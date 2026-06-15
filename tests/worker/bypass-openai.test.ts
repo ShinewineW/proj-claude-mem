@@ -1,15 +1,27 @@
 /**
- * OpenCode Go provider integration tests for BypassLane.
+ * OpenAI-compatible provider integration tests for BypassLane.
  *
- * Covers Q1-Q14 decision tree:
- * - resolveConfig: opencode branch returns provider/key/model
+ * Covers:
+ * - resolveConfig: openai branch returns baseUrl/key/model; null on missing fields
  * - parseErrorBody: dual envelope (Anthropic-style + OpenAI-style)
  * - classifyFailure: HTTP status + envelope buckets → quota/auth/transient/client
- * - probe: sends thinking:{type:"disabled"}, no HTTP-Referer/X-Title
+ * - probe: sends thinking:{type:"disabled"} to the configured base URL
  * - callRestApi: sends thinking:disabled, attaches error.bypassCategory on failure
  * - Tiered cooldown: quota/auth → 6h, transient → default, client → no trip
  */
 import { describe, it, expect, beforeEach, afterEach, mock } from 'bun:test';
+
+// Mutable settings so individual tests can drive resolveConfig down its null branches.
+// mock.module() is irreversible and returns a fixed object per call, so the mock reads
+// from this closure variable instead of hardcoding a single shape.
+let mockSettings: Record<string, string> = {
+  CLAUDE_MEM_PROVIDER: 'openai',
+  CLAUDE_MEM_OPENAI_BASE_URL: 'https://api.deepseek.com',
+  CLAUDE_MEM_OPENAI_API_KEY: 'sk-test',
+  CLAUDE_MEM_OPENAI_MODEL: 'deepseek-v4-flash',
+  CLAUDE_MEM_BYPASS_COOLDOWN_MS: '5000',
+  CLAUDE_MEM_CHROMA_ENABLED: 'false',
+};
 
 mock.module('../../src/shared/paths.js', () => ({
   DATA_DIR: '/tmp/test-claude-mem',
@@ -30,19 +42,9 @@ mock.module('../../src/utils/logger.js', () => ({
 
 mock.module('../../src/shared/SettingsDefaultsManager.js', () => ({
   SettingsDefaultsManager: {
-    loadFromFile: () => ({
-      CLAUDE_MEM_PROVIDER: 'opencode',
-      CLAUDE_MEM_OPENCODE_API_KEY: 'sk-test-opencode-key',
-      CLAUDE_MEM_OPENCODE_MODEL: 'deepseek-v4-flash',
-      CLAUDE_MEM_GEMINI_RATE_LIMITING_ENABLED: 'false',
-      CLAUDE_MEM_BYPASS_COOLDOWN_MS: '5000',
-      CLAUDE_MEM_CHROMA_ENABLED: 'false',
-    }),
-    get: (key: string) => {
-      if (key === 'CLAUDE_MEM_BYPASS_COOLDOWN_MS') return '5000';
-      return '';
-    },
-    getInt: (key: string) => (key === 'CLAUDE_MEM_BYPASS_COOLDOWN_MS' ? 5000 : 0),
+    loadFromFile: () => mockSettings,
+    get: (key: string) => mockSettings[key] ?? '',
+    getInt: (key: string) => parseInt(mockSettings[key] ?? '0', 10) || 0,
   },
 }));
 
@@ -63,16 +65,59 @@ import {
   AUTH_COOLDOWN_MS,
 } from '../../src/services/worker/BypassLane.js';
 
-describe('BypassLane — OpenCode Go provider', () => {
-  describe('resolveConfig: opencode branch', () => {
-    it('returns provider=opencode with key + model from settings', () => {
+const DEFAULT_SETTINGS = {
+  CLAUDE_MEM_PROVIDER: 'openai',
+  CLAUDE_MEM_OPENAI_BASE_URL: 'https://api.deepseek.com',
+  CLAUDE_MEM_OPENAI_API_KEY: 'sk-test',
+  CLAUDE_MEM_OPENAI_MODEL: 'deepseek-v4-flash',
+  CLAUDE_MEM_BYPASS_COOLDOWN_MS: '5000',
+  CLAUDE_MEM_CHROMA_ENABLED: 'false',
+};
+
+describe('BypassLane — OpenAI-compatible provider', () => {
+  beforeEach(() => {
+    mockSettings = { ...DEFAULT_SETTINGS };
+  });
+
+  describe('resolveConfig: openai branch', () => {
+    it('returns baseUrl + key + model from settings', () => {
       const lane = new BypassLane();
       const config = (lane as any).resolveConfig();
       expect(config).not.toBeNull();
-      expect(config.provider).toBe('opencode');
-      expect(config.apiKey).toBe('sk-test-opencode-key');
+      expect(config.baseUrl).toBe('https://api.deepseek.com');
+      expect(config.apiKey).toBe('sk-test');
       expect(config.model).toBe('deepseek-v4-flash');
       expect(config.cooldownMs).toBe(5000);
+    });
+
+    it('returns null when base URL is blank', () => {
+      mockSettings = { CLAUDE_MEM_PROVIDER: 'openai', CLAUDE_MEM_OPENAI_BASE_URL: '', CLAUDE_MEM_OPENAI_API_KEY: 'sk', CLAUDE_MEM_OPENAI_MODEL: 'm' };
+      const lane = new BypassLane();
+      expect((lane as any).resolveConfig()).toBeNull();
+    });
+
+    it('returns null when base URL is malformed', () => {
+      mockSettings = { CLAUDE_MEM_PROVIDER: 'openai', CLAUDE_MEM_OPENAI_BASE_URL: 'not-a-url', CLAUDE_MEM_OPENAI_API_KEY: 'sk', CLAUDE_MEM_OPENAI_MODEL: 'm' };
+      const lane = new BypassLane();
+      expect((lane as any).resolveConfig()).toBeNull(); // covers resolveOpenAICompatibleChatCompletionsUrl early-reject
+    });
+
+    it('returns null when API key is missing', () => {
+      mockSettings = { CLAUDE_MEM_PROVIDER: 'openai', CLAUDE_MEM_OPENAI_BASE_URL: 'https://api.deepseek.com', CLAUDE_MEM_OPENAI_API_KEY: '', CLAUDE_MEM_OPENAI_MODEL: 'm' };
+      const lane = new BypassLane();
+      expect((lane as any).resolveConfig()).toBeNull();
+    });
+
+    it('returns null when model is missing', () => {
+      mockSettings = { CLAUDE_MEM_PROVIDER: 'openai', CLAUDE_MEM_OPENAI_BASE_URL: 'https://api.deepseek.com', CLAUDE_MEM_OPENAI_API_KEY: 'sk', CLAUDE_MEM_OPENAI_MODEL: '' };
+      const lane = new BypassLane();
+      expect((lane as any).resolveConfig()).toBeNull();
+    });
+
+    it('returns null when provider is claude', () => {
+      mockSettings = { CLAUDE_MEM_PROVIDER: 'claude' };
+      const lane = new BypassLane();
+      expect((lane as any).resolveConfig()).toBeNull();
     });
   });
 
@@ -120,12 +165,12 @@ describe('BypassLane — OpenCode Go provider', () => {
     });
 
     it('classifies AuthError envelope as auth (regardless of status)', () => {
-      // Real OpenCode probe: invalid key returns 401 + AuthError
+      // Real probe: invalid key returns 401 + AuthError
       expect(classifyBypassFailure(401, { type: 'AuthError' })).toBe('auth');
     });
 
     it('classifies ModelError envelope as client (not transient — our bug, not provider)', () => {
-      // Real OpenCode probe: fake model returns 401 + ModelError (status code unreliable!)
+      // Real probe: fake model returns 401 + ModelError (status code unreliable!)
       expect(classifyBypassFailure(401, { type: 'ModelError' })).toBe('client');
     });
 
@@ -152,7 +197,7 @@ describe('BypassLane — OpenCode Go provider', () => {
     });
   });
 
-  describe('opencode probe payload', () => {
+  describe('openai probe payload', () => {
     let originalFetch: typeof globalThis.fetch;
     let capturedUrl: string | null = null;
     let capturedInit: RequestInit | null = null;
@@ -167,7 +212,7 @@ describe('BypassLane — OpenCode Go provider', () => {
       globalThis.fetch = originalFetch;
     });
 
-    it('sends POST to OpenCode endpoint with thinking:disabled and no referer/title headers', async () => {
+    it('sends POST to the configured endpoint with thinking:disabled', async () => {
       globalThis.fetch = (async (url: any, init: any) => {
         capturedUrl = String(url);
         capturedInit = init;
@@ -175,23 +220,15 @@ describe('BypassLane — OpenCode Go provider', () => {
       }) as any;
 
       const lane = new BypassLane();
-      (lane as any).config = {
-        provider: 'opencode',
-        apiKey: 'sk-test-opencode-key',
-        model: 'deepseek-v4-flash',
-        cooldownMs: 5000,
-      };
+      (lane as any).config = { baseUrl: 'https://api.deepseek.com', apiKey: 'sk-test', model: 'deepseek-v4-flash', cooldownMs: 1200000 };
 
       const result = await (lane as any).probeProvider();
       expect(result.ok).toBe(true);
-      expect(capturedUrl).toContain('opencode.ai');
+      expect(capturedUrl).toContain('api.deepseek.com');
       expect(capturedUrl).toContain('/chat/completions');
 
       const headers = (capturedInit?.headers ?? {}) as Record<string, string>;
-      expect(headers.Authorization).toBe('Bearer sk-test-opencode-key');
-      // referer/title headers must NOT be sent
-      expect(headers['HTTP-Referer']).toBeUndefined();
-      expect(headers['X-Title']).toBeUndefined();
+      expect(headers.Authorization).toBe('Bearer sk-test');
 
       const body = JSON.parse(String(capturedInit?.body ?? '{}'));
       expect(body.model).toBe('deepseek-v4-flash');
@@ -200,7 +237,7 @@ describe('BypassLane — OpenCode Go provider', () => {
     });
   });
 
-  describe('opencode callRestApi: thinking field + bypassCategory attachment', () => {
+  describe('openai callRestApi: thinking field + bypassCategory attachment', () => {
     let originalFetch: typeof globalThis.fetch;
     let capturedBody: any = null;
 
@@ -225,12 +262,7 @@ describe('BypassLane — OpenCode Go provider', () => {
       }) as any;
 
       const lane = new BypassLane();
-      (lane as any).config = {
-        provider: 'opencode',
-        apiKey: 'sk-test-opencode-key',
-        model: 'deepseek-v4-flash',
-        cooldownMs: 5000,
-      };
+      (lane as any).config = { baseUrl: 'https://api.deepseek.com', apiKey: 'sk-test', model: 'deepseek-v4-flash', cooldownMs: 1200000 };
 
       const result = await (lane as any).callRestApi(
         'user prompt', 'system prompt', new AbortController().signal, [],
@@ -250,9 +282,7 @@ describe('BypassLane — OpenCode Go provider', () => {
         )) as any;
 
       const lane = new BypassLane();
-      (lane as any).config = {
-        provider: 'opencode', apiKey: 'k', model: 'deepseek-v4-flash', cooldownMs: 5000,
-      };
+      (lane as any).config = { baseUrl: 'https://api.deepseek.com', apiKey: 'k', model: 'deepseek-v4-flash', cooldownMs: 1200000 };
 
       let caught: any = null;
       try {
@@ -272,9 +302,7 @@ describe('BypassLane — OpenCode Go provider', () => {
         )) as any;
 
       const lane = new BypassLane();
-      (lane as any).config = {
-        provider: 'opencode', apiKey: 'k', model: 'deepseek-v4-flash', cooldownMs: 5000,
-      };
+      (lane as any).config = { baseUrl: 'https://api.deepseek.com', apiKey: 'k', model: 'deepseek-v4-flash', cooldownMs: 1200000 };
 
       let caught: any = null;
       try {
@@ -290,9 +318,7 @@ describe('BypassLane — OpenCode Go provider', () => {
         new Response('Internal Server Error', { status: 500 })) as any;
 
       const lane = new BypassLane();
-      (lane as any).config = {
-        provider: 'opencode', apiKey: 'k', model: 'deepseek-v4-flash', cooldownMs: 5000,
-      };
+      (lane as any).config = { baseUrl: 'https://api.deepseek.com', apiKey: 'k', model: 'deepseek-v4-flash', cooldownMs: 1200000 };
 
       let caught: any = null;
       try {
@@ -301,6 +327,27 @@ describe('BypassLane — OpenCode Go provider', () => {
         caught = e;
       }
       expect((caught as any).bypassCategory).toBe('transient');
+    });
+
+    it('redacts the configured API key from the thrown error message', async () => {
+      const SECRET = 'sk-secret-key-abcdef123456';
+      globalThis.fetch = (async () =>
+        new Response(
+          JSON.stringify({ error: { message: `bad request for ${SECRET}` } }),
+          { status: 400 },
+        )) as any;
+
+      const lane = new BypassLane();
+      (lane as any).config = { baseUrl: 'https://api.deepseek.com', apiKey: SECRET, model: 'deepseek-v4-flash', cooldownMs: 1200000 };
+
+      let caught: any = null;
+      try {
+        await (lane as any).callRestApi('p', 's', new AbortController().signal, []);
+      } catch (e) {
+        caught = e;
+      }
+      expect(caught).toBeInstanceOf(Error);
+      expect((caught as Error).message).not.toContain(SECRET);
     });
   });
 
@@ -328,9 +375,7 @@ describe('BypassLane — OpenCode Go provider', () => {
     it('quota category trips with long cooldown', () => {
       const lane = new BypassLane();
       (lane as any).state = 'ACTIVE';
-      (lane as any).config = {
-        provider: 'opencode', apiKey: 'k', model: 'deepseek-v4-flash', cooldownMs: 5000,
-      };
+      (lane as any).config = { baseUrl: 'https://api.deepseek.com', apiKey: 'k', model: 'deepseek-v4-flash', cooldownMs: 5000 };
       (lane as any).consecutiveFailures = 2;
 
       // Stub scheduleCooldownProbe to capture the cooldown duration
@@ -347,9 +392,7 @@ describe('BypassLane — OpenCode Go provider', () => {
     it('transient category uses default cooldownMs', () => {
       const lane = new BypassLane();
       (lane as any).state = 'ACTIVE';
-      (lane as any).config = {
-        provider: 'opencode', apiKey: 'k', model: 'deepseek-v4-flash', cooldownMs: 5000,
-      };
+      (lane as any).config = { baseUrl: 'https://api.deepseek.com', apiKey: 'k', model: 'deepseek-v4-flash', cooldownMs: 5000 };
       (lane as any).consecutiveFailures = 2;
 
       let capturedCooldownMs: number | null = null;
@@ -365,9 +408,7 @@ describe('BypassLane — OpenCode Go provider', () => {
     it('backwards-compatible: recordFailure() with no category uses default cooldownMs', () => {
       const lane = new BypassLane();
       (lane as any).state = 'ACTIVE';
-      (lane as any).config = {
-        provider: 'opencode', apiKey: 'k', model: 'deepseek-v4-flash', cooldownMs: 5000,
-      };
+      (lane as any).config = { baseUrl: 'https://api.deepseek.com', apiKey: 'k', model: 'deepseek-v4-flash', cooldownMs: 5000 };
       (lane as any).consecutiveFailures = 2;
 
       let capturedCooldownMs: number | null = null;
