@@ -45,15 +45,13 @@ const BLOCKED_ENV_PREFIXES = ['CLAUDECODE_'];
 // Credential keys that claude-mem manages
 export const MANAGED_CREDENTIAL_KEYS = [
   'ANTHROPIC_API_KEY',
-  'GEMINI_API_KEY',
-  'OPENCODE_API_KEY',
+  'OPENAI_API_KEY',
 ];
 
 export interface ClaudeMemEnv {
   // Credentials (optional - empty means use CLI billing for Claude)
   ANTHROPIC_API_KEY?: string;
-  GEMINI_API_KEY?: string;
-  OPENCODE_API_KEY?: string;
+  OPENAI_API_KEY?: string;
 }
 
 /**
@@ -128,8 +126,7 @@ export function loadClaudeMemEnv(): ClaudeMemEnv {
     // Only return managed credential keys
     const result: ClaudeMemEnv = {};
     if (parsed.ANTHROPIC_API_KEY) result.ANTHROPIC_API_KEY = parsed.ANTHROPIC_API_KEY;
-    if (parsed.GEMINI_API_KEY) result.GEMINI_API_KEY = parsed.GEMINI_API_KEY;
-    if (parsed.OPENCODE_API_KEY) result.OPENCODE_API_KEY = parsed.OPENCODE_API_KEY;
+    if (parsed.OPENAI_API_KEY) result.OPENAI_API_KEY = parsed.OPENAI_API_KEY;
 
     return result;
   } catch (error) {
@@ -170,18 +167,11 @@ export function saveClaudeMemEnv(env: ClaudeMemEnv): void {
         delete updated.ANTHROPIC_API_KEY;
       }
     }
-    if (env.GEMINI_API_KEY !== undefined) {
-      if (env.GEMINI_API_KEY) {
-        updated.GEMINI_API_KEY = env.GEMINI_API_KEY;
+    if (env.OPENAI_API_KEY !== undefined) {
+      if (env.OPENAI_API_KEY) {
+        updated.OPENAI_API_KEY = env.OPENAI_API_KEY;
       } else {
-        delete updated.GEMINI_API_KEY;
-      }
-    }
-    if (env.OPENCODE_API_KEY !== undefined) {
-      if (env.OPENCODE_API_KEY) {
-        updated.OPENCODE_API_KEY = env.OPENCODE_API_KEY;
-      } else {
-        delete updated.OPENCODE_API_KEY;
+        delete updated.OPENAI_API_KEY;
       }
     }
 
@@ -234,14 +224,6 @@ export function buildIsolatedEnv(includeCredentials: boolean = true): Record<str
     // If not configured, CLI billing will be used (via ANTHROPIC_AUTH_TOKEN passthrough)
     if (credentials.ANTHROPIC_API_KEY) {
       isolatedEnv.ANTHROPIC_API_KEY = credentials.ANTHROPIC_API_KEY;
-    }
-    // Note: GEMINI_API_KEY / OPENCODE_API_KEY pass through
-    // from process.env, but claude-mem's .env takes precedence if configured
-    if (credentials.GEMINI_API_KEY) {
-      isolatedEnv.GEMINI_API_KEY = credentials.GEMINI_API_KEY;
-    }
-    if (credentials.OPENCODE_API_KEY) {
-      isolatedEnv.OPENCODE_API_KEY = credentials.OPENCODE_API_KEY;
     }
 
     // 4. Pass through Claude CLI's OAuth token if available (fallback for CLI subscription billing)
