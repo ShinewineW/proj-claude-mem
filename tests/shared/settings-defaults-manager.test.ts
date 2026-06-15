@@ -196,13 +196,13 @@ describe('SettingsDefaultsManager', () => {
       it('should handle all settings keys correctly', () => {
         const fullSettings = SettingsDefaultsManager.getAllDefaults();
         fullSettings.CLAUDE_MEM_MODEL = 'all-keys-model';
-        fullSettings.CLAUDE_MEM_PROVIDER = 'gemini';
+        fullSettings.CLAUDE_MEM_PROVIDER = 'openai';
         writeFileSync(settingsPath, JSON.stringify(fullSettings));
 
         const result = SettingsDefaultsManager.loadFromFile(settingsPath);
 
         expect(result.CLAUDE_MEM_MODEL).toBe('all-keys-model');
-        expect(result.CLAUDE_MEM_PROVIDER).toBe('gemini');
+        expect(result.CLAUDE_MEM_PROVIDER).toBe('openai');
       });
     });
 
@@ -348,8 +348,9 @@ describe('SettingsDefaultsManager', () => {
 
       // Provider settings
       expect(defaults.CLAUDE_MEM_PROVIDER).toBeDefined();
-      expect(defaults.CLAUDE_MEM_GEMINI_API_KEY).toBeDefined();
-      expect(defaults.CLAUDE_MEM_OPENCODE_API_KEY).toBeDefined();
+      expect(defaults.CLAUDE_MEM_OPENAI_API_KEY).toBeDefined();
+      expect(defaults.CLAUDE_MEM_OPENAI_MODEL).toBeDefined();
+      expect(defaults.CLAUDE_MEM_OPENAI_BASE_URL).toBeDefined();
 
       // System settings
       expect(defaults.CLAUDE_MEM_DATA_DIR).toBeDefined();

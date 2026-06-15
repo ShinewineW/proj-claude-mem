@@ -18,15 +18,10 @@ export interface SettingsDefaults {
   CLAUDE_MEM_WORKER_HOST: string;
   CLAUDE_MEM_SKIP_TOOLS: string;
   // AI Provider Configuration
-  CLAUDE_MEM_PROVIDER: string; // 'claude' | 'gemini' | 'opencode'
-  CLAUDE_MEM_GEMINI_API_KEY: string;
-  CLAUDE_MEM_GEMINI_MODEL: string; // 'gemini-2.5-flash-lite' | 'gemini-2.5-flash' | 'gemini-3-flash-preview'
-  CLAUDE_MEM_GEMINI_RATE_LIMITING_ENABLED: string; // 'true' | 'false' - enable rate limiting for free tier
-  CLAUDE_MEM_OPENCODE_API_KEY: string;
-  CLAUDE_MEM_OPENCODE_MODEL: string;
-  CLAUDE_MEM_OPENCODE_MAX_CONTEXT_MESSAGES: string;
-  CLAUDE_MEM_OPENCODE_MAX_TOKENS: string;
-  CLAUDE_MEM_OPENCODE_BASE_URL: string;
+  CLAUDE_MEM_PROVIDER: string; // 'claude' | 'openai'
+  CLAUDE_MEM_OPENAI_API_KEY: string;
+  CLAUDE_MEM_OPENAI_MODEL: string;
+  CLAUDE_MEM_OPENAI_BASE_URL: string;
   // System Configuration
   CLAUDE_MEM_DATA_DIR: string;
   CLAUDE_MEM_LOG_LEVEL: string;
@@ -102,14 +97,9 @@ export class SettingsDefaultsManager {
       "ListMcpResourcesTool,SlashCommand,Skill,TodoWrite,AskUserQuestion,Monitor,TaskUpdate,TaskCreate,TaskGet,TaskList,TaskStop,TaskOutput",
     // AI Provider Configuration
     CLAUDE_MEM_PROVIDER: "claude", // Default to Claude
-    CLAUDE_MEM_GEMINI_API_KEY: "", // Empty by default, can be set via UI or env
-    CLAUDE_MEM_GEMINI_MODEL: "gemini-2.5-flash-lite", // Default Gemini model (highest free tier RPM)
-    CLAUDE_MEM_GEMINI_RATE_LIMITING_ENABLED: "true", // Rate limiting ON by default for free tier users
-    CLAUDE_MEM_OPENCODE_API_KEY: "", // Empty by default, can be set via UI or env
-    CLAUDE_MEM_OPENCODE_MODEL: "deepseek-v4-flash", // Default OpenCode Go model (non-reasoning when thinking:disabled)
-    CLAUDE_MEM_OPENCODE_MAX_CONTEXT_MESSAGES: "20", // History budget is fixed in code; reserved for future tunability
-    CLAUDE_MEM_OPENCODE_MAX_TOKENS: "100000", // History budget is fixed in code; reserved for future tunability
-    CLAUDE_MEM_OPENCODE_BASE_URL: "", // Optional OpenAI-compatible base URL override for the OpenCode bypass path (blank = default opencode.ai endpoint)
+    CLAUDE_MEM_OPENAI_API_KEY: "", // Empty by default, set via UI or OPENAI_API_KEY env
+    CLAUDE_MEM_OPENAI_MODEL: "deepseek-v4-flash", // User-overridable; any OpenAI-compatible model id
+    CLAUDE_MEM_OPENAI_BASE_URL: "", // Required to enable the openai bypass (blank = bypass disabled)
     // System Configuration
     CLAUDE_MEM_DATA_DIR: join(homedir(), ".claude-mem"),
     CLAUDE_MEM_LOG_LEVEL: "INFO",
