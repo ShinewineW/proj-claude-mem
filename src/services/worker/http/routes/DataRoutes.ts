@@ -18,6 +18,7 @@ import { SessionManager } from '../../SessionManager.js';
 import { SSEBroadcaster } from '../../SSEBroadcaster.js';
 import type { WorkerService } from '../../../worker-service.js';
 import { BaseRouteHandler } from '../BaseRouteHandler.js';
+import { probeOpenAICompatible } from '../../openai-compatible-probe.js';
 
 export class DataRoutes extends BaseRouteHandler {
   private projectsCache: { data: unknown; expiresAt: number } | null = null;
@@ -56,6 +57,7 @@ export class DataRoutes extends BaseRouteHandler {
     // Processing status endpoints
     app.get('/api/processing-status', this.handleGetProcessingStatus.bind(this));
     app.post('/api/processing', this.handleSetProcessing.bind(this));
+    app.post('/api/bypass/test', this.handleBypassTest.bind(this));
 
     // Pending queue management endpoints
     app.get('/api/pending-queue', this.handleGetPendingQueue.bind(this));
@@ -568,6 +570,20 @@ export class DataRoutes extends BaseRouteHandler {
         lastFailureReason: bypass.lastFailureReason,
       },
     });
+  });
+
+  /**
+   * Test connectivity of a candidate openai-compatible config (unsaved form values).
+   * Independent of the running BypassLane circuit breaker. POST /api/bypass/test
+   */
+  private handleBypassTest = this.wrapHandler(async (req: Request, res: Response): Promise<void> => {
+    const { baseUrl, apiKey, model } = req.body ?? {};
+    if (!baseUrl || !apiKey || !model) {
+      res.status(400).json({ ok: false, message: 'baseUrl, apiKey and model are required' });
+      return;
+    }
+    const result = await probeOpenAICompatible({ baseUrl, apiKey, model });
+    res.json(result);
   });
 
   /**
