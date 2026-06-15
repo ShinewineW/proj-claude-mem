@@ -1408,12 +1408,11 @@ export class WorkerService {
       isProcessing,
       queueDepth,
       bypass: {
-        provider: bypass.provider,
-        model: bypass.model,
         state: bypass.state,
-        lastOpencodeCost: bypass.lastOpencodeCost,
-        lastOpencodeCostAt: bypass.lastOpencodeCostAt,
-        opencodeFreeCalls: bypass.opencodeFreeCalls,
+        endpoint: bypass.endpoint,
+        model: bypass.model,
+        consecutiveFailures: bypass.consecutiveFailures,
+        lastFailureReason: bypass.lastFailureReason,
       },
     });
   }
