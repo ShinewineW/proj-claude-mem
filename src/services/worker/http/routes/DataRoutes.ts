@@ -18,6 +18,7 @@ import { SessionManager } from '../../SessionManager.js';
 import { SSEBroadcaster } from '../../SSEBroadcaster.js';
 import type { WorkerService } from '../../../worker-service.js';
 import { BaseRouteHandler } from '../BaseRouteHandler.js';
+import { requireLocalhost } from '../middleware.js';
 import { probeOpenAICompatible } from '../../openai-compatible-probe.js';
 
 export class DataRoutes extends BaseRouteHandler {
@@ -57,7 +58,10 @@ export class DataRoutes extends BaseRouteHandler {
     // Processing status endpoints
     app.get('/api/processing-status', this.handleGetProcessingStatus.bind(this));
     app.post('/api/processing', this.handleSetProcessing.bind(this));
-    app.post('/api/bypass/test', this.handleBypassTest.bind(this));
+    // requireLocalhost: this endpoint makes a server-side request to a user-supplied
+    // baseUrl (SSRF surface). Gated like /api/admin/* so it can't be reached from the
+    // LAN when the worker binds 0.0.0.0. (Security audit Finding 1.)
+    app.post('/api/bypass/test', requireLocalhost, this.handleBypassTest.bind(this));
 
     // Pending queue management endpoints
     app.get('/api/pending-queue', this.handleGetPendingQueue.bind(this));

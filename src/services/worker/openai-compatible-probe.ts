@@ -20,7 +20,10 @@ export interface OpenAICompatProbeResult {
  */
 export function redactSecret(s: string, secret?: string): string {
   let out = s;
-  if (secret && secret.length >= 8) out = out.split(secret).join('***');
+  // Floor of 4 (not 8): real keys are long, but a fat-fingered short test key
+  // (e.g. "test123") must still be masked. <4 chars is skipped only to avoid a
+  // 1–3 char "key" garbling ordinary prose. (Security audit Finding 3.)
+  if (secret && secret.length >= 4) out = out.split(secret).join('***');
   return out.replace(/sk-[A-Za-z0-9_-]+/g, 'sk-***').slice(0, 300);
 }
 
