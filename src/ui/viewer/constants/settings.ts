@@ -10,11 +10,9 @@ export const DEFAULT_SETTINGS = {
 
   // AI Provider Configuration
   CLAUDE_MEM_PROVIDER: 'claude',
-  CLAUDE_MEM_GEMINI_API_KEY: '',
-  CLAUDE_MEM_GEMINI_MODEL: 'gemini-2.5-flash-lite',
-  CLAUDE_MEM_OPENCODE_API_KEY: '',
-  CLAUDE_MEM_OPENCODE_MODEL: 'deepseek-v4-flash',
-  CLAUDE_MEM_GEMINI_RATE_LIMITING_ENABLED: 'true',
+  CLAUDE_MEM_OPENAI_API_KEY: '',
+  CLAUDE_MEM_OPENAI_MODEL: 'deepseek-v4-flash',
+  CLAUDE_MEM_OPENAI_BASE_URL: '',
 
   // Token Economics — match SettingsDefaultsManager defaults
   CLAUDE_MEM_CONTEXT_SHOW_READ_TOKENS: 'false',

@@ -68,12 +68,11 @@ export interface ProjectInfo {
 }
 
 export interface BypassInfo {
-  provider: string | null;
-  model: string | null;
   state: string | null;
-  lastOpencodeCost: string | null;
-  lastOpencodeCostAt: string | null;
-  opencodeFreeCalls: number;
+  endpoint: string | null;
+  model: string | null;
+  consecutiveFailures?: number;
+  lastFailureReason?: string | null;
 }
 
 export interface StreamEvent {
@@ -99,12 +98,10 @@ export interface Settings {
   CLAUDE_MEM_WORKER_HOST: string;
 
   // AI Provider Configuration
-  CLAUDE_MEM_PROVIDER?: string;  // 'claude' | 'gemini' | 'opencode'
-  CLAUDE_MEM_GEMINI_API_KEY?: string;
-  CLAUDE_MEM_GEMINI_MODEL?: string;  // 'gemini-2.5-flash-lite' | 'gemini-2.5-flash' | 'gemini-3-flash-preview'
-  CLAUDE_MEM_GEMINI_RATE_LIMITING_ENABLED?: string;  // 'true' | 'false'
-  CLAUDE_MEM_OPENCODE_API_KEY?: string;
-  CLAUDE_MEM_OPENCODE_MODEL?: string;
+  CLAUDE_MEM_PROVIDER?: string;  // 'claude' | 'openai'
+  CLAUDE_MEM_OPENAI_API_KEY?: string;
+  CLAUDE_MEM_OPENAI_MODEL?: string;
+  CLAUDE_MEM_OPENAI_BASE_URL?: string;
 
   // Token Economics Display
   CLAUDE_MEM_CONTEXT_SHOW_READ_TOKENS?: string;
