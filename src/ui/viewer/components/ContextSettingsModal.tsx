@@ -1,6 +1,7 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import type { Settings } from '../types';
 import { TerminalPreview } from './TerminalPreview';
+import { BypassTestButton } from './BypassTestButton';
 import { useContextPreview } from '../hooks/useContextPreview';
 import { DEFAULT_SETTINGS } from '../constants/settings';
 
@@ -335,15 +336,14 @@ export function ContextSettingsModal({
             >
               <FormField
                 label="AI Provider"
-                tooltip="Choose between Claude (via Agent SDK) or Gemini (via REST API)"
+                tooltip="Claude (via Agent SDK) or an OpenAI-compatible endpoint (DeepSeek, etc.)"
               >
                 <select
                   value={formState.CLAUDE_MEM_PROVIDER ?? DEFAULT_SETTINGS.CLAUDE_MEM_PROVIDER}
                   onChange={(e) => updateSetting('CLAUDE_MEM_PROVIDER', e.target.value)}
                 >
                   <option value="claude">Claude (uses your Claude account)</option>
-                  <option value="gemini">Gemini (uses API key)</option>
-                  <option value="opencode">OpenCode Go (subscription)</option>
+                  <option value="openai">OpenAI-compatible (DeepSeek / self-host / …)</option>
                 </select>
               </FormField>
 
@@ -363,68 +363,37 @@ export function ContextSettingsModal({
                 </FormField>
               )}
 
-              {formState.CLAUDE_MEM_PROVIDER === 'gemini' && (
+              {formState.CLAUDE_MEM_PROVIDER === 'openai' && (
                 <>
-                  <FormField
-                    label="Gemini API Key"
-                    tooltip="Your Google AI Studio API key (or set GEMINI_API_KEY env var)"
-                  >
-                    <input
-                      type="password"
-                      value={formState.CLAUDE_MEM_GEMINI_API_KEY ?? DEFAULT_SETTINGS.CLAUDE_MEM_GEMINI_API_KEY}
-                      onChange={(e) => updateSetting('CLAUDE_MEM_GEMINI_API_KEY', e.target.value)}
-                      placeholder="Enter Gemini API key..."
-                    />
-                  </FormField>
-                  <FormField
-                    label="Gemini Model"
-                    tooltip="Gemini model used for generating observations"
-                  >
-                    <select
-                      value={formState.CLAUDE_MEM_GEMINI_MODEL ?? DEFAULT_SETTINGS.CLAUDE_MEM_GEMINI_MODEL}
-                      onChange={(e) => updateSetting('CLAUDE_MEM_GEMINI_MODEL', e.target.value)}
-                    >
-                      <option value="gemini-2.5-flash-lite">gemini-2.5-flash-lite (10 RPM free)</option>
-                      <option value="gemini-2.5-flash">gemini-2.5-flash (5 RPM free)</option>
-                      <option value="gemini-3-flash-preview">gemini-3-flash-preview (5 RPM free)</option>
-                    </select>
-                  </FormField>
-                  <div className="toggle-group" style={{ marginTop: '8px' }}>
-                    <ToggleSwitch
-                      id="gemini-rate-limiting"
-                      label="Rate Limiting"
-                      description="Enable for free tier (10-30 RPM). Disable if you have billing set up (1000+ RPM)."
-                      checked={formState.CLAUDE_MEM_GEMINI_RATE_LIMITING_ENABLED === 'true'}
-                      onChange={(checked) => updateSetting('CLAUDE_MEM_GEMINI_RATE_LIMITING_ENABLED', checked ? 'true' : 'false')}
-                    />
-                  </div>
-                </>
-              )}
-
-              {formState.CLAUDE_MEM_PROVIDER === 'opencode' && (
-                <>
-                  <FormField
-                    label="OpenCode API Key"
-                    tooltip="Your OpenCode Go API key from opencode.ai (or set OPENCODE_API_KEY env var)"
-                  >
-                    <input
-                      type="password"
-                      value={formState.CLAUDE_MEM_OPENCODE_API_KEY ?? DEFAULT_SETTINGS.CLAUDE_MEM_OPENCODE_API_KEY}
-                      onChange={(e) => updateSetting('CLAUDE_MEM_OPENCODE_API_KEY', e.target.value)}
-                      placeholder="Enter OpenCode API key..."
-                    />
-                  </FormField>
-                  <FormField
-                    label="OpenCode Model"
-                    tooltip="Model identifier from OpenCode Go (e.g., deepseek-v4-flash, glm-5, qwen3.5-plus). Reasoning models receive thinking:disabled automatically."
-                  >
+                  <FormField label="Base URL" tooltip="OpenAI-compatible endpoint, e.g. https://api.deepseek.com. Required.">
                     <input
                       type="text"
-                      value={formState.CLAUDE_MEM_OPENCODE_MODEL ?? DEFAULT_SETTINGS.CLAUDE_MEM_OPENCODE_MODEL}
-                      onChange={(e) => updateSetting('CLAUDE_MEM_OPENCODE_MODEL', e.target.value)}
-                      placeholder={`e.g., ${DEFAULT_SETTINGS.CLAUDE_MEM_OPENCODE_MODEL}`}
+                      value={formState.CLAUDE_MEM_OPENAI_BASE_URL ?? ''}
+                      onChange={(e) => updateSetting('CLAUDE_MEM_OPENAI_BASE_URL', e.target.value)}
+                      placeholder="https://api.deepseek.com"
                     />
                   </FormField>
+                  <FormField label="API Key" tooltip="Bearer key for the endpoint above (or set OPENAI_API_KEY env var)">
+                    <input
+                      type="password"
+                      value={formState.CLAUDE_MEM_OPENAI_API_KEY ?? ''}
+                      onChange={(e) => updateSetting('CLAUDE_MEM_OPENAI_API_KEY', e.target.value)}
+                      placeholder="sk-..."
+                    />
+                  </FormField>
+                  <FormField label="Model" tooltip="Model id, e.g. deepseek-v4-flash. Reasoning models receive thinking:disabled automatically.">
+                    <input
+                      type="text"
+                      value={formState.CLAUDE_MEM_OPENAI_MODEL ?? ''}
+                      onChange={(e) => updateSetting('CLAUDE_MEM_OPENAI_MODEL', e.target.value)}
+                      placeholder="deepseek-v4-flash"
+                    />
+                  </FormField>
+                  <BypassTestButton
+                    baseUrl={formState.CLAUDE_MEM_OPENAI_BASE_URL ?? ''}
+                    apiKey={formState.CLAUDE_MEM_OPENAI_API_KEY ?? ''}
+                    model={formState.CLAUDE_MEM_OPENAI_MODEL ?? ''}
+                  />
                 </>
               )}
 
