@@ -10,7 +10,7 @@ import type { Response } from "express";
 
 /**
  * Provider-agnostic conversation message for shared history
- * Used to maintain context across Claude↔Gemini provider switches
+ * Used to maintain context across Claude↔OpenAI-compatible provider switches
  */
 export interface ConversationMessage {
   role: "user" | "assistant";

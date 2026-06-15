@@ -1,5 +1,5 @@
 /**
- * Shared agent types for SDK, Gemini, and OpenCode agents
+ * Shared agent types for SDK and OpenAI-compatible agents
  *
  * Responsibility:
  * - Define common interfaces used across all agent implementations
@@ -107,7 +107,7 @@ export interface ParsedResponse {
 // ============================================================================
 
 /**
- * Interface for fallback agent (used by Gemini/OpenCode to fall back to Claude)
+ * Interface for fallback agent (used by the OpenAI-compatible path to fall back to Claude)
  */
 export interface FallbackAgent {
   startSession(session: ActiveSession, worker?: WorkerRef): Promise<void>;

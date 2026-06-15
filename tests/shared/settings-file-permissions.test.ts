@@ -1,6 +1,6 @@
 /**
  * Regression (oh-my-codex final-gate finding): settings.json can hold API keys
- * (CLAUDE_MEM_GEMINI_API_KEY / CLAUDE_MEM_OPENCODE_API_KEY), so EVERY path that
+ * (CLAUDE_MEM_OPENAI_API_KEY), so EVERY path that
  * CREATES it must produce an owner-only (0600) file, not a umask-dependent 0644.
  * The C2-T3 fix hardened the SettingsRoutes POST/save path but initially missed
  * the auto-create paths: SettingsDefaultsManager.loadFromFile() (first-create +

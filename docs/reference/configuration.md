@@ -14,9 +14,9 @@
 
 Provider 凭证单独存放在 **`~/.claude-mem/.env`**（owner-only `0600`，由 `EnvManager.ts` 管理；observer/summarize 子进程用隔离环境，剥离项目级 `ANTHROPIC_API_KEY` 防污染）。
 
-**权威默认值以 `src/shared/SettingsDefaultsManager.ts` 为准**（共 58 个 `CLAUDE_MEM_*` 键，前端 `src/ui/viewer/constants/settings.ts` 对齐，由 `scripts/verify-settings-alignment.ts` 在构建时校验）。
+**权威默认值以 `src/shared/SettingsDefaultsManager.ts` 为准**（共 53 个 `CLAUDE_MEM_*` 键，前端 `src/ui/viewer/constants/settings.ts` 对齐，由 `scripts/verify-settings-alignment.ts` 在构建时校验）。
 
-## 2. 设置项分组（58 个 `CLAUDE_MEM_*`）
+## 2. 设置项分组（53 个 `CLAUDE_MEM_*`）
 
 ### Worker / 数据路径
 - `CLAUDE_MEM_WORKER_PORT`（默认 37777）、`CLAUDE_MEM_WORKER_HOST`（默认 127.0.0.1）
@@ -25,11 +25,10 @@ Provider 凭证单独存放在 **`~/.claude-mem/.env`**（owner-only `0600`，�
 - `CLAUDE_MEM_EXCLUDED_PROJECTS`、`CLAUDE_MEM_LOG_LEVEL`
 
 ### Provider（observation 处理通道）
-- `CLAUDE_MEM_PROVIDER`（`claude` 默认；非 claude 时启用 Bypass Lane 旁路）
+- `CLAUDE_MEM_PROVIDER`（`claude` 默认；取值闭集 `claude` / `openai`；设为 `openai` 时启用 Bypass Lane 旁路）
 - `CLAUDE_MEM_MODEL`、`CLAUDE_MEM_MAX_CONCURRENT_AGENTS`
-- **Gemini**：`CLAUDE_MEM_GEMINI_API_KEY`、`CLAUDE_MEM_GEMINI_MODEL`、`CLAUDE_MEM_GEMINI_RATE_LIMITING_ENABLED`
-- **OpenCode（OpenAI 兼容）**：`CLAUDE_MEM_OPENCODE_API_KEY`、`CLAUDE_MEM_OPENCODE_BASE_URL`、`CLAUDE_MEM_OPENCODE_MODEL`、`CLAUDE_MEM_OPENCODE_MAX_TOKENS`、`CLAUDE_MEM_OPENCODE_MAX_CONTEXT_MESSAGES`
-- 凭证也可放 `~/.claude-mem/.env`（`GEMINI_API_KEY` 等，见 `EnvManager.ts`）
+- **OpenAI 兼容**：`CLAUDE_MEM_OPENAI_API_KEY`、`CLAUDE_MEM_OPENAI_BASE_URL`（必填，留空即旁路禁用）、`CLAUDE_MEM_OPENAI_MODEL`
+- 凭证也可放 `~/.claude-mem/.env`（`OPENAI_API_KEY`，见 `EnvManager.ts`）
 
 ### Chroma 向量搜索（语义检索）
 - `CLAUDE_MEM_CHROMA_ENABLED`、`CLAUDE_MEM_CHROMA_MODE`

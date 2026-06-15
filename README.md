@@ -61,7 +61,7 @@
 - **SDK 锁定**（`src/sdk/hardened-options.ts`）：observer 与 fresh-summarize 会话在配置层强制「无工具访问」（`tools:[]` + `permissionMode` + `canUseTool` 多重防御 + cwd jail），不继承外部 settings/MCP
 - **SDK token 优化**（Phase 1+2）：模式过滤、字段截断、安全批处理，以及历史长度/token 主动重置
 - **Pool starvation 防御**（三层）：stale 检测 + pool cooldown + backpressure，避免 pool 超时导致消息永久丢失
-- **Bypass Lane**：并行 REST 旁路消费者处理 observation（provider 为 Gemini / OpenCode Go，主通道始终走 Claude SDK），含分级冷却的熔断器
+- **Bypass Lane**：并行 REST 旁路消费者处理 observation（旁路走任意 OpenAI 兼容 endpoint，主通道始终走 Claude SDK），含分级冷却的熔断器
 - **Chroma per-project 集合**：每个项目独立向量集合 `cm__<name>_<8char-hash>`，语义搜索同样隔离
 - **其他**：schema 自动修复、content-hash 去重、`settings.json` / `.env` owner-only 0600 权限、FTS5 不可用时回退 LIKE 查询
 
@@ -113,9 +113,9 @@ bun run build-and-sync
 
 ### 配置
 
-设置文件位于 `~/.claude-mem/settings.json`（首次运行自动创建，owner-only `0600`）。配置优先级：环境变量 `CLAUDE_MEM_*` > `settings.json` > 内置默认。Provider 凭证（Gemini / OpenCode / Anthropic）放 `~/.claude-mem/.env`。
+设置文件位于 `~/.claude-mem/settings.json`（首次运行自动创建，owner-only `0600`）。配置优先级：环境变量 `CLAUDE_MEM_*` > `settings.json` > 内置默认。Provider 凭证（OpenAI 兼容 / Anthropic）放 `~/.claude-mem/.env`。
 
-常用键：`CLAUDE_MEM_WORKER_PORT`(37777)、`CLAUDE_MEM_PROVIDER`、`CLAUDE_MEM_CHROMA_ENABLED`、`CLAUDE_MEM_GEMINI_API_KEY` / `CLAUDE_MEM_OPENCODE_*`、`CLAUDE_MEM_RETENTION_*`。**全部 58 个设置项 + 数据路径见 [`docs/reference/configuration.md`](docs/reference/configuration.md)。**
+常用键：`CLAUDE_MEM_WORKER_PORT`(37777)、`CLAUDE_MEM_PROVIDER`、`CLAUDE_MEM_CHROMA_ENABLED`、`CLAUDE_MEM_OPENAI_*`、`CLAUDE_MEM_RETENTION_*`。**全部 53 个设置项 + 数据路径见 [`docs/reference/configuration.md`](docs/reference/configuration.md)。**
 
 ### Worker API / MCP / Viewer
 
@@ -265,7 +265,7 @@ bun run worker:logs
 
 - [`docs/README.md`](docs/README.md) — 文档总索引（参考 / 报告 / 设计 / 外部快照）
 - [`docs/reference/worker-api.md`](docs/reference/worker-api.md) — HTTP API 端点 + MCP 工具 + Viewer
-- [`docs/reference/configuration.md`](docs/reference/configuration.md) — 全部 58 个 `CLAUDE_MEM_*` 设置项 + 数据路径
+- [`docs/reference/configuration.md`](docs/reference/configuration.md) — 全部 53 个 `CLAUDE_MEM_*` 设置项 + 数据路径
 - [`CLAUDE.md`](CLAUDE.md) — 架构总览与文件位置
 - [`plugin/README.md`](plugin/README.md) — 插件载荷的生成物 vs 手写源边界
 - [`docs/reference/provenance.md`](docs/reference/provenance.md) — 上游 cherry-pick 来源 + 许可证追溯

@@ -9,7 +9,7 @@
 | `SDKAgent.ts` | Claude subprocess via Agent SDK, observer-only, PID tracking |
 | `SearchManager.ts` | Search orchestration (Chroma → SQLite fallback) |
 | `ProcessRegistry.ts` | Track spawned subprocess PIDs for zombie cleanup |
-| `BypassLane.ts` | Parallel REST consumer for observations (Gemini/OpenCode Go), circuit breaker, competing consumer on same queue |
+| `BypassLane.ts` | Parallel REST consumer for observations (OpenAI-compatible), circuit breaker, competing consumer on same queue |
 | `SummaryLane.ts` | Global single consumer for `pending_messages.summarize` rows — drains observations, runs fresh SDK query, atomic store + Chroma sync + cursor context + SSE |
 | `SummaryLaneTelemetry.ts` | 4-layer telemetry for SummaryLane (counters / per-message timing / queue-depth alarm / hourly `SUMLANE_USAGE_SUMMARY`) |
 | `fresh-summarize.ts` | Fresh `query()` summarize path (no resume, no observer history) — bypasses observer-session role conditioning; all boundaries injected via `FreshSummarizeDeps` |

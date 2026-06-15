@@ -515,7 +515,7 @@ export class SDKAgent {
    *
    * SHARED CONVERSATION HISTORY:
    * - Each user message is added to session.conversationHistory
-   * - This allows provider switching (Claude→Gemini) with full context
+   * - This allows provider switching (Claude→OpenAI-compatible) with full context
    * - SDK manages its own internal state, but we mirror it for interop
    *
    * CWD TRACKING:
