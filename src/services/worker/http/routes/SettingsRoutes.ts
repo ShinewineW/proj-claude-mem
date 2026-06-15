@@ -76,15 +76,9 @@ export class SettingsRoutes extends BaseRouteHandler {
       'CLAUDE_MEM_WORKER_HOST',
       // AI Provider Configuration
       'CLAUDE_MEM_PROVIDER',
-      'CLAUDE_MEM_GEMINI_API_KEY',
-      'CLAUDE_MEM_GEMINI_MODEL',
-      'CLAUDE_MEM_GEMINI_RATE_LIMITING_ENABLED',
-      // OpenCode Go Configuration
-      'CLAUDE_MEM_OPENCODE_API_KEY',
-      'CLAUDE_MEM_OPENCODE_MODEL',
-      'CLAUDE_MEM_OPENCODE_MAX_CONTEXT_MESSAGES',
-      'CLAUDE_MEM_OPENCODE_MAX_TOKENS',
-      'CLAUDE_MEM_OPENCODE_BASE_URL',
+      'CLAUDE_MEM_OPENAI_API_KEY',
+      'CLAUDE_MEM_OPENAI_MODEL',
+      'CLAUDE_MEM_OPENAI_BASE_URL',
       // System Configuration
       'CLAUDE_MEM_LOG_LEVEL',
       'CLAUDE_CODE_PATH',
@@ -150,26 +144,18 @@ export class SettingsRoutes extends BaseRouteHandler {
   private validateSettings(settings: any): { valid: boolean; error?: string } {
     // Validate CLAUDE_MEM_PROVIDER
     if (settings.CLAUDE_MEM_PROVIDER) {
-    const validProviders = ['claude', 'gemini', 'opencode'];
-    if (!validProviders.includes(settings.CLAUDE_MEM_PROVIDER)) {
-      return { valid: false, error: 'CLAUDE_MEM_PROVIDER must be "claude", "gemini", or "opencode"' };
+      const validProviders = ['claude', 'openai'];
+      if (!validProviders.includes(settings.CLAUDE_MEM_PROVIDER)) {
+        return { valid: false, error: 'CLAUDE_MEM_PROVIDER must be "claude" or "openai"' };
       }
     }
 
-    // Validate CLAUDE_MEM_GEMINI_MODEL
-    if (settings.CLAUDE_MEM_GEMINI_MODEL) {
-      const validGeminiModels = ['gemini-2.5-flash-lite', 'gemini-2.5-flash', 'gemini-3-flash-preview'];
-      if (!validGeminiModels.includes(settings.CLAUDE_MEM_GEMINI_MODEL)) {
-        return { valid: false, error: 'CLAUDE_MEM_GEMINI_MODEL must be one of: gemini-2.5-flash-lite, gemini-2.5-flash, gemini-3-flash-preview' };
-      }
-    }
-
-    // Validate CLAUDE_MEM_OPENCODE_BASE_URL — must be a valid http(s) URL when
-    // set (blank = use the default OpenCode endpoint). The bypass lane sends the
-    // OpenCode Bearer key + observation content here, so a non-http(s) / malformed
+    // Validate CLAUDE_MEM_OPENAI_BASE_URL — must be a valid http(s) URL when
+    // set (blank = bypass disabled). The bypass lane sends the OpenAI-compatible
+    // Bearer key + observation content here, so a non-http(s) / malformed
     // value is rejected rather than persisted (mirrors the resolver's guard).
-    if (settings.CLAUDE_MEM_OPENCODE_BASE_URL && String(settings.CLAUDE_MEM_OPENCODE_BASE_URL).trim() !== '') {
-      const candidate = String(settings.CLAUDE_MEM_OPENCODE_BASE_URL).trim();
+    if (settings.CLAUDE_MEM_OPENAI_BASE_URL && String(settings.CLAUDE_MEM_OPENAI_BASE_URL).trim() !== '') {
+      const candidate = String(settings.CLAUDE_MEM_OPENAI_BASE_URL).trim();
       let parsed: URL | null = null;
       try {
         parsed = new URL(candidate);
@@ -177,7 +163,7 @@ export class SettingsRoutes extends BaseRouteHandler {
         parsed = null;
       }
       if (!parsed || (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') || parsed.hostname.length === 0) {
-        return { valid: false, error: 'CLAUDE_MEM_OPENCODE_BASE_URL must be a valid http(s) URL' };
+        return { valid: false, error: 'CLAUDE_MEM_OPENAI_BASE_URL must be a valid http(s) URL' };
       }
     }
 
