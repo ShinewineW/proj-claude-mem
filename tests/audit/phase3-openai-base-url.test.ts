@@ -2,13 +2,13 @@
  * Audit Phase 3 — resolveOpenAICompatibleChatCompletionsUrl normalization.
  *
  * Rules under test (src/shared/openai-compatible-base-url.ts):
- *   - unset/blank  -> defaultUrl verbatim (backward compat)
+ *   - blank/null/undefined/non-http(s)/malformed -> null (base URL required)
  *   - already ends in /chat/completions (case-insensitive, trailing / stripped)
  *     -> used verbatim (no double-append)
  *   - otherwise -> /chat/completions appended exactly once
  *
  * Properties:
- *  U1: blank/whitespace/null/undefined -> defaultUrl (unchanged)
+ *  U1: blank/whitespace/null/undefined -> null
  *  U2: idempotence — resolve(resolve(x)) === resolve(x) for any configured x
  *  U3: output always ends in /chat/completions (case-preserved suffix appended,
  *      or pre-existing suffix preserved as-is) and never double-appends
@@ -16,10 +16,7 @@
  *  U5: case-insensitive suffix detection (no double append for CHAT/COMPLETIONS)
  */
 import { describe, test, expect } from 'bun:test';
-import {
-  resolveOpenAICompatibleChatCompletionsUrl,
-  DEFAULT_OPENCODE_API_URL,
-} from '../../src/shared/openai-compatible-base-url.js';
+import { resolveOpenAICompatibleChatCompletionsUrl } from '../../src/shared/openai-compatible-base-url.js';
 
 function mulberry32(seed: number): () => number {
   let a = seed >>> 0;
@@ -33,7 +30,6 @@ function mulberry32(seed: number): () => number {
 }
 
 const SUFFIX = '/chat/completions';
-const DEF = DEFAULT_OPENCODE_API_URL;
 
 // Random-ish base URL fragments, including trailing slashes and case variants.
 const HOSTS = ['https://api.deepseek.com/v1', 'http://localhost:1234/v1', 'https://x.y/zen/go/v1', 'HTTPS://API.X.COM'];
@@ -48,9 +44,9 @@ function randUrl(rng: () => number): string {
 }
 
 describe('resolveOpenAICompatibleChatCompletionsUrl', () => {
-  test('U1: blank/null/undefined -> defaultUrl', () => {
+  test('U1: blank/null/undefined -> null', () => {
     for (const blank of ['', '   ', '\t\n', null, undefined]) {
-      expect(resolveOpenAICompatibleChatCompletionsUrl(blank as any, DEF)).toBe(DEF);
+      expect(resolveOpenAICompatibleChatCompletionsUrl(blank as any)).toBeNull();
     }
   });
 
@@ -58,8 +54,8 @@ describe('resolveOpenAICompatibleChatCompletionsUrl', () => {
     const rng = mulberry32(0xABCDEF);
     for (let i = 0; i < 20000; i++) {
       const input = randUrl(rng);
-      const once = resolveOpenAICompatibleChatCompletionsUrl(input, DEF);
-      const twice = resolveOpenAICompatibleChatCompletionsUrl(once, DEF);
+      const once = resolveOpenAICompatibleChatCompletionsUrl(input);
+      const twice = resolveOpenAICompatibleChatCompletionsUrl(once);
       expect(twice).toBe(once);
     }
   });
@@ -68,7 +64,7 @@ describe('resolveOpenAICompatibleChatCompletionsUrl', () => {
     const rng = mulberry32(0x13371337);
     for (let i = 0; i < 20000; i++) {
       const input = randUrl(rng);
-      const out = resolveOpenAICompatibleChatCompletionsUrl(input, DEF);
+      const out = resolveOpenAICompatibleChatCompletionsUrl(input)!;
       // The suffix is present case-insensitively at the end.
       expect(out.toLowerCase().endsWith(SUFFIX)).toBe(true);
       // Never two consecutive occurrences -> no double-append.
@@ -78,30 +74,30 @@ describe('resolveOpenAICompatibleChatCompletionsUrl', () => {
   });
 
   test('U4: trailing slashes collapsed before suffix decision', () => {
-    expect(resolveOpenAICompatibleChatCompletionsUrl('https://a.b/v1/', DEF)).toBe('https://a.b/v1/chat/completions');
-    expect(resolveOpenAICompatibleChatCompletionsUrl('https://a.b/v1///', DEF)).toBe('https://a.b/v1/chat/completions');
+    expect(resolveOpenAICompatibleChatCompletionsUrl('https://a.b/v1/')).toBe('https://a.b/v1/chat/completions');
+    expect(resolveOpenAICompatibleChatCompletionsUrl('https://a.b/v1///')).toBe('https://a.b/v1/chat/completions');
     // already-suffixed with trailing slash collapses to the canonical form.
-    expect(resolveOpenAICompatibleChatCompletionsUrl('https://a.b/v1/chat/completions/', DEF))
+    expect(resolveOpenAICompatibleChatCompletionsUrl('https://a.b/v1/chat/completions/'))
       .toBe('https://a.b/v1/chat/completions');
   });
 
   test('U5: case-insensitive suffix is preserved verbatim (no re-append)', () => {
-    expect(resolveOpenAICompatibleChatCompletionsUrl('https://a.b/CHAT/COMPLETIONS', DEF))
+    expect(resolveOpenAICompatibleChatCompletionsUrl('https://a.b/CHAT/COMPLETIONS'))
       .toBe('https://a.b/CHAT/COMPLETIONS');
-    expect(resolveOpenAICompatibleChatCompletionsUrl('https://a.b/Chat/Completions/', DEF))
+    expect(resolveOpenAICompatibleChatCompletionsUrl('https://a.b/Chat/Completions/'))
       .toBe('https://a.b/Chat/Completions');
   });
 
   test('U6: base URL without suffix gets exactly one append', () => {
-    expect(resolveOpenAICompatibleChatCompletionsUrl('https://api.deepseek.com/v1', DEF))
+    expect(resolveOpenAICompatibleChatCompletionsUrl('https://api.deepseek.com/v1'))
       .toBe('https://api.deepseek.com/v1/chat/completions');
   });
 
-  // Security (fix G): the resolver sends the OpenCode Bearer API key + observation
+  // Security (fix G): the resolver sends the Bearer API key + observation
   // content to whatever base URL is configured. A malformed or non-http(s) value
-  // must NOT be used as the destination — fall back to the default rather than
+  // must NOT be used as the destination — return null rather than
   // leak credentials to a fat-fingered / attacker-controlled host.
-  describe('G: non-http(s) / malformed base URL falls back to default', () => {
+  describe('G: non-http(s) / malformed base URL returns null', () => {
     const bad = [
       'file:///etc/passwd',
       'ftp://evil.example.com/v1',
@@ -117,15 +113,15 @@ describe('resolveOpenAICompatibleChatCompletionsUrl', () => {
       'wss://evil/v1',
     ];
     for (const b of bad) {
-      test(`rejects ${JSON.stringify(b)} -> defaultUrl`, () => {
-        expect(resolveOpenAICompatibleChatCompletionsUrl(b, DEF)).toBe(DEF);
+      test(`rejects ${JSON.stringify(b)} -> null`, () => {
+        expect(resolveOpenAICompatibleChatCompletionsUrl(b)).toBeNull();
       });
     }
 
     test('accepts valid http and https hosts', () => {
-      expect(resolveOpenAICompatibleChatCompletionsUrl('http://localhost:1234/v1', DEF))
+      expect(resolveOpenAICompatibleChatCompletionsUrl('http://localhost:1234/v1'))
         .toBe('http://localhost:1234/v1/chat/completions');
-      expect(resolveOpenAICompatibleChatCompletionsUrl('https://api.deepseek.com/v1', DEF))
+      expect(resolveOpenAICompatibleChatCompletionsUrl('https://api.deepseek.com/v1'))
         .toBe('https://api.deepseek.com/v1/chat/completions');
     });
   });
