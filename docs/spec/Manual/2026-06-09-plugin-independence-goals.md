@@ -20,7 +20,7 @@
 
 ## 主要目标
 
-0. 第一条铁律：修订后的版本，应当能无缝兼容之前保存的数据库，向量库等数据，不能导致数据损毁，无法读取的情况。修订后的版本，应当能无缝兼容之前保存的数据库，向量库等数据，不能导致数据损毁，无法读取的情况。修订后的版本，应当能无缝兼容之前保存的数据库，向量库等数据，不能导致数据损毁，无法读取的情况。
+0. 第一条铁律：修订后的版本必须无缝兼容之前保存的数据库、向量库等数据，不能导致数据损毁或无法读取。
 
 1. 插件身份脱离 `claude-mem`。
 
@@ -40,21 +40,21 @@
 
 5. 保留现有记忆数据。
 
-   每个项目的 `<repo>/.claude/mem.db` 不应因为插件改名而迁移、重命名或删除。这个名字是可以保留的
+   每个项目的 `<repo>/.claude/mem.db` 不应因为插件改名而迁移、重命名或删除。这个名字是可以保留的。
 
 6. 防止旧插件和新插件同时运行。
 
    迁移时必须禁用或干净地覆盖 `claude-mem@thedotmack`，再启用新插件 key，避免两个 hook 或两个 worker 同时处理同一批 session。也就是说这里意味着，修改完成后，需要完全卸载目前的版本，然后重新从新的渠道安装完全独立的版本来进行测试。
 
-8. 保持 runtime health / version 检查有效。
+7. 保持 runtime health / version 检查有效。
 
    build-and-sync 后，worker `/api/version`、已安装插件 metadata、`installed_plugins.json`、cache `package.json`、marketplace plugin metadata 应保持一致。现有 version mismatch auto-restart 机制仍应可用。即这里意味着全新插件的版本控制应当还是有用的。
 
-9. 更新所有本地安装和同步工具。
+8. 更新所有本地安装和同步工具。
 
    `sync-to-cache.cjs`、`sync-marketplace.cjs`、smart install helpers、hook fallback path、marketplace 注册、known marketplace 注册、enabled plugin 注册，都必须使用新身份。
 
-10. 更新用户可见的 skills 和文档(注意这里是这个仓库的所有文档)。
+9. 更新用户可见的 skills 和文档(注意这里是这个仓库的所有文档)。
 
     Slash-skill 文档、README、CLAUDE.md、plugin README、安装/卸载说明、排障文本、marketplace 描述，都应使用新的插件身份。同时保留对原上游项目的 provenance 说明。
 
