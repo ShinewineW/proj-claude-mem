@@ -1,16 +1,9 @@
-# 插件独立化目标说明
-
-日期：2026-06-09
-状态：草案
-归属：proj-claude-mem fork
-
 ## 背景
 
 这个项目已经不再是一个临时 fork。它现在有自己的产品方向：
 
 - per-project SQLite 数据库隔离
 - per-project opt-in 白名单机制
-- Mac 作为跳板机的受控 pod 部署流程
 - 对上游修复的选择性移植
 - 和上游 `claude-mem` 不完全一致的 worker / runtime / 部署策略
 
@@ -26,6 +19,8 @@
 本次目标是让这个项目成为一个真正独立的插件：拥有自己的名字、身份、版本线和分发模式。
 
 ## 主要目标
+
+0. 第一条铁律：修订后的版本，应当能无缝兼容之前保存的数据库，向量库等数据，不能导致数据损毁，无法读取的情况。修订后的版本，应当能无缝兼容之前保存的数据库，向量库等数据，不能导致数据损毁，无法读取的情况。修订后的版本，应当能无缝兼容之前保存的数据库，向量库等数据，不能导致数据损毁，无法读取的情况。
 
 1. 插件身份脱离 `claude-mem`。
 
@@ -43,27 +38,23 @@
 
    GitHub 可以继续作为开发源码仓库和 provenance 记录来源，但用户安装路径应转向插件市场。公开 marketplace 安装优先考虑 npm package source，而不是 GitHub source。
 
-5. 保持受控网络部署策略。
+5. 保留现有记忆数据。
 
-   `tc-map-v2-9`、`wm-proj-v1-0` 等 pod 不能 push / pull GitHub。受控 pod 的部署仍然应由 Mac 作为 source 和 transport：先由 Mac 把 source 送到 CPFS，再在 pod 侧 build / sync / restart。
+   每个项目的 `<repo>/.claude/mem.db` 不应因为插件改名而迁移、重命名或删除。这个名字是可以保留的
 
-6. 保留现有记忆数据。
+6. 防止旧插件和新插件同时运行。
 
-   每个项目的 `<repo>/.claude/mem.db` 不应因为插件改名而迁移、重命名或删除。全局目录 `~/.claude-mem/` 是否改名，应作为后续独立的数据迁移阶段处理，不能和本次插件身份迁移混在一起。
-
-7. 防止旧插件和新插件同时运行。
-
-   迁移时必须禁用或干净地覆盖 `claude-mem@thedotmack`，再启用新插件 key，避免两个 hook 或两个 worker 同时处理同一批 session。
+   迁移时必须禁用或干净地覆盖 `claude-mem@thedotmack`，再启用新插件 key，避免两个 hook 或两个 worker 同时处理同一批 session。也就是说这里意味着，修改完成后，需要完全卸载目前的版本，然后重新从新的渠道安装完全独立的版本来进行测试。
 
 8. 保持 runtime health / version 检查有效。
 
-   build-and-sync 后，worker `/api/version`、已安装插件 metadata、`installed_plugins.json`、cache `package.json`、marketplace plugin metadata 应保持一致。现有 version mismatch auto-restart 机制仍应可用。
+   build-and-sync 后，worker `/api/version`、已安装插件 metadata、`installed_plugins.json`、cache `package.json`、marketplace plugin metadata 应保持一致。现有 version mismatch auto-restart 机制仍应可用。即这里意味着全新插件的版本控制应当还是有用的。
 
 9. 更新所有本地安装和同步工具。
 
    `sync-to-cache.cjs`、`sync-marketplace.cjs`、smart install helpers、hook fallback path、marketplace 注册、known marketplace 注册、enabled plugin 注册，都必须使用新身份。
 
-10. 更新用户可见的 skills 和文档。
+10. 更新用户可见的 skills 和文档(注意这里是这个仓库的所有文档)。
 
     Slash-skill 文档、README、CLAUDE.md、plugin README、安装/卸载说明、排障文本、marketplace 描述，都应使用新的插件身份。同时保留对原上游项目的 provenance 说明。
 
@@ -85,10 +76,6 @@
 4. 保留本地 Mac 开发路径。
 
    `npm run build-and-sync` 仍应作为本地测试、插件 cache 同步、受控 pod 部署准备的可用命令。
-
-5. 保留受控 pod 部署路径。
-
-   远端 build 仍应能从 CPFS source checkout 执行，不依赖 pod 访问 GitHub。
 
 ## 兼容目标
 
@@ -163,4 +150,3 @@
 9. docs 和 skills 不再指导用户安装或检查 `claude-mem@thedotmack`。
 
 10. marketplace metadata 已准备好走 npm-backed public distribution path。
-
