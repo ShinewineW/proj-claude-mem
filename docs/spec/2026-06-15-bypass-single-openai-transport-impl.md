@@ -13,7 +13,7 @@
 
 **Goal:** 旁路只保留两条 transport（`claude` 主通道 + `openai` 唯一旁路），`openai` 由用户自填 `baseUrl/apiKey/model` 三个自由字段驱动，身份从 host 派生；新增连通性测试按钮。
 
-**Architecture:** transport 闭集坍缩为 `{claude, openai}`。删除整条 Gemini transport、OpenCode 专属 cost/subscription 计费机制、两个从未接线的死键。`openai` 路径请求结构不变（OpenAI 兼容 `/chat/completions` + `Bearer` + 硬编码 `thinking:disabled`）。base URL 必填，留空即旁路 disabled。新增 `POST /api/bypass/test` 用未保存的候选配置跑独立探针。详见 `docs/adr/0003-bypass-single-openai-compatible-transport.md`。
+**Architecture:** transport 闭集坍缩为 `{claude, openai}`。删除整条 Gemini transport、OpenCode 专属 cost/subscription 计费机制、两个从未接线的死键。`openai` 路径请求结构不变（OpenAI 兼容 `/chat/completions` + `Bearer` + 硬编码 `thinking:disabled`）。base URL 必填，留空即旁路 disabled。新增 `POST /api/bypass/test` 用未保存的候选配置跑独立探针。
 
 **Tech Stack:** TypeScript / Bun / Express（worker）/ React（viewer）/ `bun test`。
 
@@ -215,7 +215,7 @@ export function redactSecret(s: string, secret?: string): string {
  * One-shot connectivity probe for an OpenAI-compatible endpoint. Independent of
  * BypassLane's circuit-breaker state — used by the viewer "Test" button and by
  * BypassLane.probeProvider(). `thinking:disabled` is sent to match the real
- * request shape (reasoning models like deepseek-v4-flash need it); see ADR 0003.
+ * request shape (reasoning models like deepseek-v4-flash need it).
  */
 export async function probeOpenAICompatible(
   input: OpenAICompatProbeInput,
@@ -511,7 +511,7 @@ interface BypassConfig {
         ],
         temperature: 0.3,
         // 16384 (2x default): reasoning models truncate long observations at 8192
-        // (finish_reason=length), leaving unclosed <observation> tags. See ADR 0003.
+        // (finish_reason=length), leaving unclosed <observation> tags.
         max_tokens: 16384,
         // Hardcoded: deepseek-v4-flash etc. emit CoT-only empty content without it.
         // FOOTGUN: providers that reject unknown fields (vanilla OpenAI/Groq) will 400 —

@@ -31,7 +31,7 @@ export function redactSecret(s: string, secret?: string): string {
  * One-shot connectivity probe for an OpenAI-compatible endpoint. Independent of
  * BypassLane's circuit-breaker state — used by the viewer "Test" button and by
  * BypassLane.probeProvider(). `thinking:disabled` is sent to match the real
- * request shape (reasoning models like deepseek-v4-flash need it); see ADR 0003.
+ * request shape (reasoning models like deepseek-v4-flash need it).
  */
 export async function probeOpenAICompatible(
   input: OpenAICompatProbeInput,

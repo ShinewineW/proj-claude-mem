@@ -739,7 +739,7 @@ export class BypassLane {
         ],
         temperature: 0.3,
         // 16384 (2x default): reasoning models truncate long observations at 8192
-        // (finish_reason=length), leaving unclosed <observation> tags. See ADR 0003.
+        // (finish_reason=length), leaving unclosed <observation> tags.
         max_tokens: 16384,
         // Hardcoded: deepseek-v4-flash etc. emit CoT-only empty content without it.
         // FOOTGUN: providers that reject unknown fields (vanilla OpenAI/Groq) will 400 —

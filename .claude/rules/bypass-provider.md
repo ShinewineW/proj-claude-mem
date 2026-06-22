@@ -12,5 +12,5 @@ OpenAI-compatible endpoint). Adding or switching an OpenAI-compatible provider i
 **config-only** — set `CLAUDE_MEM_OPENAI_{BASE_URL,API_KEY,MODEL}`; identity derives
 from the `baseUrl` host. **Never** add a per-provider enum value, code branch, or
 renamed settings key. That "rewrite everything per provider" churn was explicitly and
-repeatedly rejected (rationale: ADR 0003). Homogeneous peers that differ only in
+repeatedly rejected. Homogeneous peers that differ only in
 config get one config-driven path, not per-instance code.
