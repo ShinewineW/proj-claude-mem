@@ -357,7 +357,7 @@ export function ContextSettingsModal({
                     onChange={(e) => updateSetting('CLAUDE_MEM_MODEL', e.target.value)}
                   >
                     <option value="claude-haiku-4-5-20251001">haiku (fastest)</option>
-                    <option value="claude-sonnet-4-5">sonnet (balanced)</option>
+                    <option value="claude-sonnet-5">sonnet (balanced)</option>
                     <option value="claude-opus-4-5-20250415">opus (highest quality)</option>
                   </select>
                 </FormField>
