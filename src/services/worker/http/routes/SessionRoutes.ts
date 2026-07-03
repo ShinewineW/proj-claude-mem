@@ -20,7 +20,7 @@ import { SessionEventBroadcaster } from '../../events/SessionEventBroadcaster.js
 import { SessionCompletionHandler } from '../../session/SessionCompletionHandler.js';
 import { PrivacyCheckValidator } from '../../validation/PrivacyCheckValidator.js';
 import { SettingsDefaultsManager } from '../../../../shared/SettingsDefaultsManager.js';
-import { USER_SETTINGS_PATH } from '../../../../shared/paths.js';
+import { USER_SETTINGS_PATH, projectNameFromDbPath } from '../../../../shared/paths.js';
 import { getProcessBySession, ensureProcessExit } from '../../ProcessRegistry.js';
 import { getProjectName } from '../../../../utils/project-name.js';
 import type { BypassLane } from '../../BypassLane.js';
@@ -846,9 +846,16 @@ export class SessionRoutes extends BaseRouteHandler {
 
     const store = this.dbManager.getSessionStore(dbPath);
 
-    // Get or create session — derive project from cwd so session has correct project
-    // even if UserPromptSubmit hook never fires (worker restart, race condition)
-    const project = cwd ? getProjectName(cwd) : '';
+    // Get or create session — name the session from the DB it is being written into
+    // (the allowlist-routed dbPath), NOT from live cwd. This path is the session's
+    // creator whenever UserPromptSubmit never fires (worker restart, race, or a
+    // session that only ever emits PostToolUse). Deriving from cwd via getProjectName()
+    // uses resolveWorkspaceRoot, a second resolver that climbs to a parent workspace
+    // when the parent holds a `.claude/` and is not a git repo — diverging from the
+    // allowlist-routed dbPath and leaking a phantom parent-named project (e.g.
+    // "wangjiazhe") into a child project's DB. dbPath-derived name can never diverge
+    // from the DB. Fall back to cwd only for the global/legacy DB (no project root).
+    const project = projectNameFromDbPath(dbPath) ?? (cwd ? getProjectName(cwd) : '');
     const sessionDbId = store.createSDKSession(contentSessionId, project, '');
     // Attribute observation to the latest REAL user prompt. Redacted placeholders
     // (system notifications, Monitor noise) advance the global counter but their

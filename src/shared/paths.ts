@@ -312,3 +312,26 @@ export function resolveProjectRoot(cwd?: string): string {
 
   return resolveWorkspaceRoot(gitRoot);
 }
+
+/**
+ * Derive the project name from a per-project DB path.
+ *
+ * Standard per-project layout is `<projectRoot>/.claude/mem.db`, so the name is
+ * `basename(<projectRoot>)`. This is the divergence-proof way to name a session
+ * on the write path: the name is taken from the database the row is actually
+ * stored in, so it can never drift from that DB the way a second, cwd-based
+ * resolver (getProjectName → resolveProjectRoot → resolveWorkspaceRoot) can — the
+ * latter climbs to a parent workspace whenever the parent holds a `.claude/` and
+ * is not itself a git repo, which is exactly how a phantom parent-named project
+ * leaked into a child project's DB.
+ *
+ * Returns null for the global/legacy DB (`<dataDir>/claude-mem.db`) or any
+ * non-standard path, so callers can fall back to a cwd-based name there.
+ */
+export function projectNameFromDbPath(dbPath: string | null | undefined): string | null {
+  if (!dbPath) return null;
+  if (basename(dbPath) !== 'mem.db') return null;
+  if (basename(dirname(dbPath)) !== '.claude') return null;
+  const name = basename(dirname(dirname(dbPath)));
+  return name.trim() !== '' ? name : null;
+}
