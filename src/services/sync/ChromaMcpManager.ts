@@ -46,11 +46,22 @@ const CHROMA_MCP_PINNED_VERSION = '0.2.6';
 // `TypeError: Descriptors cannot be created directly` at chromadb import.
 // Capping below 7 lands on protobuf 6.x which opentelemetry tolerates.
 //
+// Why httpx[socks]: chromadb downloads the all-MiniLM-L6-v2 model on first
+// embedding via `httpx.stream("GET", ...)` with trust_env=True. In a pod
+// behind a SOCKS proxy (ALL_PROXY=socks5://...), httpx needs the `socksio`
+// package to use that proxy; without it every add/query throws "Using SOCKS
+// proxy, but the 'socksio' package is not installed" and the vector store
+// silently stays empty. The ephemeral uvx env does NOT inherit a globally
+// `uv tool install`ed chroma-mcp's extras, so socksio must be pinned here.
+// Latent since the model cache masks it — only bites when a cache-wiping pod
+// restart forces a re-download through the proxy.
+//
 // These pins are runtime-only (uvx --with) so we don't have to fork
 // chroma-mcp upstream — they apply only to claude-mem's spawned subprocess.
 const CHROMA_MCP_DEP_OVERRIDES: ReadonlyArray<string> = [
   'onnxruntime>=1.20',
   'protobuf<7',
+  'httpx[socks]',
 ];
 
 export class ChromaMcpManager {

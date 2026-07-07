@@ -17,6 +17,13 @@ describe('ChromaMcpManager onnx/protobuf pin (#2371)', () => {
     expect(src).toContain("'protobuf<7'");
   });
 
+  it('pins httpx[socks] so model download works behind a SOCKS proxy', () => {
+    // Regression: without socksio in the ephemeral uvx env, chromadb's model
+    // download throws "Using SOCKS proxy, but the 'socksio' package is not
+    // installed" under ALL_PROXY=socks5://... and the vector store stays empty.
+    expect(src).toContain("'httpx[socks]'");
+  });
+
   it('references the pinned version via chroma-mcp==${CHROMA_MCP_PINNED_VERSION}', () => {
     expect(src).toContain('`chroma-mcp==${CHROMA_MCP_PINNED_VERSION}`');
   });
