@@ -121,3 +121,13 @@ export function shouldSkipObservation(
   }
   return false;
 }
+
+/**
+ * Layer A skip counters — process-lifetime totals for attribution
+ * (how much reduction came from filtering vs. bypass migration).
+ * Reset on worker restart, same semantics as BypassLane.counters.
+ */
+export const layerAStats = {
+  toolExcluded: 0,     // CLAUDE_MEM_SKIP_TOOLS exact-match skips
+  patternFiltered: 0,  // CLAUDE_MEM_SKIP_TOOL_PATTERNS glob skips
+};

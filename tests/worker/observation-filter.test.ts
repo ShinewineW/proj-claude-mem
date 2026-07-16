@@ -2,6 +2,7 @@ import { describe, test, expect } from "bun:test";
 import {
   parseSkipPatterns,
   shouldSkipObservation,
+  layerAStats,
 } from "../../src/services/worker/http/routes/observation-filter.js";
 
 describe("parseSkipPatterns", () => {
@@ -189,5 +190,12 @@ describe("Read noise-path filtering", () => {
   });
   test("keeps source reads", () => {
     expect(shouldSkipObservation("Read", { file_path: "/x/src/a.ts" }, readPatterns)).toBe(false);
+  });
+});
+
+describe("layerAStats counters", () => {
+  test("exports mutable counters for both skip layers", () => {
+    expect(typeof layerAStats.toolExcluded).toBe("number");
+    expect(typeof layerAStats.patternFiltered).toBe("number");
   });
 });

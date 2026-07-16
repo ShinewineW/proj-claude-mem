@@ -21,6 +21,7 @@ import { DbConnectionPool } from '../shared/project-db.js';
 import { DB_PATH, USER_SETTINGS_PATH } from '../shared/paths.js';
 import { listEnabledProjects } from '../shared/project-allowlist.js';
 import { shouldEnterCooldown } from './worker/http/routes/pool-cooldown-utils.js';
+import { layerAStats } from './worker/http/routes/observation-filter.js';
 import type { ActiveSession } from './worker-types.js';
 import {
   decideGeneratorAction,
@@ -293,6 +294,7 @@ export class WorkerService {
           },
           mainChannel: this.sessionManager.getDiagnostics(),
           bypass: this.bypassLane.getStatus(),
+          layerA: layerAStats,
         };
       },
     });

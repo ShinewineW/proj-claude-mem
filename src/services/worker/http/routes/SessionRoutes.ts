@@ -10,7 +10,7 @@ import { getWorkerPort } from '../../../../shared/worker-utils.js';
 import { logger } from '../../../../utils/logger.js';
 import { stripMemoryTagsFromPrompt, stripMemoryTagsFromPromptDetailed } from '../../../../utils/tag-stripping.js';
 import { cleanToolField } from './observation-utils.js';
-import { parseSkipPatterns, shouldSkipObservation, type ToolPattern } from './observation-filter.js';
+import { parseSkipPatterns, shouldSkipObservation, layerAStats, type ToolPattern } from './observation-filter.js';
 import { SessionManager } from '../../SessionManager.js';
 import { DatabaseManager } from '../../DatabaseManager.js';
 import { SDKAgent } from '../../SDKAgent.js';
@@ -814,6 +814,7 @@ export class SessionRoutes extends BaseRouteHandler {
 
     // Skip low-value or meta tools
     if (skipTools.has(tool_name)) {
+      layerAStats.toolExcluded++;
       logger.debug('SESSION', 'Skipping observation for tool', { tool_name });
       res.json({ status: 'skipped', reason: 'tool_excluded' });
       return;
@@ -825,6 +826,7 @@ export class SessionRoutes extends BaseRouteHandler {
       cachedPatterns = { key: patternKey, patterns: parseSkipPatterns(patternKey) };
     }
     if (shouldSkipObservation(tool_name, tool_input, cachedPatterns.patterns)) {
+      layerAStats.patternFiltered++;
       logger.info('SESSION', 'Skipping observation by pattern filter', { tool_name, reason: 'pattern_filtered' });
       res.json({ status: 'skipped', reason: 'pattern_filtered' });
       return;
