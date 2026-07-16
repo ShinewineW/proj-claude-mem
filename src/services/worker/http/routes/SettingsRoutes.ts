@@ -114,6 +114,12 @@ export class SettingsRoutes extends BaseRouteHandler {
       'CLAUDE_MEM_MAX_SUMMARY_OBSERVATIONS',
       // Session lifecycle guard
       'CLAUDE_MEM_SESSION_MAX_AGE_MS',
+      // Bypass tiered cooldowns + concurrency
+      'CLAUDE_MEM_BYPASS_QUOTA_COOLDOWN_MS',
+      'CLAUDE_MEM_BYPASS_AUTH_COOLDOWN_MS',
+      'CLAUDE_MEM_BYPASS_MAX_FAILURES',
+      'CLAUDE_MEM_BYPASS_CONCURRENCY',
+      'CLAUDE_MEM_BYPASS_MAX_CONSUMERS',
     ];
 
     for (const key of settingKeys) {
@@ -164,6 +170,25 @@ export class SettingsRoutes extends BaseRouteHandler {
       }
       if (!parsed || (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') || parsed.hostname.length === 0) {
         return { valid: false, error: 'CLAUDE_MEM_OPENAI_BASE_URL must be a valid http(s) URL' };
+      }
+    }
+
+    // Validate bypass tiered-cooldown / concurrency knobs.
+    // Number()+isInteger (not parseInt): rejects trailing junk ("3junk") and
+    // non-integers ("1.5") that parseInt would silently truncate (R1-4a).
+    const intBounds: Array<[string, number, number]> = [
+      ['CLAUDE_MEM_BYPASS_CONCURRENCY', 1, 16],
+      ['CLAUDE_MEM_BYPASS_MAX_CONSUMERS', 1, 64],
+      ['CLAUDE_MEM_BYPASS_MAX_FAILURES', 1, 20],
+      ['CLAUDE_MEM_BYPASS_QUOTA_COOLDOWN_MS', 60000, 86400000],  // 1min–24h
+      ['CLAUDE_MEM_BYPASS_AUTH_COOLDOWN_MS', 60000, 86400000],   // 1min–24h
+    ];
+    for (const [key, lo, hi] of intBounds) {
+      if (settings[key] !== undefined && settings[key] !== '') {
+        const n = Number(String(settings[key]).trim());
+        if (!Number.isInteger(n) || n < lo || n > hi) {
+          return { valid: false, error: `${key} must be an integer in [${lo}, ${hi}]` };
+        }
       }
     }
 

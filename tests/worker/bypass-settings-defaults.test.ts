@@ -31,3 +31,10 @@ describe("bypass cooldown tier defaults", () => {
     expect(SRC).toContain("CLAUDE_MEM_BYPASS_MAX_FAILURES");
   });
 });
+
+describe("bypass concurrency defaults", () => {
+  test("C=1, G=6 default (backward-compatible)", () => {
+    expect(SRC).toContain('CLAUDE_MEM_BYPASS_CONCURRENCY: "1"');
+    expect(SRC).toContain('CLAUDE_MEM_BYPASS_MAX_CONSUMERS: "6"');
+  });
+});
