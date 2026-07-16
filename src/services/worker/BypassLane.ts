@@ -315,22 +315,37 @@ export class BypassLane {
       session.abortController.signal,
     ]);
 
-    this.consumeLoop(session, combinedSignal)
-      .catch((error) => {
-        if (!combinedSignal.aborted) {
-          logger.error(
-            "BYPASS",
-            "Consumer loop error",
-            {
-              sessionDbId: session.sessionDbId,
-            },
-            error as Error,
-          );
-        }
-      })
-      .finally(() => {
+    const settings = SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH);
+    // R2-1: strict bounded read [1,16], same semantics as validateSettings —
+    // a hand-edited typo must not spawn an unbounded number of loops.
+    const concurrency = readIntBounded(settings.CLAUDE_MEM_BYPASS_CONCURRENCY, 1, 1, 16);
+
+    let running = concurrency;
+    const onLoopDone = () => {
+      running--;
+      // M1: only delete when ALL loops exited AND the map still points to THIS ownAc.
+      // A stop+restart can install a NEW ownAc before this batch drains; an unconditional
+      // delete would clobber the newer controller (the race the original comment in
+      // stopForSession warns of).
+      if (running <= 0 && this.activeConsumers.get(session.sessionDbId) === ownAc) {
         this.activeConsumers.delete(session.sessionDbId);
-      });
+      }
+    };
+
+    for (let i = 0; i < concurrency; i++) {
+      this.consumeLoop(session, combinedSignal)
+        .catch((error) => {
+          if (!combinedSignal.aborted) {
+            logger.error(
+              "BYPASS",
+              "Consumer loop error",
+              { sessionDbId: session.sessionDbId, worker: i },
+              error as Error,
+            );
+          }
+        })
+        .finally(onLoopDone);
+    }
   }
 
   /** Stop bypass consumer for a session. */
