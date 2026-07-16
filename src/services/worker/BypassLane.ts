@@ -31,6 +31,7 @@ import type { PersistentPendingMessage } from "../sqlite/PendingMessageStore.js"
 import type { SessionManager } from "./SessionManager.js";
 import type { DatabaseManager } from "./DatabaseManager.js";
 import { storeBypassObservationsForSession } from "./bypass-observation-store.js";
+import { GlobalSemaphore } from "./global-semaphore.js";
 import { resolveOpenAICompatibleChatCompletionsUrl } from "../../shared/openai-compatible-base-url.js";
 import { probeOpenAICompatible, redactSecret } from "./openai-compatible-probe.js";
 
@@ -164,6 +165,17 @@ export class BypassLane {
   private activeConsumers = new Map<number, AbortController>();
   private config: BypassConfig | null = null;
   private lastFailureReason: string | null = null;
+  // Global cap on concurrent bypass REST calls across all sessions.
+  // loadFromFile has its own 5s TTL cache (SettingsDefaultsManager P3),
+  // so reading per-acquire is cheap — no extra caching layer here.
+  // R1-4c/R2-1: strict bounded read [1,64] — validateSettings only guards the
+  // UI path; a hand-edited settings.json with "-1" would otherwise make
+  // limitFn return -1 and every acquire() park forever, and an over-large
+  // typo would remove the global cap entirely.
+  private globalSemaphore = new GlobalSemaphore(() => {
+    const s = SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH);
+    return readIntBounded(s.CLAUDE_MEM_BYPASS_MAX_CONSUMERS, 6, 1, 64);
+  });
   // In-memory counters — reset on worker restart. Operational diagnostics only.
   private counters = {
     claimed: 0,
@@ -526,68 +538,81 @@ export class BypassLane {
     const POLL_MS = 500;
 
     while (!signal.aborted && this.state === "ACTIVE") {
-      // Observation-only claim (never summarize, no self-healing — main channel handles that)
-      const message = pendingStore.claimNextObservation(session.sessionDbId);
-
-      if (!message) {
-        await this.abortableSleep(POLL_MS, signal);
-        continue;
-      }
-
-      this.counters.claimed++;
-
-      // Wait for main channel to establish memorySessionId (avoid orphaned synthetic IDs)
+      // M2: gate on memorySessionId BEFORE claiming — rows stay 'pending' untouched
+      // until the main channel seeds the id; no claim→retry spin during INIT.
       if (!session.memorySessionId) {
-        pendingStore.retryMessage(message.id);
-        this.sessionManager!.notifyMessageAvailable(
-          session.sessionDbId,
-          session.dbPath,
-        );
-        logger.debug("BYPASS", "Waiting for memorySessionId", {
-          messageId: message.id,
-        });
         await this.abortableSleep(POLL_MS, signal);
         continue;
       }
 
-      // Capture before async call — main channel could clear/replace it mid-flight
-      const memorySessionId = session.memorySessionId!;
-
+      // H1: acquire a global slot BEFORE claiming, so a claimed row's 'processing'
+      // window spans only the REST call (< FETCH_TIMEOUT_MS 45s < 60s self-heal),
+      // never the semaphore wait.
       try {
-        const obsStats = await this.processObservation(
-          message,
-          session,
-          memorySessionId,
-          signal,
-        );
-        this.recordSuccess();
-        logger.info("BYPASS", "Observation processed", {
-          messageId: message.id,
-          sessionDbId: session.sessionDbId,
-          endpoint: this.config ? new URL(this.config.baseUrl).host : null,
-          truncatedFields: obsStats.truncatedFields,
-        });
-      } catch (error) {
-        if (signal.aborted) return;
-        // Extract bypassCategory if attached by callRestApi.
-        const category = (error as { bypassCategory?: BypassFailureCategory })
-          ?.bypassCategory;
-        logger.warn("BYPASS", "Processing failed, marking for retry", {
-          messageId: message.id,
-          category: category ?? "unknown",
-          error: error instanceof Error ? error.message : String(error),
-        });
-        pendingStore.markFailed(message.id);
-        this.sessionManager!.notifyMessageAvailable(
-          session.sessionDbId,
-          session.dbPath,
-        );
-        this.lastFailureReason = (
-          error instanceof Error ? error.message : String(error)
-        ).slice(0, 200);
-        this.recordFailure(category);
+        await this.globalSemaphore.acquire(signal);
+      } catch {
+        continue; // acquire rejects only on abort; the while condition exits the loop
+      }
+
+      let outcome: "processed" | "empty" | "failed" = "empty";
+      try {
+        // Re-check after a possibly long semaphore wait — don't claim into a
+        // tripped breaker or an aborted session.
+        if (signal.aborted || this.state !== "ACTIVE") break; // finally releases
+
+        // Observation-only claim (never summarize, no self-healing — main channel handles that)
+        const message = pendingStore.claimNextObservation(session.sessionDbId);
+        if (message) {
+          this.counters.claimed++;
+          // Re-capture: main channel could clear memorySessionId between the gate and here.
+          const memorySessionId = session.memorySessionId;
+          if (!memorySessionId) {
+            pendingStore.retryMessage(message.id); // return the row for a later round
+            this.sessionManager!.notifyMessageAvailable(session.sessionDbId, session.dbPath);
+            // outcome stays "empty" → POLL_MS backoff below (matches pre-rewrite timing)
+          } else {
+            try {
+              const obsStats = await this.processObservation(message, session, memorySessionId, signal);
+              this.recordSuccess();
+              logger.info("BYPASS", "Observation processed", {
+                messageId: message.id,
+                sessionDbId: session.sessionDbId,
+                endpoint: this.config ? new URL(this.config.baseUrl).host : null,
+                truncatedFields: obsStats.truncatedFields,
+              });
+              outcome = "processed";
+            } catch (error) {
+              if (signal.aborted) return; // finally releases
+              outcome = "failed";
+              // Extract bypassCategory if attached by callRestApi.
+              const category = (error as { bypassCategory?: BypassFailureCategory })
+                ?.bypassCategory;
+              logger.warn("BYPASS", "Processing failed, marking for retry", {
+                messageId: message.id,
+                category: category ?? "unknown",
+                error: error instanceof Error ? error.message : String(error),
+              });
+              pendingStore.markFailed(message.id);
+              this.sessionManager!.notifyMessageAvailable(session.sessionDbId, session.dbPath);
+              this.lastFailureReason = (
+                error instanceof Error ? error.message : String(error)
+              ).slice(0, 200);
+              this.recordFailure(category);
+              if (this.state === "TRIPPED") return; // finally releases
+            }
+          }
+        }
+      } finally {
+        this.globalSemaphore.release();
+      }
+
+      // Backoff AFTER the semaphore is released — never sleep holding a slot.
+      // Timings match the pre-rewrite loop exactly: failure → 1000ms,
+      // empty queue / memSession fallback → POLL_MS (500ms), success → immediate next claim.
+      if (outcome === "failed") {
         await this.abortableSleep(1000, signal);
-        if (this.state === "TRIPPED") return;
+      } else if (outcome === "empty") {
+        await this.abortableSleep(POLL_MS, signal);
       }
     }
   }
