@@ -50,7 +50,7 @@ const CHARS_PER_TOKEN_ESTIMATE = 4;
 export const QUOTA_COOLDOWN_MS = 6 * 60 * 60 * 1000;
 export const AUTH_COOLDOWN_MS = 6 * 60 * 60 * 1000;
 
-export type BypassFailureCategory = "quota" | "auth" | "transient" | "client";
+export type BypassFailureCategory = "quota" | "auth" | "transient" | "client" | "ratelimit";
 
 /**
  * Parse an error response body, handling both error envelope shapes observed
@@ -102,7 +102,8 @@ export function classifyBypassFailure(
   if (parsed.type === "AuthError") return "auth";
   if (parsed.type === "ModelError") return "client"; // our bug — don't trip breaker
   // Fall back to status code
-  if (status === 429 || status === 402) return "quota";
+  if (status === 429) return "ratelimit"; // bare rate-limit — short cooldown, self-heals in minutes
+  if (status === 402) return "quota";     // payment required — real quota
   if (status === 401 || status === 403) return "auth";
   if (status >= 500) return "transient";
   if (status >= 400) return "client"; // 400 = malformed body, our bug
