@@ -63,6 +63,9 @@ export interface SettingsDefaults {
   CLAUDE_MEM_RETENTION_MAX_KEPT: string; // hard cap on >grace-period observations
   // Bypass Lane
   CLAUDE_MEM_BYPASS_COOLDOWN_MS: string; // Cooldown period before retrying tripped bypass lane (default: 20min)
+  CLAUDE_MEM_BYPASS_QUOTA_COOLDOWN_MS: string; // Cooldown for real-quota (402/insufficient_quota) trips (default: 30min)
+  CLAUDE_MEM_BYPASS_AUTH_COOLDOWN_MS: string;  // Cooldown for auth (401/403) trips (default: 6h)
+  CLAUDE_MEM_BYPASS_MAX_FAILURES: string;      // Consecutive failures before circuit trips (default: 3)
   // SDK Token Optimization (Phase 1)
   CLAUDE_MEM_SKIP_TOOL_PATTERNS: string; // Comma-separated tool:glob pairs for pattern-based observation filtering
   CLAUDE_MEM_BATCH_MAX_SIZE: string; // Max observations in a single batch prompt (1-20)
@@ -141,6 +144,9 @@ export class SettingsDefaultsManager {
     CLAUDE_MEM_RETENTION_MAX_KEPT: "3000",
     // Bypass Lane
     CLAUDE_MEM_BYPASS_COOLDOWN_MS: "1200000", // 20 minutes
+    CLAUDE_MEM_BYPASS_QUOTA_COOLDOWN_MS: "1800000", // 30 minutes
+    CLAUDE_MEM_BYPASS_AUTH_COOLDOWN_MS: "21600000", // 6 hours
+    CLAUDE_MEM_BYPASS_MAX_FAILURES: "3",
     // SDK Token Optimization (Phase 1)
     CLAUDE_MEM_SKIP_TOOL_PATTERNS:
       "Read:*SKILL.md,Read:*/.claude/rules/*,Read:*settings.json,Read:*hooks.json,Glob:*," +

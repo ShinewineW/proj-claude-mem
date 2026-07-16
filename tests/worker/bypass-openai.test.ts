@@ -4,10 +4,10 @@
  * Covers:
  * - resolveConfig: openai branch returns baseUrl/key/model; null on missing fields
  * - parseErrorBody: dual envelope (Anthropic-style + OpenAI-style)
- * - classifyFailure: HTTP status + envelope buckets → quota/auth/transient/client
+ * - classifyFailure: HTTP status + envelope buckets → quota/auth/ratelimit/transient/client
  * - probe: sends thinking:{type:"disabled"} to the configured base URL
  * - callRestApi: sends thinking:disabled, attaches error.bypassCategory on failure
- * - Tiered cooldown: quota/auth → 6h, transient → default, client → no trip
+ * - Tiered cooldown: quota/auth → configured (30min/6h defaults), ratelimit/transient → default, client → no trip
  */
 import { describe, it, expect, beforeEach, afterEach, mock } from 'bun:test';
 
@@ -61,8 +61,9 @@ import {
   BypassLane,
   parseBypassErrorBody,
   classifyBypassFailure,
-  QUOTA_COOLDOWN_MS,
-  AUTH_COOLDOWN_MS,
+  readIntBounded,
+  DEFAULT_QUOTA_COOLDOWN_MS,
+  DEFAULT_AUTH_COOLDOWN_MS,
 } from '../../src/services/worker/BypassLane.js';
 
 const DEFAULT_SETTINGS = {
@@ -174,8 +175,8 @@ describe('BypassLane — OpenAI-compatible provider', () => {
       expect(classifyBypassFailure(401, { type: 'ModelError' })).toBe('client');
     });
 
-    it('classifies HTTP 429 as quota when no envelope hint', () => {
-      expect(classifyBypassFailure(429, {})).toBe('quota');
+    it('classifies bare HTTP 429 as ratelimit (short cooldown, not quota)', () => {
+      expect(classifyBypassFailure(429, {})).toBe('ratelimit');
     });
 
     it('classifies HTTP 402 as quota', () => {
@@ -352,12 +353,12 @@ describe('BypassLane — OpenAI-compatible provider', () => {
   });
 
   describe('tiered cooldown via recordFailure', () => {
-    it('quota category uses QUOTA_COOLDOWN_MS (6 hours)', () => {
-      expect(QUOTA_COOLDOWN_MS).toBe(6 * 60 * 60 * 1000);
+    it('quota default is 30 minutes (configurable)', () => {
+      expect(DEFAULT_QUOTA_COOLDOWN_MS).toBe(30 * 60 * 1000);
     });
 
-    it('auth category uses AUTH_COOLDOWN_MS (6 hours)', () => {
-      expect(AUTH_COOLDOWN_MS).toBe(6 * 60 * 60 * 1000);
+    it('auth default is 6 hours (configurable)', () => {
+      expect(DEFAULT_AUTH_COOLDOWN_MS).toBe(6 * 60 * 60 * 1000);
     });
 
     it('client category does NOT trip the circuit breaker', () => {
@@ -372,10 +373,10 @@ describe('BypassLane — OpenAI-compatible provider', () => {
       expect((lane as any).consecutiveFailures).toBe(2);
     });
 
-    it('quota category trips with long cooldown', () => {
+    it('quota category trips with the CONFIGURED quotaCooldownMs (not a constant)', () => {
       const lane = new BypassLane();
       (lane as any).state = 'ACTIVE';
-      (lane as any).config = { baseUrl: 'https://api.deepseek.com', apiKey: 'k', model: 'deepseek-v4-flash', cooldownMs: 5000 };
+      (lane as any).config = { baseUrl: 'https://api.deepseek.com', apiKey: 'k', model: 'deepseek-v4-flash', cooldownMs: 5000, quotaCooldownMs: 1800000, authCooldownMs: 21600000, maxFailures: 3 };
       (lane as any).consecutiveFailures = 2;
 
       // Stub scheduleCooldownProbe to capture the cooldown duration
@@ -386,7 +387,52 @@ describe('BypassLane — OpenAI-compatible provider', () => {
 
       (lane as any).recordFailure('quota');
       expect(lane.getState()).toBe('TRIPPED');
-      expect(capturedCooldownMs).toBe(QUOTA_COOLDOWN_MS);
+      expect(capturedCooldownMs).toBe(1800000); // the fixture's quotaCooldownMs
+    });
+
+    it('auth category trips with configured authCooldownMs', () => {
+      const lane = new BypassLane();
+      (lane as any).state = 'ACTIVE';
+      (lane as any).config = { baseUrl: 'https://api.deepseek.com', apiKey: 'k', model: 'deepseek-v4-flash', cooldownMs: 5000, quotaCooldownMs: 1800000, authCooldownMs: 7777, maxFailures: 3 };
+      (lane as any).consecutiveFailures = 2;
+
+      let capturedCooldownMs: number | null = null;
+      (lane as any).scheduleCooldownProbe = (ms?: number) => {
+        capturedCooldownMs = ms ?? (lane as any).config?.cooldownMs ?? null;
+      };
+
+      (lane as any).recordFailure('auth');
+      expect(lane.getState()).toBe('TRIPPED');
+      expect(capturedCooldownMs).toBe(7777);
+    });
+
+    it('ratelimit category falls through to default cooldownMs (short)', () => {
+      const lane = new BypassLane();
+      (lane as any).state = 'ACTIVE';
+      (lane as any).config = { baseUrl: 'https://api.deepseek.com', apiKey: 'k', model: 'deepseek-v4-flash', cooldownMs: 5000, quotaCooldownMs: 1800000, authCooldownMs: 21600000, maxFailures: 3 };
+      (lane as any).consecutiveFailures = 2;
+
+      let capturedCooldownMs: number | null = null;
+      (lane as any).scheduleCooldownProbe = (ms?: number) => {
+        capturedCooldownMs = ms ?? (lane as any).config?.cooldownMs ?? null;
+      };
+
+      (lane as any).recordFailure('ratelimit');
+      expect(lane.getState()).toBe('TRIPPED');
+      expect(capturedCooldownMs).toBe(5000); // NOT the quota/auth long cooldowns
+    });
+
+    it('maxFailures is honored when configured', () => {
+      const lane = new BypassLane();
+      (lane as any).state = 'ACTIVE';
+      (lane as any).config = { baseUrl: 'https://api.deepseek.com', apiKey: 'k', model: 'deepseek-v4-flash', cooldownMs: 5000, quotaCooldownMs: 1800000, authCooldownMs: 21600000, maxFailures: 2 };
+      (lane as any).maxFailures = 2;
+      (lane as any).scheduleCooldownProbe = () => {};
+
+      (lane as any).recordFailure('transient');
+      expect(lane.getState()).toBe('ACTIVE'); // 1 of 2 — not yet
+      (lane as any).recordFailure('transient');
+      expect(lane.getState()).toBe('TRIPPED'); // 2 of 2 — tripped
     });
 
     it('transient category uses default cooldownMs', () => {
@@ -420,5 +466,26 @@ describe('BypassLane — OpenAI-compatible provider', () => {
       expect(lane.getState()).toBe('TRIPPED');
       expect(capturedCooldownMs).toBe(5000);
     });
+  });
+});
+
+describe('readIntBounded (strict bounded settings read)', () => {
+  it('accepts in-range integers', () => {
+    expect(readIntBounded('180000', 1200000, 60000, 86400000)).toBe(180000);
+  });
+  it('rejects trailing junk / non-integer / empty -> default', () => {
+    expect(readIntBounded('60000junk', 7, 1, 100000)).toBe(7);
+    expect(readIntBounded('1.5', 7, 1, 10)).toBe(7);
+    expect(readIntBounded('', 7, 1, 10)).toBe(7);
+    expect(readIntBounded(undefined as any, 7, 1, 10)).toBe(7);
+  });
+  it('rejects below-min and above-max -> default', () => {
+    expect(readIntBounded('-1', 6, 1, 64)).toBe(6);
+    expect(readIntBounded('0', 6, 1, 64)).toBe(6);
+    expect(readIntBounded('65', 6, 1, 64)).toBe(6);
+    expect(readIntBounded('999999999999', 1800000, 60000, 86400000)).toBe(1800000);
+  });
+  it('scientific notation parses consistently with validateSettings', () => {
+    expect(readIntBounded('1e1', 6, 1, 64)).toBe(10); // Number('1e1')===10, integer, in range
   });
 });

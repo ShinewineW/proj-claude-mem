@@ -44,11 +44,23 @@ const DEFAULT_MAX_ESTIMATED_TOKENS = 100_000;
 const CHARS_PER_TOKEN_ESTIMATE = 4;
 
 // Tiered cooldowns for failure classification (applies on the openai path).
-// `transient` reuses the configurable default (`config.cooldownMs`, 20min by default).
-// `quota`/`auth` are long-tail failures where a 20min retry is wasteful — set to 6h.
+// `transient`/`ratelimit` reuse the configurable default (`config.cooldownMs`, 20min by default).
+// `quota`/`auth` are long-tail failures where a 20min retry is wasteful.
 // `client` (HTTP 400 / ModelError) is a code bug, not a provider issue, so it bypasses the breaker entirely.
-export const QUOTA_COOLDOWN_MS = 6 * 60 * 60 * 1000;
-export const AUTH_COOLDOWN_MS = 6 * 60 * 60 * 1000;
+export const DEFAULT_QUOTA_COOLDOWN_MS = 30 * 60 * 1000; // 30min default (configurable)
+export const DEFAULT_AUTH_COOLDOWN_MS = 6 * 60 * 60 * 1000; // 6h default (configurable)
+export const DEFAULT_MAX_FAILURES = 3;
+
+/**
+ * Strict bounded integer read for hand-editable settings (R2-1).
+ * Same semantics as SettingsRoutes.validateSettings (Number + isInteger):
+ * trailing junk / non-integers / out-of-range all degrade to the default,
+ * so a settings.json typo can never wedge the semaphore or the breaker.
+ */
+export function readIntBounded(raw: string, def: number, lo: number, hi: number): number {
+  const n = Number(String(raw ?? "").trim());
+  return Number.isInteger(n) && n >= lo && n <= hi ? n : def;
+}
 
 export type BypassFailureCategory = "quota" | "auth" | "transient" | "client" | "ratelimit";
 
@@ -134,6 +146,9 @@ interface BypassConfig {
   apiKey: string;
   model: string;
   cooldownMs: number;
+  quotaCooldownMs: number;
+  authCooldownMs: number;
+  maxFailures: number;
 }
 
 interface ProbeResult {
@@ -144,7 +159,7 @@ interface ProbeResult {
 export class BypassLane {
   private state: BypassState = "DISABLED";
   private consecutiveFailures = 0;
-  private readonly maxFailures = 3;
+  private maxFailures = DEFAULT_MAX_FAILURES;
   private cooldownTimer: ReturnType<typeof setTimeout> | null = null;
   private activeConsumers = new Map<number, AbortController>();
   private config: BypassConfig | null = null;
@@ -179,13 +194,24 @@ export class BypassLane {
     const settings = SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH);
     if (settings.CLAUDE_MEM_PROVIDER !== "openai") return null;
 
-    const cooldownMs = parseInt(settings.CLAUDE_MEM_BYPASS_COOLDOWN_MS) || 1200000;
+    // R3-1: pre-existing cooldown key reads through the same strict bounded
+    // parser as the new keys, with COMPATIBILITY bounds [1s, 24h] — looser
+    // floor than the new keys' 1min because legacy installs and test fixtures
+    // legitimately use short values (e.g. 5000).
+    const cooldownMs =
+      readIntBounded(settings.CLAUDE_MEM_BYPASS_COOLDOWN_MS, 1200000, 1000, 86400000);
+    const quotaCooldownMs =
+      readIntBounded(settings.CLAUDE_MEM_BYPASS_QUOTA_COOLDOWN_MS, DEFAULT_QUOTA_COOLDOWN_MS, 60000, 86400000);
+    const authCooldownMs =
+      readIntBounded(settings.CLAUDE_MEM_BYPASS_AUTH_COOLDOWN_MS, DEFAULT_AUTH_COOLDOWN_MS, 60000, 86400000);
+    const maxFailures =
+      readIntBounded(settings.CLAUDE_MEM_BYPASS_MAX_FAILURES, DEFAULT_MAX_FAILURES, 1, 20);
     const apiKey = settings.CLAUDE_MEM_OPENAI_API_KEY || getCredential("OPENAI_API_KEY") || "";
     const baseUrl = (settings.CLAUDE_MEM_OPENAI_BASE_URL || "").trim();
     const model = settings.CLAUDE_MEM_OPENAI_MODEL || "";
     if (!apiKey || !baseUrl || !model) return null;
     if (!resolveOpenAICompatibleChatCompletionsUrl(baseUrl)) return null; // reject malformed early
-    return { baseUrl, apiKey, model, cooldownMs };
+    return { baseUrl, apiKey, model, cooldownMs, quotaCooldownMs, authCooldownMs, maxFailures };
   }
 
   /** Initialize: check conditions, run probe, transition to ACTIVE if successful. */
@@ -198,6 +224,7 @@ export class BypassLane {
       );
       return;
     }
+    this.maxFailures = this.config.maxFailures;
 
     logger.info(
       "BYPASS",
@@ -347,8 +374,9 @@ export class BypassLane {
     // Pick cooldown based on failure category. Auth/quota are long-tail
     // (config issue / monthly quota), so short 20min retries are wasteful.
     let cooldownMs: number | undefined;
-    if (category === "quota") cooldownMs = QUOTA_COOLDOWN_MS;
-    else if (category === "auth") cooldownMs = AUTH_COOLDOWN_MS;
+    if (category === "quota") cooldownMs = this.config?.quotaCooldownMs;
+    else if (category === "auth") cooldownMs = this.config?.authCooldownMs;
+    // ratelimit / transient fall through to config.cooldownMs via scheduleCooldownProbe
     logger.warn(
       "BYPASS",
       `Circuit breaker TRIPPED after ${this.consecutiveFailures} consecutive failures`,

@@ -21,3 +21,13 @@ describe("SKIP defaults expanded (Route A)", () => {
     expect(SRC).not.toContain("Bash:tail *,");
   });
 });
+
+describe("bypass cooldown tier defaults", () => {
+  test("quota=30min, auth=6h, maxFailures=3 present in source", () => {
+    expect(SRC).toContain("CLAUDE_MEM_BYPASS_QUOTA_COOLDOWN_MS");
+    expect(SRC).toContain('"1800000"');   // 30min
+    expect(SRC).toContain("CLAUDE_MEM_BYPASS_AUTH_COOLDOWN_MS");
+    expect(SRC).toContain('"21600000"');  // 6h
+    expect(SRC).toContain("CLAUDE_MEM_BYPASS_MAX_FAILURES");
+  });
+});
