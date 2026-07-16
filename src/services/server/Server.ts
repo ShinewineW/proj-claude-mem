@@ -59,6 +59,7 @@ export interface AiStatus {
     }>;
   };
   bypass?: import('../worker/BypassLane.js').BypassStatus;
+  layerA?: { toolExcluded: number; patternFiltered: number };
 }
 
 /**

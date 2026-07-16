@@ -477,7 +477,7 @@ describe('readIntBounded (strict bounded settings read)', () => {
     expect(readIntBounded('60000junk', 7, 1, 100000)).toBe(7);
     expect(readIntBounded('1.5', 7, 1, 10)).toBe(7);
     expect(readIntBounded('', 7, 1, 10)).toBe(7);
-    expect(readIntBounded(undefined as any, 7, 1, 10)).toBe(7);
+    expect(readIntBounded(undefined, 7, 1, 10)).toBe(7);
   });
   it('rejects below-min and above-max -> default', () => {
     expect(readIntBounded('-1', 6, 1, 64)).toBe(6);

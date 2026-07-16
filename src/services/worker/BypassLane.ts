@@ -58,7 +58,7 @@ export const DEFAULT_MAX_FAILURES = 3;
  * trailing junk / non-integers / out-of-range all degrade to the default,
  * so a settings.json typo can never wedge the semaphore or the breaker.
  */
-export function readIntBounded(raw: string, def: number, lo: number, hi: number): number {
+export function readIntBounded(raw: string | undefined, def: number, lo: number, hi: number): number {
   const n = Number(String(raw ?? "").trim());
   return Number.isInteger(n) && n >= lo && n <= hi ? n : def;
 }
@@ -622,8 +622,11 @@ export class BypassLane {
       }
 
       // Backoff AFTER the semaphore is released — never sleep holding a slot.
-      // Timings match the pre-rewrite loop exactly: failure → 1000ms,
-      // empty queue / memSession fallback → POLL_MS (500ms), success → immediate next claim.
+      // Timings match the pre-rewrite loop (failure → 1000ms, empty queue /
+      // memSession fallback → POLL_MS 500ms, success → immediate next claim),
+      // with one intentional delta: a failure that TRIPS the breaker returns
+      // immediately above instead of sleeping 1000ms first — the loop is dead
+      // either way, and holding off the exit buys nothing.
       if (outcome === "failed") {
         await this.abortableSleep(1000, signal);
       } else if (outcome === "empty") {
