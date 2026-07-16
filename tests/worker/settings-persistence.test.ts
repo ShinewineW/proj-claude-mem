@@ -131,10 +131,15 @@ describe('Bypass tiered-cooldown / concurrency validation (behavioral, isolated)
     }
   });
 
-  test('all six keys are in the settingKeys write-back allowlist', () => {
+  test('all six keys are inside the settingKeys write-back allowlist array itself', () => {
     const content = readFileSync(join(SRC_ROOT, 'services/worker/http/routes/SettingsRoutes.ts'), 'utf-8');
+    // Slice out the settingKeys array literal so the assertion cannot be
+    // satisfied by a mention elsewhere in the file (e.g. validateSettings).
+    const arrayMatch = content.match(/const settingKeys = \[([\s\S]*?)\];/);
+    expect(arrayMatch).not.toBeNull();
+    const arrayBody = arrayMatch![1];
     for (const [key] of KEYS) {
-      expect(content).toContain(`'${key}'`);
+      expect(arrayBody).toContain(`'${key}'`);
     }
   });
 });
