@@ -94,7 +94,7 @@ export class SettingsDefaultsManager {
     CLAUDE_MEM_WORKER_PORT: "37777",
     CLAUDE_MEM_WORKER_HOST: "127.0.0.1",
     CLAUDE_MEM_SKIP_TOOLS:
-      "ListMcpResourcesTool,SlashCommand,Skill,TodoWrite,AskUserQuestion,Monitor,TaskUpdate,TaskCreate,TaskGet,TaskList,TaskStop,TaskOutput",
+      "ListMcpResourcesTool,SlashCommand,Skill,TodoWrite,AskUserQuestion,Monitor,TaskUpdate,TaskCreate,TaskGet,TaskList,TaskStop,TaskOutput,ScheduleWakeup,ToolSearch",
     // AI Provider Configuration
     CLAUDE_MEM_PROVIDER: "claude", // Default to Claude
     CLAUDE_MEM_OPENAI_API_KEY: "", // Empty by default, set via UI or OPENAI_API_KEY env
@@ -143,7 +143,10 @@ export class SettingsDefaultsManager {
     CLAUDE_MEM_BYPASS_COOLDOWN_MS: "1200000", // 20 minutes
     // SDK Token Optimization (Phase 1)
     CLAUDE_MEM_SKIP_TOOL_PATTERNS:
-      "Read:*SKILL.md,Read:*/.claude/rules/*,Read:*settings.json,Read:*hooks.json,Glob:*",
+      "Read:*SKILL.md,Read:*/.claude/rules/*,Read:*settings.json,Read:*hooks.json,Glob:*," +
+      "Read:*/node_modules/*,Read:*/dist/*,Read:*/build/*,Read:*/.git/*,Read:*/logs/*,Read:*.log,Read:*/tmp/*,Read:*/attn_sink/*," +
+      "Bash:cd *,Bash:ls *,Bash:ls,Bash:pwd,Bash:pwd *,Bash:echo *,Bash:sleep *," +
+      "Bash:cat *.log,Bash:cat */logs/*,Bash:cat */node_modules/*,Bash:head *.log,Bash:head */logs/*,Bash:tail *.log,Bash:tail */logs/*",
     CLAUDE_MEM_BATCH_MAX_SIZE: "5",
     CLAUDE_MEM_OBS_MAX_FIELD_CHARS: "8000",
     // Pool Starvation Defense
