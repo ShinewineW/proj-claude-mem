@@ -77,6 +77,8 @@ function extractMatchField(
     case 'Glob':
     case 'Grep':
       return typeof toolInput.pattern === 'string' ? toolInput.pattern : undefined;
+    case 'Bash':
+      return typeof toolInput.command === 'string' ? toolInput.command : undefined;
     default:
       return undefined;
   }
@@ -94,6 +96,18 @@ export function shouldSkipObservation(
   toolInput: Record<string, unknown> | undefined,
   patterns: ToolPattern[],
 ): boolean {
+  // Bash compound-command guard: a command that chains, backgrounds, or redirects
+  // (&, &&, ||, ;, |, $( ), backtick, >, <) almost always wraps real work
+  // (e.g. `cd /repo && pytest`, `cd /repo & pytest`). Single `&`/`|` in the char
+  // class subsumes `&&`/`||`.
+  // HARD RULE: never skip these — deliberately overrides even an explicit
+  // user-configured `Bash:*` wildcard (compound commands always get observed).
+  if (toolName === 'Bash') {
+    const command = typeof toolInput?.command === 'string' ? toolInput.command : undefined;
+    if (command !== undefined && /[&;|<>`]|\$\(/.test(command)) {
+      return false;
+    }
+  }
   for (const pattern of patterns) {
     if (pattern.tool !== toolName) continue;
 

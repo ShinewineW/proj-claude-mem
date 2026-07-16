@@ -129,3 +129,65 @@ describe("shouldSkipObservation", () => {
     ).toBe(false);
   });
 });
+
+describe("Bash standalone-nav filtering", () => {
+  const bashPatterns = parseSkipPatterns(
+    "Bash:cd *,Bash:ls *,Bash:ls,Bash:pwd,Bash:pwd *,Bash:echo *,Bash:sleep *," +
+      "Bash:cat *.log,Bash:cat */logs/*,Bash:head *.log,Bash:head */logs/*,Bash:tail *.log,Bash:tail */logs/*",
+  );
+
+  test("skips a pure standalone nav command", () => {
+    expect(shouldSkipObservation("Bash", { command: "cd /repo" }, bashPatterns)).toBe(true);
+    expect(shouldSkipObservation("Bash", { command: "pwd" }, bashPatterns)).toBe(true);
+    expect(shouldSkipObservation("Bash", { command: "ls /tmp" }, bashPatterns)).toBe(true);
+  });
+
+  test("skips noise-path cat/tail, keeps source cat (Read-mirror narrowing)", () => {
+    expect(shouldSkipObservation("Bash", { command: "cat /var/logs/app.txt" }, bashPatterns)).toBe(true);
+    expect(shouldSkipObservation("Bash", { command: "tail -20 build.log" }, bashPatterns)).toBe(true);
+    expect(shouldSkipObservation("Bash", { command: "cat src/index.ts" }, bashPatterns)).toBe(false);
+  });
+
+  test("does NOT skip compound command even if it starts with a nav verb", () => {
+    expect(
+      shouldSkipObservation("Bash", { command: "cd /repo && python train.py" }, bashPatterns),
+    ).toBe(false);
+    expect(
+      shouldSkipObservation("Bash", { command: "cd /x && pytest -q" }, bashPatterns),
+    ).toBe(false);
+  });
+
+  test("does NOT skip single-& background compound (R1-3)", () => {
+    expect(
+      shouldSkipObservation("Bash", { command: "cd /repo & pytest" }, bashPatterns),
+    ).toBe(false);
+    expect(
+      shouldSkipObservation("Bash", { command: "echo starting & python run.py" }, bashPatterns),
+    ).toBe(false);
+  });
+
+  test("does NOT skip a redirect (real work: writes a file)", () => {
+    expect(shouldSkipObservation("Bash", { command: "echo hi > f.txt" }, bashPatterns)).toBe(false);
+  });
+
+  test("does NOT skip a non-nav command", () => {
+    expect(shouldSkipObservation("Bash", { command: "python3 run.py" }, bashPatterns)).toBe(false);
+  });
+
+  test("does NOT skip Bash with no command field", () => {
+    expect(shouldSkipObservation("Bash", {}, bashPatterns)).toBe(false);
+  });
+});
+
+describe("Read noise-path filtering", () => {
+  const readPatterns = parseSkipPatterns(
+    "Read:*/logs/*,Read:*.log,Read:*/node_modules/*,Read:*/dist/*",
+  );
+  test("skips noise-path reads", () => {
+    expect(shouldSkipObservation("Read", { file_path: "/x/logs/a.txt" }, readPatterns)).toBe(true);
+    expect(shouldSkipObservation("Read", { file_path: "/x/app.log" }, readPatterns)).toBe(true);
+  });
+  test("keeps source reads", () => {
+    expect(shouldSkipObservation("Read", { file_path: "/x/src/a.ts" }, readPatterns)).toBe(false);
+  });
+});
