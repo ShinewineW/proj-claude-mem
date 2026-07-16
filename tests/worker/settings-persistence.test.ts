@@ -104,3 +104,37 @@ describe('OpenAI base URL validation logic (behavioral, isolated)', () => {
     expect(blank.valid).toBe(true);
   });
 });
+
+describe('Bypass tiered-cooldown / concurrency validation (behavioral, isolated)', () => {
+  // validateSettings is pure — drive it directly (same pattern as base URL suite).
+  const KEYS: Array<[string, string, string, string]> = [
+    // [key, in-range, below-min, above-max]
+    ['CLAUDE_MEM_BYPASS_CONCURRENCY', '3', '0', '17'],
+    ['CLAUDE_MEM_BYPASS_MAX_CONSUMERS', '6', '0', '65'],
+    ['CLAUDE_MEM_BYPASS_MAX_FAILURES', '3', '0', '21'],
+    ['CLAUDE_MEM_BYPASS_QUOTA_COOLDOWN_MS', '1800000', '59999', '86400001'],
+    ['CLAUDE_MEM_BYPASS_AUTH_COOLDOWN_MS', '21600000', '59999', '86400001'],
+    ['CLAUDE_MEM_BYPASS_COOLDOWN_MS', '180000', '999', '86400001'],
+  ];
+
+  test('accepts in-range integers, rejects below-min / above-max / junk / fractional', async () => {
+    const { SettingsRoutes } = await import('../../src/services/worker/http/routes/SettingsRoutes.js');
+    const routes: any = new SettingsRoutes();
+    for (const [key, ok, below, above] of KEYS) {
+      expect(routes.validateSettings({ [key]: ok }).valid).toBe(true);
+      expect(routes.validateSettings({ [key]: below }).valid).toBe(false);
+      expect(routes.validateSettings({ [key]: above }).valid).toBe(false);
+      expect(routes.validateSettings({ [key]: '3junk' }).valid).toBe(false);
+      expect(routes.validateSettings({ [key]: '1.5' }).valid).toBe(false);
+      // empty string = "not provided", passes through (defaults apply)
+      expect(routes.validateSettings({ [key]: '' }).valid).toBe(true);
+    }
+  });
+
+  test('all six keys are in the settingKeys write-back allowlist', () => {
+    const content = readFileSync(join(SRC_ROOT, 'services/worker/http/routes/SettingsRoutes.ts'), 'utf-8');
+    for (const [key] of KEYS) {
+      expect(content).toContain(`'${key}'`);
+    }
+  });
+});

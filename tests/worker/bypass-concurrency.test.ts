@@ -127,3 +127,27 @@ describe("startForSession spawns C consumers (behavioral)", () => {
     expect(lane.activeConsumers.get(session.sessionDbId)).toBe(newAc);
   });
 });
+
+describe("status metrics report real loop count (audit R1-2)", () => {
+  test("C=3: activeConsumers === 3 loops, activeSessions === 1; both drain to 0", async () => {
+    mockSettings = { CLAUDE_MEM_BYPASS_CONCURRENCY: "3" };
+    const lane = new BypassLane() as any;
+    lane.state = "ACTIVE";
+    const resolvers: Array<() => void> = [];
+    lane.consumeLoop = () => new Promise<void>((resolve) => resolvers.push(resolve));
+    lane.startForSession({
+      sessionDbId: 7,
+      dbPath: "/tmp/test-project/.claude/mem.db",
+      memorySessionId: "mem-7",
+      project: "test",
+      abortController: new AbortController(),
+    } as any);
+    expect(lane.getStatus().activeConsumers).toBe(3); // real loops, not session groups
+    expect(lane.getStatus().activeSessions).toBe(1);
+
+    for (const r of resolvers) r();
+    await new Promise((r) => setTimeout(r, 5));
+    expect(lane.getStatus().activeConsumers).toBe(0);
+    expect(lane.getStatus().activeSessions).toBe(0);
+  });
+});

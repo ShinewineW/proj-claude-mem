@@ -63,7 +63,11 @@ export function readIntBounded(raw: string | undefined, def: number, lo: number,
   return Number.isInteger(n) && n >= lo && n <= hi ? n : def;
 }
 
-export type BypassFailureCategory = "quota" | "auth" | "transient" | "client" | "ratelimit";
+// "parse" = provider replied 200 but the content had no usable <observation>
+// XML (content-dependent; the model may legitimately decline). Counts toward
+// the breaker with the default short cooldown, same as an uncategorized error —
+// the distinct label exists for log/telemetry attribution only.
+export type BypassFailureCategory = "quota" | "auth" | "transient" | "client" | "ratelimit" | "parse";
 
 /**
  * Parse an error response body, handling both error envelope shapes observed
@@ -129,7 +133,8 @@ export interface BypassStatus {
   state: BypassState;
   endpoint: string | null;  // host derived from baseUrl, e.g. "api.deepseek.com"
   model: string | null;
-  activeConsumers: number;
+  activeConsumers: number;  // actual running consumeLoop count (C loops per session)
+  activeSessions: number;   // sessions with a live consumer group (one ownAc each)
   consecutiveFailures: number;
   totalClaimed: number;
   totalSucceeded: number;
@@ -163,6 +168,10 @@ export class BypassLane {
   private maxFailures = DEFAULT_MAX_FAILURES;
   private cooldownTimer: ReturnType<typeof setTimeout> | null = null;
   private activeConsumers = new Map<number, AbortController>();
+  // Actual number of live consumeLoop instances across all sessions. With C>1
+  // the map above stays one entry per session (shared ownAc), so map.size
+  // alone under-reports real concurrency (audit R1 finding 2).
+  private runningLoops = 0;
   private config: BypassConfig | null = null;
   private lastFailureReason: string | null = null;
   // Global cap on concurrent bypass REST calls across all sessions.
@@ -271,7 +280,8 @@ export class BypassLane {
       state: this.state,
       endpoint: this.config ? new URL(this.config.baseUrl).host : null,
       model: this.config?.model ?? null,
-      activeConsumers: this.activeConsumers.size,
+      activeConsumers: this.runningLoops,
+      activeSessions: this.activeConsumers.size,
       consecutiveFailures: this.consecutiveFailures,
       totalClaimed: this.counters.claimed,
       totalSucceeded: this.counters.succeeded,
@@ -321,8 +331,10 @@ export class BypassLane {
     const concurrency = readIntBounded(settings.CLAUDE_MEM_BYPASS_CONCURRENCY, 1, 1, 16);
 
     let running = concurrency;
+    this.runningLoops += concurrency;
     const onLoopDone = () => {
       running--;
+      this.runningLoops = Math.max(0, this.runningLoops - 1);
       // M1: only delete when ALL loops exited AND the map still points to THIS ownAc.
       // A stop+restart can install a NEW ownAc before this batch drains; an unconditional
       // delete would clobber the newer controller (the race the original comment in
@@ -691,7 +703,11 @@ export class BypassLane {
     );
 
     if (!responseText) {
-      throw new Error("Empty response from bypass provider");
+      const err = new Error("Empty response from bypass provider") as Error & {
+        bypassCategory: BypassFailureCategory;
+      };
+      err.bypassCategory = "parse";
+      throw err;
     }
 
     // Parse observations from XML response
@@ -721,7 +737,11 @@ export class BypassLane {
     // F1 fix: Throw on empty observations — consumeLoop catch calls markFailed + recordFailure.
     // After 3 failures, circuit breaker trips and main channel takes over.
     if (observations.length === 0) {
-      throw new Error("No observations parsed from bypass response");
+      const err = new Error("No observations parsed from bypass response") as Error & {
+        bypassCategory: BypassFailureCategory;
+      };
+      err.bypassCategory = "parse";
+      throw err;
     }
 
     // Store observations in DB (atomic).
