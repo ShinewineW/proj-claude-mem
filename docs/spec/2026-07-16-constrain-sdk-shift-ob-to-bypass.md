@@ -6,7 +6,7 @@
 > **基准版本**: `proj-claude-mem@205b9101`
 > **目的**: 削减 Claude SDK 订阅消耗——安全削减低价值 OB,并把绝大多数真实 OB 从 SDK observer 迁到便宜的 opencode Bypass 通路。
 > 范围: `proj-claude-mem` / worker 子系统(BypassLane、observation-filter、SettingsRoutes、Settings)
-> 修订: v2(2026-07-16)——sim-review 全量代码核查后按 5 项已确认决策修订,见「v2 修订记录」。
+> 修订: v3(2026-07-16)——Mac Final Gate 补齐 Viewer 设置链路,并保留独立 `echo` 观测;此前 v2 记录见下文。
 
 ---
 
@@ -19,6 +19,11 @@
 **Tech Stack:** TypeScript(ESM,`.js` 扩展名 import)、`bun:test`、better-sqlite3、Express。构建 `bun run build-and-sync`。
 
 ---
+
+## v3 Final Gate 修订(2026-07-16)
+
+- 6 个 bypass 冷却/并发键现已完整进入 Viewer 的类型、默认值、加载和编辑链路,不再只是后端可持久化。
+- 默认 SKIP 模式移除 `Bash:echo *`:独立 `echo` 可能携带诊断信息,不满足“安全削减纯导航噪声”的保守门槛;用户仍可显式配置该模式,复合命令硬守卫保持不变。
 
 ## v2 修订记录(sim-review 决策,2026-07-16)
 
@@ -94,7 +99,7 @@ v2 同时落地的审计修复:
 ```typescript
 describe("Bash standalone-nav filtering", () => {
   const bashPatterns = parseSkipPatterns(
-    "Bash:cd *,Bash:ls *,Bash:ls,Bash:pwd,Bash:pwd *,Bash:echo *,Bash:sleep *," +
+    "Bash:cd *,Bash:ls *,Bash:ls,Bash:pwd,Bash:pwd *,Bash:sleep *," +
       "Bash:cat *.log,Bash:cat */logs/*,Bash:head *.log,Bash:head */logs/*,Bash:tail *.log,Bash:tail */logs/*",
   );
 
@@ -269,7 +274,7 @@ NEW:
     CLAUDE_MEM_SKIP_TOOL_PATTERNS:
       "Read:*SKILL.md,Read:*/.claude/rules/*,Read:*settings.json,Read:*hooks.json,Glob:*," +
       "Read:*/node_modules/*,Read:*/dist/*,Read:*/build/*,Read:*/.git/*,Read:*/logs/*,Read:*.log,Read:*/tmp/*,Read:*/attn_sink/*," +
-      "Bash:cd *,Bash:ls *,Bash:ls,Bash:pwd,Bash:pwd *,Bash:echo *,Bash:sleep *," +
+      "Bash:cd *,Bash:ls *,Bash:ls,Bash:pwd,Bash:pwd *,Bash:sleep *," +
       "Bash:cat *.log,Bash:cat */logs/*,Bash:cat */node_modules/*,Bash:head *.log,Bash:head */logs/*,Bash:tail *.log,Bash:tail */logs/*",
 ```
 

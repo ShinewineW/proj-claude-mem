@@ -13,6 +13,14 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 
 const SRC_ROOT = join(import.meta.dir, '../../src');
+const BYPASS_UI_KEYS = [
+  'CLAUDE_MEM_BYPASS_COOLDOWN_MS',
+  'CLAUDE_MEM_BYPASS_QUOTA_COOLDOWN_MS',
+  'CLAUDE_MEM_BYPASS_AUTH_COOLDOWN_MS',
+  'CLAUDE_MEM_BYPASS_MAX_FAILURES',
+  'CLAUDE_MEM_BYPASS_CONCURRENCY',
+  'CLAUDE_MEM_BYPASS_MAX_CONSUMERS',
+];
 
 describe('Phase 1 settings persistence', () => {
   test('Phase 1 keys exist in SettingsDefaults interface', () => {
@@ -141,5 +149,29 @@ describe('Bypass tiered-cooldown / concurrency validation (behavioral, isolated)
     for (const [key] of KEYS) {
       expect(arrayBody).toContain(`'${key}'`);
     }
+  });
+});
+
+describe('Bypass settings viewer round-trip', () => {
+  test('all six keys are typed, defaulted, loaded, and editable', () => {
+    const sources = [
+      readFileSync(join(SRC_ROOT, 'ui/viewer/types.ts'), 'utf-8'),
+      readFileSync(join(SRC_ROOT, 'ui/viewer/constants/settings.ts'), 'utf-8'),
+      readFileSync(join(SRC_ROOT, 'ui/viewer/hooks/useSettings.ts'), 'utf-8'),
+      readFileSync(join(SRC_ROOT, 'ui/viewer/components/ContextSettingsModal.tsx'), 'utf-8'),
+    ];
+
+    for (const key of BYPASS_UI_KEYS) {
+      for (const source of sources) expect(source).toContain(key);
+    }
+  });
+
+  test('autosave reports success only after the backend accepts the settings', () => {
+    const hook = readFileSync(join(SRC_ROOT, 'ui/viewer/hooks/useSettings.ts'), 'utf-8');
+    const modal = readFileSync(join(SRC_ROOT, 'ui/viewer/components/ContextSettingsModal.tsx'), 'utf-8');
+    expect(hook).toContain('if (!response.ok || !result.success)');
+    expect(hook).toContain("throw new Error(result.error || 'Failed to save settings')");
+    expect(modal).toContain('void onSave(formState)');
+    expect(modal).toContain("setAutoSaveStatus('Save failed')");
   });
 });

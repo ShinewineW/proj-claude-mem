@@ -20,6 +20,9 @@ describe("SKIP defaults expanded (Route A)", () => {
     expect(SRC).not.toContain("Bash:head *,");
     expect(SRC).not.toContain("Bash:tail *,");
   });
+  test("standalone echo remains observable by default", () => {
+    expect(SRC).not.toContain("Bash:echo *");
+  });
 });
 
 describe("bypass cooldown tier defaults", () => {

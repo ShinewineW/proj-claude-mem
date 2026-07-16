@@ -9,7 +9,7 @@ interface ContextSettingsModalProps {
   isOpen: boolean;
   onClose: () => void;
   settings: Settings;
-  onSave: (settings: Settings) => void;
+  onSave: (settings: Settings) => Promise<void>;
 }
 
 // Collapsible section component
@@ -171,10 +171,15 @@ export function ContextSettingsModal({
       return;
     }
     const timeout = setTimeout(() => {
-      onSave(formState);
-      lastSavedRef.current = formState;
-      setAutoSaveStatus('Saved');
-      setTimeout(() => setAutoSaveStatus(''), 1500);
+      void onSave(formState)
+        .then(() => {
+          lastSavedRef.current = formState;
+          setAutoSaveStatus('Saved');
+          setTimeout(() => setAutoSaveStatus(''), 1500);
+        })
+        .catch(() => {
+          setAutoSaveStatus('Save failed');
+        });
     }, 500);
     return () => clearTimeout(timeout);
   }, [formState]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -394,6 +399,66 @@ export function ContextSettingsModal({
                     apiKey={formState.CLAUDE_MEM_OPENAI_API_KEY ?? ''}
                     model={formState.CLAUDE_MEM_OPENAI_MODEL ?? ''}
                   />
+                  <div className="display-subsection">
+                    <span className="subsection-label">Bypass Limits</span>
+                    <FormField label="Per-session consumers" tooltip="Parallel bypass consumers per session (1-16)">
+                      <input
+                        type="number"
+                        min="1"
+                        max="16"
+                        value={formState.CLAUDE_MEM_BYPASS_CONCURRENCY ?? DEFAULT_SETTINGS.CLAUDE_MEM_BYPASS_CONCURRENCY}
+                        onChange={(e) => updateSetting('CLAUDE_MEM_BYPASS_CONCURRENCY', e.target.value)}
+                      />
+                    </FormField>
+                    <FormField label="Global REST limit" tooltip="Maximum concurrent bypass requests across all sessions (1-64)">
+                      <input
+                        type="number"
+                        min="1"
+                        max="64"
+                        value={formState.CLAUDE_MEM_BYPASS_MAX_CONSUMERS ?? DEFAULT_SETTINGS.CLAUDE_MEM_BYPASS_MAX_CONSUMERS}
+                        onChange={(e) => updateSetting('CLAUDE_MEM_BYPASS_MAX_CONSUMERS', e.target.value)}
+                      />
+                    </FormField>
+                    <FormField label="Failure threshold" tooltip="Consecutive failures before the bypass circuit trips (1-20)">
+                      <input
+                        type="number"
+                        min="1"
+                        max="20"
+                        value={formState.CLAUDE_MEM_BYPASS_MAX_FAILURES ?? DEFAULT_SETTINGS.CLAUDE_MEM_BYPASS_MAX_FAILURES}
+                        onChange={(e) => updateSetting('CLAUDE_MEM_BYPASS_MAX_FAILURES', e.target.value)}
+                      />
+                    </FormField>
+                    <FormField label="Retry cooldown (ms)" tooltip="Cooldown for rate-limit and transient failures (1000-86400000 ms)">
+                      <input
+                        type="number"
+                        min="1000"
+                        max="86400000"
+                        step="1000"
+                        value={formState.CLAUDE_MEM_BYPASS_COOLDOWN_MS ?? DEFAULT_SETTINGS.CLAUDE_MEM_BYPASS_COOLDOWN_MS}
+                        onChange={(e) => updateSetting('CLAUDE_MEM_BYPASS_COOLDOWN_MS', e.target.value)}
+                      />
+                    </FormField>
+                    <FormField label="Quota cooldown (ms)" tooltip="Cooldown for quota failures (60000-86400000 ms)">
+                      <input
+                        type="number"
+                        min="60000"
+                        max="86400000"
+                        step="60000"
+                        value={formState.CLAUDE_MEM_BYPASS_QUOTA_COOLDOWN_MS ?? DEFAULT_SETTINGS.CLAUDE_MEM_BYPASS_QUOTA_COOLDOWN_MS}
+                        onChange={(e) => updateSetting('CLAUDE_MEM_BYPASS_QUOTA_COOLDOWN_MS', e.target.value)}
+                      />
+                    </FormField>
+                    <FormField label="Auth cooldown (ms)" tooltip="Cooldown for authentication failures (60000-86400000 ms)">
+                      <input
+                        type="number"
+                        min="60000"
+                        max="86400000"
+                        step="60000"
+                        value={formState.CLAUDE_MEM_BYPASS_AUTH_COOLDOWN_MS ?? DEFAULT_SETTINGS.CLAUDE_MEM_BYPASS_AUTH_COOLDOWN_MS}
+                        onChange={(e) => updateSetting('CLAUDE_MEM_BYPASS_AUTH_COOLDOWN_MS', e.target.value)}
+                      />
+                    </FormField>
+                  </div>
                 </>
               )}
 
@@ -432,7 +497,7 @@ export function ContextSettingsModal({
 
         {/* Footer with auto-save indicator */}
         <div className="modal-footer">
-          <span className={`auto-save-status ${autoSaveStatus ? 'saved' : ''}`}>
+          <span className={`auto-save-status ${autoSaveStatus === 'Saved' ? 'saved' : autoSaveStatus ? 'error' : ''}`}>
             {autoSaveStatus}
           </span>
         </div>

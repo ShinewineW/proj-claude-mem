@@ -155,7 +155,7 @@ export class SettingsDefaultsManager {
     CLAUDE_MEM_SKIP_TOOL_PATTERNS:
       "Read:*SKILL.md,Read:*/.claude/rules/*,Read:*settings.json,Read:*hooks.json,Glob:*," +
       "Read:*/node_modules/*,Read:*/dist/*,Read:*/build/*,Read:*/.git/*,Read:*/logs/*,Read:*.log,Read:*/tmp/*,Read:*/attn_sink/*," +
-      "Bash:cd *,Bash:ls *,Bash:ls,Bash:pwd,Bash:pwd *,Bash:echo *,Bash:sleep *," +
+      "Bash:cd *,Bash:ls *,Bash:ls,Bash:pwd,Bash:pwd *,Bash:sleep *," +
       "Bash:cat *.log,Bash:cat */logs/*,Bash:cat */node_modules/*,Bash:head *.log,Bash:head */logs/*,Bash:tail *.log,Bash:tail */logs/*",
     CLAUDE_MEM_BATCH_MAX_SIZE: "5",
     CLAUDE_MEM_OBS_MAX_FIELD_CHARS: "8000",
