@@ -48,7 +48,7 @@ echo "Delta: $((AFTER - BEFORE))"  # Must be 0
 
 **Audit test location**: `tests/audit/` 保留 file-to-prod Stage 3 产出的 property-based tests 作为长期回归覆盖（命名约定 `phaseN-<topic>.test.ts`）。
 
-**Logger coverage gate**: Files under `src/services/worker/`, `src/services/sqlite/`, `src/services/sync/`, `src/hooks/`, `src/sdk/`, `src/servers/` must `import { logger }`. Enforced by `tests/logger-usage-standards.test.ts` — new files without logger import fail full suite. Current exclusions for pure function / coordinator modules: `stale-detection.ts`, `pool-cooldown-utils.ts`, `backpressure.ts`, `generator-action.ts`, `spawn-args-filter.ts`, `fresh-summarize-store.ts`, `fresh-summarize-deps.ts`, `obs-cap-policy.ts`, `SessionCompletionHandler.ts`.
+**Logger coverage gate**: Files under `src/services/worker/`, `src/services/sqlite/`, `src/services/sync/`, `src/hooks/`, `src/sdk/`, `src/servers/` must `import { logger }`. Enforced by `tests/logger-usage-standards.test.ts` — new files without logger import fail full suite. Current exclusions for pure function / coordinator modules: `stale-detection.ts`, `pool-cooldown-utils.ts`, `backpressure.ts`, `generator-action.ts`, `spawn-args-filter.ts`, `fresh-summarize-store.ts`, `fresh-summarize-deps.ts`, `obs-cap-policy.ts`, `SessionCompletionHandler.ts`, `global-semaphore.ts`.
 
 ## Structure
 
