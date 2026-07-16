@@ -115,6 +115,7 @@ export class SettingsRoutes extends BaseRouteHandler {
       // Session lifecycle guard
       'CLAUDE_MEM_SESSION_MAX_AGE_MS',
       // Bypass tiered cooldowns + concurrency
+      'CLAUDE_MEM_BYPASS_COOLDOWN_MS',
       'CLAUDE_MEM_BYPASS_QUOTA_COOLDOWN_MS',
       'CLAUDE_MEM_BYPASS_AUTH_COOLDOWN_MS',
       'CLAUDE_MEM_BYPASS_MAX_FAILURES',
@@ -182,6 +183,11 @@ export class SettingsRoutes extends BaseRouteHandler {
       ['CLAUDE_MEM_BYPASS_MAX_FAILURES', 1, 20],
       ['CLAUDE_MEM_BYPASS_QUOTA_COOLDOWN_MS', 60000, 86400000],  // 1min–24h
       ['CLAUDE_MEM_BYPASS_AUTH_COOLDOWN_MS', 60000, 86400000],   // 1min–24h
+      // Pre-existing key (R1-4b/R3-1): COMPATIBILITY bounds [1s, 24h], looser
+      // than the new keys' 1min floor — existing installs and test fixtures
+      // legitimately use short values (e.g. 5000); only negative/junk/absurd
+      // durations are outlawed. Runtime read uses the SAME bounds (BypassLane).
+      ['CLAUDE_MEM_BYPASS_COOLDOWN_MS', 1000, 86400000],
     ];
     for (const [key, lo, hi] of intBounds) {
       if (settings[key] !== undefined && settings[key] !== '') {
