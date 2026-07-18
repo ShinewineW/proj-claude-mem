@@ -11,6 +11,7 @@ import { existsSync, writeFileSync, unlinkSync, statSync } from 'fs';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { getWorkerPort, getWorkerHost } from '../shared/worker-utils.js';
+import { shouldClearStaleAnchorOnResumeFailure, resetSessionAnchorForFreshStart } from '../shared/observer-anchor.js';
 import { HOOK_TIMEOUTS } from '../shared/hook-constants.js';
 import { SettingsDefaultsManager } from '../shared/SettingsDefaultsManager.js';
 import { getAuthMethodDescription } from '../shared/EnvManager.js';
@@ -791,17 +792,15 @@ export class WorkerService {
         }
 
         // Detect stale resume failures - SDK session context was lost
-        if ((errorMessage.includes('aborted by user') || errorMessage.includes('No conversation found'))
-            && session.memorySessionId) {
+        if (shouldClearStaleAnchorOnResumeFailure(errorMessage, session.memorySessionId)) {
           logger.warn('SDK', 'Detected stale resume failure, clearing memorySessionId for fresh start', {
             sessionId: session.sessionDbId,
             memorySessionId: session.memorySessionId,
             errorMessage
           });
           // Clear stale memorySessionId and force fresh init on next attempt
-          this.dbManager.getSessionStore(session.dbPath).updateMemorySessionId(session.sessionDbId, null);
-          session.memorySessionId = null;
-          session.forceInit = true;
+          // (评审 R2-1: routed through the single production clear helper).
+          resetSessionAnchorForFreshStart(this.dbManager.getSessionStore(session.dbPath), session);
         }
         logger.error('SDK', 'Session generator failed', {
           sessionId: session.sessionDbId,

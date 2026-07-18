@@ -50,6 +50,7 @@ import {
 import { checkProcessStaleness } from "./stale-detection.js";
 import { processRegistry } from "./ProcessRegistry.js";
 import { shouldProactiveReset } from "./generator-action.js";
+import { isWorkerAnchor, resetSessionAnchorForFreshStart } from "../../shared/observer-anchor.js";
 import { buildHardenedSdkOptions } from "../../sdk/hardened-options.js";
 
 // Import Agent SDK (assumes it's installed)
@@ -60,6 +61,12 @@ export function shouldPersistSDKSessionId(
   message: { type?: string; subtype?: string; session_id?: string | null },
   currentMemorySessionId: string | null,
 ): message is { session_id: string } {
+  // A cm- worker anchor is stable and must NEVER be overwritten by the SDK's own
+  // session id (doing so would re-point observations via ON UPDATE CASCADE and
+  // re-open the FK-race the new mode eliminates). Mode-independent guard.
+  if (isWorkerAnchor(currentMemorySessionId)) {
+    return false;
+  }
   if (!message.session_id || message.session_id === currentMemorySessionId) {
     return false;
   }
@@ -68,6 +75,25 @@ export function shouldPersistSDKSessionId(
     message.type === "system" &&
     typeof message.subtype === "string" &&
     message.subtype.startsWith("hook_")
+  );
+}
+
+/** Resume decision for the observer SDK session (extracted for direct testing,
+ *  评审 R1-3). A cm- worker anchor is stateless and NEVER resumes, regardless
+ *  of mode; the legacy conditions are unchanged. Keep this the ONLY resume
+ *  decision point — startSession must call it, never inline the logic. */
+export function shouldResumeSDKSession(session: {
+  memorySessionId: string | null;
+  lastPromptNumber: number;
+  forceInit?: boolean;
+  proactiveReset?: boolean;
+}): boolean {
+  return (
+    !!session.memorySessionId &&
+    session.lastPromptNumber > 1 &&
+    !session.forceInit &&
+    !session.proactiveReset &&                 // Layer C: proactive reset prevents resume
+    !isWorkerAnchor(session.memorySessionId)   // cm- anchor: never resume (mode-independent)
   );
 }
 
@@ -114,11 +140,7 @@ export class SDKAgent {
     // SDK session but we must NOT resume because the SDK context was lost.
     // NEVER use contentSessionId for resume - that would inject messages into the user's transcript!
     const hasRealMemorySessionId = !!session.memorySessionId;
-    const shouldResume =
-      hasRealMemorySessionId &&
-      session.lastPromptNumber > 1 &&
-      !session.forceInit &&
-      !session.proactiveReset;  // Layer C: proactive reset prevents resume
+    const shouldResume = shouldResumeSDKSession(session);
 
     // Clear forceInit after using it
     if (session.forceInit) {
@@ -194,7 +216,9 @@ export class SDKAgent {
       );
     } else {
       // INIT prompt - never resume even if memorySessionId exists (stale from previous session)
-      const hasStaleMemoryId = hasRealMemorySessionId;
+      // A cm- worker anchor is a deliberate stable anchor, NOT a stale SDK id —
+      // exclude it so OFF-mode sessions don't emit a spurious "SDK context was lost" WARN.
+      const hasStaleMemoryId = hasRealMemorySessionId && !isWorkerAnchor(session.memorySessionId);
       logger.debug(
         "SDK",
         `[ALIGNMENT] First Prompt (INIT) | contentSessionId=${session.contentSessionId} | prompt#=${session.lastPromptNumber} | hasStaleMemoryId=${hasStaleMemoryId} | action=START_FRESH | Will capture new memorySessionId from SDK response`,
@@ -338,6 +362,14 @@ export class SDKAgent {
             "SDK",
             `[ALIGNMENT] ${previousId ? "Updated" : "Captured"} | contentSessionId=${session.contentSessionId} → memorySessionId=${message.session_id} | Future prompts will resume with this ID`,
           );
+        } else if (
+          isWorkerAnchor(session.memorySessionId) &&
+          message.session_id &&
+          message.type === "system" &&
+          (message as { subtype?: string }).subtype === "init"
+        ) {
+          // cm- anchor kept: record the SDK's own id at debug for transcript correlation.
+          logger.debug("SDK", `SDK id observed, stable worker anchor kept | sessionDbId=${session.sessionDbId} | sdkSessionId=${message.session_id} | anchor=${session.memorySessionId}`);
         }
 
         // Handle assistant messages
@@ -362,15 +394,17 @@ export class SDKAgent {
               "Context overflow detected - terminating session and forcing fresh start",
               { sessionDbId: session.sessionDbId },
             );
-            // Resuming this SDK session would overflow forever. Null the memory
-            // session id and force a fresh init so the next spawn drains the
-            // remaining pending messages successfully (#2088). Complementary to
-            // Layer-C proactive reset (which fires preemptively by thresholds).
-            this.dbManager
-              .getSessionStore(session.dbPath)
-              .updateMemorySessionId(session.sessionDbId, null);
-            session.memorySessionId = null;
-            session.forceInit = true;
+            // Route through THE production clear helper (评审 R2-1). Legacy SDK-id
+            // anchor: resuming it would overflow forever — helper nulls it (#2088).
+            // A cm- worker anchor is kept (评审 R1-1): it is never resumed, so the
+            // poisoned SDK context cannot recur through it, and clearing it would
+            // orphan the FK anchor bypass/observer store under (CASCADE would even
+            // NULL child rows' NOT NULL column). forceInit is set inside the helper
+            // either way, so the next spawn is a fresh subprocess.
+            resetSessionAnchorForFreshStart(
+              this.dbManager.getSessionStore(session.dbPath),
+              session,
+            );
             session.abortController.abort();
             return;
           }

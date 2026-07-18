@@ -8,6 +8,7 @@
 import express, { Request, Response } from 'express';
 import { getWorkerPort } from '../../../../shared/worker-utils.js';
 import { logger } from '../../../../utils/logger.js';
+import { shouldClearStaleAnchorOnResumeFailure, resetSessionAnchorForFreshStart } from '../../../../shared/observer-anchor.js';
 import { stripMemoryTagsFromPrompt, stripMemoryTagsFromPromptDetailed } from '../../../../utils/tag-stripping.js';
 import { cleanToolField } from './observation-utils.js';
 import { parseSkipPatterns, shouldSkipObservation, layerAStats, type ToolPattern } from './observation-filter.js';
@@ -274,16 +275,15 @@ export class SessionRoutes extends BaseRouteHandler {
 
         // Stale-resume detection (symmetric with WorkerService .catch())
         const errorMessage = error instanceof Error ? error.message : String(error);
-        if ((errorMessage.includes('aborted by user') || errorMessage.includes('No conversation found'))
-            && session.memorySessionId) {
+        if (shouldClearStaleAnchorOnResumeFailure(errorMessage, session.memorySessionId)) {
           logger.warn('SESSION', 'Stale resume detected, forcing fresh init', {
             sessionDbId: session.sessionDbId, staleMemorySessionId: session.memorySessionId,
           });
           try {
-            this.dbManager.getSessionStore(session.dbPath).updateMemorySessionId(session.sessionDbId, null);
-          } catch {} // Best-effort DB update
-          session.memorySessionId = null;
-          session.forceInit = true;
+            // Guard is true → anchor is a clearable legacy SDK id → helper clears it
+            // (DB + memory) and sets forceInit (评审 R2-1: single choke point).
+            resetSessionAnchorForFreshStart(this.dbManager.getSessionStore(session.dbPath), session);
+          } catch {} // Best-effort DB update — on failure the anchor stays consistent (kept in both DB and memory); forceInit is already set by the helper
         }
       })
       .finally(async () => {

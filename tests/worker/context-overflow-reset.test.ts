@@ -35,12 +35,12 @@ describe('context-overflow fresh-start reset', () => {
 
 describe('context-overflow reset wiring (source)', () => {
   const SRC = readFileSync(join(import.meta.dir, '../../src/services/worker/SDKAgent.ts'), 'utf-8');
-  it('forces a fresh start in the context-overflow branch', () => {
-    expect(SRC).toContain('session.forceInit = true;');
-  });
-  it('nulls memorySessionId in the DB on overflow', () => {
-    // shape-insensitive: collapse whitespace before matching the multi-line call.
+  it('routes the overflow fresh-start through resetSessionAnchorForFreshStart', () => {
+    // forceInit + the conditional anchor clear both live inside the helper now
+    // (评审 R2-1/R4-1): the overflow branch must call it, and the raw null-clear
+    // must be gone from SDKAgent entirely.
     const flat = SRC.replace(/\s+/g, '');
-    expect(flat).toContain('.updateMemorySessionId(session.sessionDbId,null)'.replace(/\s+/g, ''));
+    expect(flat).toContain('resetSessionAnchorForFreshStart(');
+    expect(flat).not.toContain('.updateMemorySessionId(session.sessionDbId,null)');
   });
 });
