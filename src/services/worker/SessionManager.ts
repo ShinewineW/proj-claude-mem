@@ -9,6 +9,7 @@
  */
 
 import { EventEmitter } from 'events';
+import { isWorkerAnchor } from "../../shared/observer-anchor.js";
 import * as fs from 'fs';
 import path from 'path';
 import { DatabaseManager } from './DatabaseManager.js';
@@ -54,6 +55,17 @@ function capLastAssistantMessage(msg: string | undefined): string | undefined {
   if (msg.length <= MAX_LAST_ASSISTANT_MESSAGE_CHARS) return msg;
   const tailLen = MAX_LAST_ASSISTANT_MESSAGE_CHARS;
   return LAST_ASSISTANT_MESSAGE_TRUNCATION_MARKER + msg.slice(-tailLen);
+}
+
+/**
+ * Decide the in-memory memory_session_id when (re)initializing a session.
+ * - cm- worker anchor  → load it (stable, never resumed; bypass/observer store under it).
+ * - real SDK-id / null → null (Issue #817: stale SDK id would crash on resume).
+ */
+export function resolveInitialInMemoryAnchor(
+  dbMemorySessionId: string | null | undefined,
+): string | null {
+  return isWorkerAnchor(dbMemorySessionId) ? (dbMemorySessionId as string) : null;
 }
 
 export class SessionManager {
@@ -218,8 +230,10 @@ export class SessionManager {
       memory_session_id: dbSession.memory_session_id
     });
 
-    // Log warning if we're discarding a stale memory_session_id (Issue #817)
-    if (dbSession.memory_session_id) {
+    // Log warning if we're discarding a stale memory_session_id (Issue #817).
+    // A cm- worker anchor is NOT stale — it is loaded back below (new mode),
+    // so only warn when a real SDK-id anchor is actually being discarded.
+    if (dbSession.memory_session_id && !isWorkerAnchor(dbSession.memory_session_id)) {
       logger.warn('SESSION', `Discarding stale memory_session_id from previous worker instance (Issue #817)`, {
         sessionDbId,
         staleMemorySessionId: dbSession.memory_session_id,
@@ -253,7 +267,9 @@ export class SessionManager {
     session = {
       sessionDbId,
       contentSessionId: dbSession.content_session_id,
-      memorySessionId: null,  // Always start fresh - SDK will capture new ID
+      // cm- worker anchor is loaded back (stable, never resumed → immune to Issue #817);
+      // a real SDK-id anchor is still nulled to prevent "No conversation found" on resume.
+      memorySessionId: resolveInitialInMemoryAnchor(dbSession.memory_session_id),
       project: dbSession.project,
       userPrompt,
       pendingMessages: [],
@@ -283,7 +299,9 @@ export class SessionManager {
       sessionDbId,
       contentSessionId: dbSession.content_session_id,
       dbMemorySessionId: dbSession.memory_session_id || '(none in DB)',
-      memorySessionId: '(cleared - will capture fresh from SDK)',
+      memorySessionId: session.memorySessionId
+        ? `(loaded stable anchor ${session.memorySessionId})`
+        : '(cleared - will capture fresh from SDK)',
       lastPromptNumber: promptNumber || this.dbManager.getSessionStore(dbPath).getLatestRealPromptNumber(dbSession.content_session_id)
     });
 
