@@ -42,6 +42,7 @@ export interface SettingsDefaults {
   CLAUDE_MEM_FOLDER_CLAUDEMD_ENABLED: string;
   // Process Management
   CLAUDE_MEM_MAX_CONCURRENT_AGENTS: string; // Max concurrent Claude SDK agent subprocesses (default: 4)
+  CLAUDE_MEM_OBSERVER_RESUME: string; // Master switch. NOT in viewer UI, NOT writable via POST /api/settings (absent from settingKeys whitelist); GET /api/settings echoes it read-only. Hand-edit settings.json or env var (priority env > file > default). "true"=legacy resumable observer + SDK-seeded id; "false"(default)=new decoupled mode (stateless observer, claude-mem-minted cm- anchor).
   CLAUDE_MEM_RESPONSE_WATCHDOG_MS: string; // Kill subprocess if no response within this time (default: 300000 = 5min)
   // Exclusion Settings
   CLAUDE_MEM_EXCLUDED_PROJECTS: string; // Comma-separated glob patterns for excluded project paths
@@ -125,6 +126,7 @@ export class SettingsDefaultsManager {
     CLAUDE_MEM_FOLDER_CLAUDEMD_ENABLED: "false",
     // Process Management
     CLAUDE_MEM_MAX_CONCURRENT_AGENTS: "4", // Max concurrent Claude SDK agent subprocesses (raised from 2: audit 2026-03-28 P0)
+    CLAUDE_MEM_OBSERVER_RESUME: "false", // default = new decoupled mode
     CLAUDE_MEM_RESPONSE_WATCHDOG_MS: "300000", // 5 minutes — kill subprocess if no response
     // Exclusion Settings
     CLAUDE_MEM_EXCLUDED_PROJECTS: "", // Comma-separated glob patterns for excluded project paths
