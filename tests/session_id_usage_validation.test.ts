@@ -1,5 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 import { SessionStore } from '../src/services/sqlite/SessionStore.js';
+import { isWorkerAnchor } from '../src/shared/observer-anchor.js';
+import { shouldResumeSDKSession } from '../src/services/worker/SDKAgent.js';
 
 /**
  * Session ID Usage Validation - Smoke Tests for Critical Invariants
@@ -76,22 +78,20 @@ describe('Session ID Critical Invariants', () => {
   });
 
   describe('Resume Safety', () => {
-    it('should prevent resume when memorySessionId is NULL (not yet captured)', () => {
+    it('creation-time anchor is never resumable (NULL in legacy, cm- worker anchor in new mode)', () => {
       const contentSessionId = 'new-session-123';
       const sessionDbId = store.createSDKSession(contentSessionId, 'test-project', 'First prompt');
 
       const session = store.getSessionById(sessionDbId);
+      const anchor = session?.memory_session_id ?? null;
 
-      // CRITICAL: Before SDK returns real session ID, memory_session_id must be NULL
-      expect(session?.memory_session_id).toBeNull();
+      // Mode-agnostic invariant: a freshly created row NEVER holds a raw SDK id —
+      // it is NULL (legacy: SDK seeds later) or a cm- worker anchor (new mode).
+      expect(anchor === null || isWorkerAnchor(anchor)).toBe(true);
 
-      // hasRealMemorySessionId check: only resume when non-NULL
-      const hasRealMemorySessionId = session?.memory_session_id !== null;
-      expect(hasRealMemorySessionId).toBe(false);
-
-      // Resume options should be empty (no resume parameter)
-      const resumeOptions = hasRealMemorySessionId ? { resume: session?.memory_session_id } : {};
-      expect(resumeOptions).toEqual({});
+      // Resume safety, via the REAL production decision function: whatever the
+      // mode, the creation-time anchor must not resume (even past prompt #1).
+      expect(shouldResumeSDKSession({ memorySessionId: anchor, lastPromptNumber: 2 })).toBe(false);
     });
 
     it('should allow resume only after memorySessionId is captured', () => {
@@ -100,9 +100,10 @@ describe('Session ID Critical Invariants', () => {
 
       const sessionDbId = store.createSDKSession(contentSessionId, 'test-project', 'Prompt');
 
-      // Before capture
+      // Before capture: never a raw SDK id (NULL in legacy, cm- worker anchor in new mode)
       let session = store.getSessionById(sessionDbId);
-      expect(session?.memory_session_id).toBeNull();
+      const preCapture = session?.memory_session_id ?? null;
+      expect(preCapture === null || isWorkerAnchor(preCapture)).toBe(true);
 
       // Capture memory session ID (simulates SDK response)
       store.updateMemorySessionId(sessionDbId, capturedMemoryId);
@@ -140,20 +141,21 @@ describe('Session ID Critical Invariants', () => {
       expect(session?.memory_session_id).toBe('second-generator-memory-id');
     });
 
-    it('should NOT reset memorySessionId when it is still NULL (first prompt scenario)', () => {
-      // When memory_session_id is NULL, createSDKSession should NOT reset it
-      // This is the normal first-prompt scenario where SDKAgent hasn't captured the ID yet
+    it('should NOT reset the creation-time anchor on repeat calls (first prompt scenario)', () => {
+      // Before SDK capture the anchor is NULL (legacy) or a cm- worker anchor
+      // (new mode) — either way createSDKSession must never reset or remint it.
       const contentSessionId = 'new-session';
 
-      // First createSDKSession - creates row with NULL memory_session_id
+      // First createSDKSession - creates row with the mode's initial anchor
       const sessionDbId = store.createSDKSession(contentSessionId, 'test-project', 'Prompt 1');
       let session = store.getSessionById(sessionDbId);
-      expect(session?.memory_session_id).toBeNull();
+      const initialAnchor = session?.memory_session_id ?? null;
+      expect(initialAnchor === null || isWorkerAnchor(initialAnchor)).toBe(true);
 
-      // Second createSDKSession (before SDK has returned) - should still be NULL, no reset needed
+      // Second createSDKSession (before SDK has returned) - anchor unchanged, no reset/remint
       store.createSDKSession(contentSessionId, 'test-project', 'Prompt 2');
       session = store.getSessionById(sessionDbId);
-      expect(session?.memory_session_id).toBeNull();
+      expect(session?.memory_session_id ?? null).toBe(initialAnchor);
     });
   });
 

@@ -2,6 +2,7 @@ import { Database } from 'bun:sqlite';
 import { dirname } from 'path';
 import { DB_PATH, ensureDir } from '../../shared/paths.js';
 import { logger } from '../../utils/logger.js';
+import { mintInitialAnchor } from '../../shared/observer-anchor.js';
 import {
   SdkSessionRecord,
   ObservationRecord,
@@ -666,15 +667,20 @@ export class SessionStore {
       return existing.id;
     }
 
-    // New session - insert fresh row
-    // NOTE: memory_session_id starts as NULL. It is captured by SDKAgent from the first SDK
-    // response and stored via ensureMemorySessionIdRegistered(). CRITICAL: memory_session_id
-    // must NEVER equal contentSessionId - that would inject memory messages into the user's transcript!
+    // New session - insert fresh row.
+    // Legacy (resume ON): memory_session_id starts NULL; SDKAgent captures the SDK's
+    //   own id from system:init and stores it via ensureMemorySessionIdRegistered().
+    // New mode (resume OFF): mint a stable "cm-<uuid>" anchor NOW so bypass can store
+    //   observations without waiting for an SDK seed. The switch is read here ONLY;
+    //   all downstream behavior keys off isWorkerAnchor(memory_session_id).
+    // CRITICAL: memory_session_id must NEVER equal contentSessionId — that would inject
+    //   memory messages into the user's transcript (cm- prefix guarantees inequality).
+    const initialAnchor = mintInitialAnchor();
     this.db.prepare(`
       INSERT INTO sdk_sessions
       (content_session_id, memory_session_id, project, user_prompt, custom_title, started_at, started_at_epoch, status)
-      VALUES (?, NULL, ?, ?, ?, ?, ?, 'active')
-    `).run(contentSessionId, project, userPrompt, customTitle || null, now.toISOString(), nowEpoch);
+      VALUES (?, ?, ?, ?, ?, ?, ?, 'active')
+    `).run(contentSessionId, initialAnchor, project, userPrompt, customTitle || null, now.toISOString(), nowEpoch);
 
     // Return new ID
     const row = this.db.prepare('SELECT id FROM sdk_sessions WHERE content_session_id = ?')

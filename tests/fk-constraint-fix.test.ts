@@ -12,6 +12,7 @@
 
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 import { SessionStore } from '../src/services/sqlite/SessionStore.js';
+import { isWorkerAnchor } from '../src/shared/observer-anchor.js';
 
 describe('FK Constraint Fix (Issue #846)', () => {
   let store: SessionStore;
@@ -34,12 +35,13 @@ describe('FK Constraint Fix (Issue #846)', () => {
   });
 
   it('should auto-register memory_session_id before observation INSERT', () => {
-    // Create session with NULL memory_session_id (simulates initial creation)
+    // Create session (initial creation: NULL anchor in legacy, cm- worker anchor in new mode)
     const sessionDbId = store.createSDKSession('test-content-id', 'test-project', 'test prompt');
 
-    // Verify memory_session_id starts as NULL
+    // Verify the row never starts with a raw SDK id (mode-agnostic)
     const beforeSession = store.getSessionById(sessionDbId);
-    expect(beforeSession?.memory_session_id).toBeNull();
+    const before = beforeSession?.memory_session_id ?? null;
+    expect(before === null || isWorkerAnchor(before)).toBe(true);
 
     // Simulate SDK providing new memory_session_id
     const newMemorySessionId = 'new-uuid-from-sdk-' + Date.now();

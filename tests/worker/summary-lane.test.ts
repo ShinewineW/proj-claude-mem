@@ -259,7 +259,9 @@ describe('SummaryLane — processSummarize via consume loop', () => {
     // summarize without a memory_session_id.
     const contentSessionId = 'content-no-mem';
     const sessionDbId = store.createSDKSession(contentSessionId, 'test-project', 'p');
-    // memory_session_id remains NULL.
+    // New mode mints a cm- anchor at creation; force NULL to exercise the
+    // "no memory_session_id" skip branch this test targets (mode-agnostic).
+    store.updateMemorySessionId(sessionDbId, null);
     pendingStore.enqueue(sessionDbId, contentSessionId, {
       type: 'summarize',
       prompt_number: 1,
