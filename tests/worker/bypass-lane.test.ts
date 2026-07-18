@@ -429,7 +429,9 @@ describe('F1: empty observation defense', () => {
     (lane as any).state = 'ACTIVE';
     (lane as any).config = { baseUrl: 'https://api.deepseek.com', apiKey: 'test', model: 'test', cooldownMs: 5000 };
 
-    const mockMarkFailed = mock(() => {});
+    // markFailed now returns { finalStatus, retryCount } (consumed by the
+    // dead-letter branch). retry_count=0 → first failure → 'pending' (retry).
+    const mockMarkFailed = mock(() => ({ finalStatus: 'pending' as const, retryCount: 1 }));
     let claimCount = 0;
     const mockClaimNextObservation = mock(() => {
       claimCount++;

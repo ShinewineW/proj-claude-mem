@@ -601,7 +601,7 @@ export class BypassLane {
             try {
               const obsStats = await this.processObservation(message, session, memorySessionId, signal);
               this.recordSuccess();
-              logger.info("BYPASS", "Observation processed", {
+              logger.info("BYPASS", `STORED | lane=bypass | sessionDbId=${session.sessionDbId} | messageId=${message.id} | obsCount=${obsStats.obsCount}`, {
                 messageId: message.id,
                 sessionDbId: session.sessionDbId,
                 endpoint: this.config ? new URL(this.config.baseUrl).host : null,
@@ -614,12 +614,23 @@ export class BypassLane {
               // Extract bypassCategory if attached by callRestApi.
               const category = (error as { bypassCategory?: BypassFailureCategory })
                 ?.bypassCategory;
-              logger.warn("BYPASS", "Processing failed, marking for retry", {
-                messageId: message.id,
-                category: category ?? "unknown",
-                error: error instanceof Error ? error.message : String(error),
-              });
-              pendingStore.markFailed(message.id);
+              const failResult = pendingStore.markFailed(message.id);
+              if (failResult.finalStatus === "failed") {
+                // Killing blow: the row is now dead-lettered, permanently dropped.
+                // Make the drop visible (评审 Q3) — the old unconditional
+                // "marking for retry" text lied on this final call.
+                logger.warn("BYPASS", `DEAD_LETTER | observation dropped after max retries | messageId=${message.id} | retryCount=${failResult.retryCount} | category=${category ?? "unknown"}`, {
+                  messageId: message.id,
+                  sessionDbId: session.sessionDbId,
+                  error: error instanceof Error ? error.message : String(error),
+                });
+              } else {
+                logger.warn("BYPASS", "Processing failed, marking for retry", {
+                  messageId: message.id,
+                  category: category ?? "unknown",
+                  error: error instanceof Error ? error.message : String(error),
+                });
+              }
               this.sessionManager!.notifyMessageAvailable(session.sessionDbId, session.dbPath);
               this.lastFailureReason = (
                 error instanceof Error ? error.message : String(error)
@@ -653,7 +664,7 @@ export class BypassLane {
     session: ActiveSession,
     memorySessionId: string,
     signal: AbortSignal,
-  ): Promise<{ truncatedFields: number }> {
+  ): Promise<{ truncatedFields: number; obsCount: number }> {
     if (!this.config || !this.dbManager || !this.sessionManager) {
       throw new Error("BypassLane not configured");
     }
@@ -806,7 +817,7 @@ export class BypassLane {
       });
     }
 
-    return { truncatedFields };
+    return { truncatedFields, obsCount: result.observationIds.length };
   }
 
   /** Call the OpenAI-compatible REST API. Returns response text. */
