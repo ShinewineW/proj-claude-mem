@@ -8,7 +8,7 @@
 import express, { Request, Response } from 'express';
 import { getWorkerPort } from '../../../../shared/worker-utils.js';
 import { logger } from '../../../../utils/logger.js';
-import { shouldClearStaleAnchorOnResumeFailure, resetSessionAnchorForFreshStart } from '../../../../shared/observer-anchor.js';
+import { shouldClearStaleAnchorOnResumeFailure, resetSessionAnchorForFreshStart, isWorkerAnchor } from '../../../../shared/observer-anchor.js';
 import { stripMemoryTagsFromPrompt, stripMemoryTagsFromPromptDetailed } from '../../../../utils/tag-stripping.js';
 import { cleanToolField } from './observation-utils.js';
 import { parseSkipPatterns, shouldSkipObservation, layerAStats, type ToolPattern } from './observation-filter.js';
@@ -1111,7 +1111,11 @@ export class SessionRoutes extends BaseRouteHandler {
 
     // Verify session creation with DB lookup
     const dbSession = store.getSessionById(sessionDbId);
-    const isNewSession = !dbSession?.memory_session_id;
+    // "New" = not yet SDK-seeded: NULL (legacy) or a cm- worker anchor (new mode).
+    // Anchor presence alone no longer means "resumed" — new-mode rows are born
+    // with a cm- anchor, so a bare `!memory_session_id` check would always report
+    // isNew=false in new mode (code-review MINOR-1).
+    const isNewSession = !dbSession?.memory_session_id || isWorkerAnchor(dbSession?.memory_session_id);
     logger.info('SESSION', `CREATED | contentSessionId=${contentSessionId} → sessionDbId=${sessionDbId} | isNew=${isNewSession} | project=${project}`, {
       sessionId: sessionDbId
     });
@@ -1125,7 +1129,7 @@ export class SessionRoutes extends BaseRouteHandler {
     if (promptNumber > 1) {
       logger.debug('HTTP', `[ALIGNMENT] DB Lookup Proof | contentSessionId=${contentSessionId} → memorySessionId=${memorySessionId || '(not yet captured)'} | prompt#=${promptNumber}`);
     } else {
-      logger.debug('HTTP', `[ALIGNMENT] New Session | contentSessionId=${contentSessionId} | prompt#=${promptNumber} | memorySessionId will be captured on first SDK response`);
+      logger.debug('HTTP', `[ALIGNMENT] New Session | contentSessionId=${contentSessionId} | prompt#=${promptNumber} | memorySessionId=${memorySessionId ? (isWorkerAnchor(memorySessionId) ? `${memorySessionId} (cm- worker anchor)` : memorySessionId) : 'will be captured on first SDK response'}`);
     }
 
     // Step 3: Strip privacy tags + detect intentional redaction.

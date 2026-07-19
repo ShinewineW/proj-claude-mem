@@ -364,12 +364,15 @@ export class SDKAgent {
           );
         } else if (
           isWorkerAnchor(session.memorySessionId) &&
-          message.session_id &&
+          (message as { session_id?: string }).session_id &&
           message.type === "system" &&
           (message as { subtype?: string }).subtype === "init"
         ) {
           // cm- anchor kept: record the SDK's own id at debug for transcript correlation.
-          logger.debug("SDK", `SDK id observed, stable worker anchor kept | sessionDbId=${session.sessionDbId} | sdkSessionId=${message.session_id} | anchor=${session.memorySessionId}`);
+          // Cast for session_id: shouldPersistSDKSessionId is a `message is {session_id: string}`
+          // predicate, so this else branch narrows it out — cast to read it (code-review MINOR-3).
+          const sdkId = (message as { session_id?: string }).session_id;
+          logger.debug("SDK", `SDK id observed, stable worker anchor kept | sessionDbId=${session.sessionDbId} | sdkSessionId=${sdkId} | anchor=${session.memorySessionId}`);
         }
 
         // Handle assistant messages
