@@ -15,9 +15,10 @@ Foundational modules for per-project isolation, configuration, and hook/worker c
 
 | File | Purpose |
 |------|---------|
-| `SettingsDefaultsManager.ts` | 53 unique `CLAUDE_MEM_*` settings, priority: env vars > settings.json > defaults. Phase 1 SDK optimization: `SKIP_TOOL_PATTERNS`, `BATCH_MAX_SIZE`, `OBS_MAX_FIELD_CHARS` |
+| `SettingsDefaultsManager.ts` | 60 unique `CLAUDE_MEM_*` settings, priority: env vars > settings.json > defaults. Phase 1 SDK optimization: `SKIP_TOOL_PATTERNS`, `BATCH_MAX_SIZE`, `OBS_MAX_FIELD_CHARS`. `CLAUDE_MEM_OBSERVER_RESUME` (default `"false"`) is the observer/bypass-decoupling master switch — NOT in viewer UI, not writable via POST `/api/settings` (GET echoes it read-only) |
 | `EnvManager.ts` | Credential isolation in `~/.claude-mem/.env`. Blocklist approach strips project API keys. |
 | `openai-compatible-base-url.ts` | `resolveOpenAICompatibleChatCompletionsUrl()`: resolves `CLAUDE_MEM_OPENAI_BASE_URL` to a `/chat/completions` endpoint for the OpenAI-compatible bypass; rejects non-http(s)/hostless URLs to avoid credential leakage |
+| `observer-anchor.ts` | Bypass/SDK-observer decoupling identity helpers. `memory_session_id` is either NULL/raw-SDK-id (legacy, `OBSERVER_RESUME=true`) or a claude-mem-minted stable `cm-<uuid>` **worker anchor** (new mode, default). Exports `isWorkerAnchor`/`mintWorkerAnchor`/`mintInitialAnchor` (minted at session birth in `SessionStore.createSDKSession`), `observerResumeEnabled`, `shouldResumeSDKSession`, `shouldClearStaleAnchorOnResumeFailure`, `resetSessionAnchorForFreshStart` (single anchor-clear chokepoint). A cm- anchor is **never resumed, never overwritten by an SDK id, never cleared** (overflow/stale-resume/watchdog). Flag read is **non-creating** (env > settings.json read-only[flat/legacy] > default `false`) — deliberately does NOT call `SettingsDefaultsManager.loadFromFile` (which creates the file / is mock-polluted) since `createSDKSession` runs in 15 in-process test files + the hot path |
 
 ## Hook/Worker Communication
 
