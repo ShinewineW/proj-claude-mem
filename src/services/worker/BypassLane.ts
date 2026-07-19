@@ -616,10 +616,16 @@ export class BypassLane {
                 ?.bypassCategory;
               const failResult = pendingStore.markFailed(message.id);
               if (failResult.finalStatus === "failed") {
-                // Killing blow: the row is now dead-lettered, permanently dropped.
+                // Killing blow: the row is dead-lettered (permanently dropped).
                 // Make the drop visible (评审 Q3) — the old unconditional
-                // "marking for retry" text lied on this final call.
-                logger.warn("BYPASS", `DEAD_LETTER | observation dropped after max retries | messageId=${message.id} | retryCount=${failResult.retryCount} | category=${category ?? "unknown"}`, {
+                // "marking for retry" text lied on this final call. Distinguish a
+                // genuine max-retries exhaustion from the "row not found" case
+                // (markFailed returns retryCount=0 when the row is already gone),
+                // so the DEAD_LETTER log isn't misleading (code-review LOW-1).
+                const reason = failResult.retryCount === 0
+                  ? "row not found in DB"
+                  : "dropped after max retries";
+                logger.warn("BYPASS", `DEAD_LETTER | observation ${reason} | messageId=${message.id} | retryCount=${failResult.retryCount} | category=${category ?? "unknown"}`, {
                   messageId: message.id,
                   sessionDbId: session.sessionDbId,
                   error: error instanceof Error ? error.message : String(error),
