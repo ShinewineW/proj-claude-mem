@@ -10,7 +10,7 @@
  *
  * Ownership model: competing consumers (NOT load balancer).
  * Main lane wins most fresh messages; bypass absorbs backlog.
- * See architecture-details.md § Message Ownership Model.
+ * See src/services/worker/CLAUDE.md § Three-Consumer Split.
  *
  * Key isolation from main channel:
  * - Does NOT touch session.processingMessageIds (avoids race with main channel)

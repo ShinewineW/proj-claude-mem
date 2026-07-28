@@ -16,7 +16,7 @@
  *   4. Drain timeout path (unresolved obs → drainTimedOut telemetry)
  */
 
-import { describe, it, expect, mock, beforeAll, beforeEach, afterEach, spyOn } from 'bun:test';
+import { describe, it, expect, mock, beforeAll, beforeEach, afterEach, spyOn, afterAll } from 'bun:test';
 
 // --- Module mocks (MUST come before imports of SUT) ------------------------
 
@@ -29,6 +29,19 @@ const VALID_SUMMARY_XML = `<summary>
   <next_steps>Add property tests</next_steps>
   <notes></notes>
 </summary>`;
+
+// __CONFINED_MOCKS__: bun's mock.module() is process-wide and mock.restore() does
+// NOT undo it, so a partial stub below would leak into every test file
+// loaded after this one (project-isolation suites fail that way). Capture
+// the real modules first and re-register them in afterAll so the stubs
+// stay confined to this file.
+import * as __real0 from '../../src/services/worker/ProcessRegistry.js';
+const __REAL_MODULES: Array<[string, unknown]> = [
+  ['../../src/services/worker/ProcessRegistry.js', { ...__real0 }],
+];
+afterAll(() => {
+  for (const [spec, real] of __REAL_MODULES) mock.module(spec, () => real);
+});
 
 mock.module('../../src/services/domain/ModeManager.js', () => ({
   ModeManager: {

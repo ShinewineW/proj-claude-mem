@@ -13,7 +13,7 @@ Mix of build-generated outputs (`.cjs` via esbuild) and manually-maintained sour
 | `sync-to-cache.cjs` | Deploy: rsync plugin/ to cache + marketplace, register in CC JSON files | Yes (idempotent) |
 | `sync-marketplace.cjs` | Deploy: protected rsync to marketplace, write `.install-version` marker (skips on beta) | Yes |
 | `verify-settings-alignment.ts` | Build guard: backend `SettingsDefaultsManager` vs frontend `DEFAULT_SETTINGS` drift (blocks build) | Yes |
-| `confine-test-mocks.py` | Test hygiene: makes every `mock.module()` of a shared module capture the real module and re-register it in `afterAll`, so a partial stub cannot leak into files loaded later. Idempotent (`__CONFINED_MOCKS__` marker), skips call sites appearing only in comments. Re-run after mocking `paths`, `SettingsDefaultsManager`, `project-filter`, `project-allowlist`, `project-name`, or `project-db`. `--check` for a dry run. | Yes (idempotent) |
+| `confine-test-mocks.py` | Test hygiene: makes every `mock.module()` of a shared module capture the real module and re-register it in `afterAll`, so a partial stub cannot leak into files loaded later. Idempotent (`__CONFINED_MOCKS__` marker), skips call sites appearing only in comments. Re-run after mocking `paths`, `SettingsDefaultsManager`, `project-filter`, `project-allowlist`, `project-name`, `project-db`, or `ProcessRegistry`. `--check` for a dry run. | Yes (idempotent) |
 | `regenerate-claude-md.ts` | Regenerate per-folder CLAUDE.md from DB for current project (`--dry-run`, `--clean`) | Yes |
 | `generate-changelog.js` | Generate CHANGELOG.md from GitHub releases | Yes |
 | `bug-report/` | Collect diagnostics into a bug report (`cli.ts` entry) | Yes |

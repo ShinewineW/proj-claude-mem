@@ -57,7 +57,8 @@
 
 在上游基础上，本 fork 还引入了一批可靠性与性能子系统：
 
-- **SummaryLane**：全局单消费者摘要通道，在独立的 fresh `query()` 子进程上生成摘要（不复用 observer session），规避了 observer 角色 priming 导致的摘要失效问题
+- **SummaryLane**：全局单消费者摘要通道，在独立的 fresh `query()` 子进程上生成摘要（不复用 observer session）；旧 observer-response salvage 已移除，但 fresh summary 连续失败并 dead-letter 后仍可写入明确标记为 `[salvaged]` 的 DB 合成兜底，不能把它当作 fresh summary 成功
+- **Observer anchor 解耦**：新会话默认使用稳定的 `cm-<uuid>` worker anchor，让 Bypass 不再等待 SDK session id；旧 resume 行为仍可通过 `CLAUDE_MEM_OBSERVER_RESUME=true` 恢复
 - **SDK 锁定**（`src/sdk/hardened-options.ts`）：observer 与 fresh-summarize 会话在配置层强制「无工具访问」（`tools:[]` + `permissionMode` + `canUseTool` 多重防御 + cwd jail），不继承外部 settings/MCP
 - **SDK token 优化**（Phase 1+2）：模式过滤、字段截断、安全批处理，以及历史长度/token 主动重置
 - **Pool starvation 防御**（三层）：stale 检测 + pool cooldown + backpressure，避免 pool 超时导致消息永久丢失
@@ -115,7 +116,13 @@ bun run build-and-sync
 
 设置文件位于 `~/.claude-mem/settings.json`（首次运行自动创建，owner-only `0600`）。配置优先级：环境变量 `CLAUDE_MEM_*` > `settings.json` > 内置默认。Provider 凭证（OpenAI 兼容 / Anthropic）放 `~/.claude-mem/.env`。
 
-常用键：`CLAUDE_MEM_WORKER_PORT`(37777)、`CLAUDE_MEM_PROVIDER`、`CLAUDE_MEM_CHROMA_ENABLED`、`CLAUDE_MEM_OPENAI_*`、`CLAUDE_MEM_RETENTION_*`。**全部 53 个设置项 + 数据路径见 [`docs/reference/configuration.md`](docs/reference/configuration.md)。**
+常用键：`CLAUDE_MEM_WORKER_PORT`(37777)、`CLAUDE_MEM_PROVIDER`、`CLAUDE_MEM_CHROMA_ENABLED`、`CLAUDE_MEM_OPENAI_*`、`CLAUDE_MEM_RETENTION_*`。**全部 59 个 `CLAUDE_MEM_*` 设置项、`CLAUDE_CODE_PATH` 与数据路径见 [`docs/reference/configuration.md`](docs/reference/configuration.md)。**
+
+#### Observer anchor 兼容与回滚
+
+- 默认 `CLAUDE_MEM_OBSERVER_RESUME=false`：仅新建 session 会立即获得 `cm-<uuid>` anchor，SDK observer 每次 fresh 启动且不会覆盖该 anchor；已有 session 不会被迁移或改写。
+- 若个人工作流需要恢复旧版 SDK resume，在 `~/.claude-mem/settings.json` 手工设置 `"CLAUDE_MEM_OBSERVER_RESUME": "true"`，或在启动 worker 前导出同名环境变量，然后重启 worker。该开关刻意不在 Viewer 中提供，也不能通过 `POST /api/settings` 修改。
+- 回滚同样只影响之后新建的 session；已存在的 `cm-` anchor 保持稳定，不会被清空或转换。
 
 ### Worker API / MCP / Viewer
 
@@ -226,7 +233,7 @@ proj-claude-mem/
 
 ## 开发与测试
 
-测试套件当前 **2190 通过 / 0 失败**（241 个文件）。
+完整 gate 以 `bun test ./tests/` 的当次结果为准，不在文档中固定易漂移的通过数。`tests/infrastructure/` 会读取本机 Claude 插件注册状态；若本机明确禁用了 `claude-mem@thedotmack`，其中的 worker 启动和 clean-install 启用断言会按预期失败，发布验收时应在隔离的“插件已启用”配置下复验这些用例。
 
 > **注意**：在仓库根目录直接运行 `bun test` 会连带扫描 `attn_sink/upstream-claude-mem/` 中的上游克隆（约 52 个无关的上游失败）。fork 自身的计数请用 `./tests/` 作为路径前缀运行。
 
@@ -265,7 +272,7 @@ bun run worker:logs
 
 - [`docs/README.md`](docs/README.md) — 文档总索引（参考 / 报告 / 设计 / 外部快照）
 - [`docs/reference/worker-api.md`](docs/reference/worker-api.md) — HTTP API 端点 + MCP 工具 + Viewer
-- [`docs/reference/configuration.md`](docs/reference/configuration.md) — 全部 53 个 `CLAUDE_MEM_*` 设置项 + 数据路径
+- [`docs/reference/configuration.md`](docs/reference/configuration.md) — 全部 59 个 `CLAUDE_MEM_*` 设置项、`CLAUDE_CODE_PATH` + 数据路径
 - [`CLAUDE.md`](CLAUDE.md) — 架构总览与文件位置
 - [`plugin/README.md`](plugin/README.md) — 插件载荷的生成物 vs 手写源边界
 - [`docs/reference/provenance.md`](docs/reference/provenance.md) — 上游 cherry-pick 来源 + 许可证追溯

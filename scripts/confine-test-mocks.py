@@ -27,6 +27,7 @@ TARGET_BASENAMES = {
     "project-allowlist.js",
     "project-name.js",
     "project-db.js",
+    "ProcessRegistry.js",
 }
 
 MOCK_RE = re.compile(r"mock\.module\(\s*(['\"])([^'\"]+)\1")
@@ -88,8 +89,35 @@ def ensure_after_all_imported(text: str) -> str:
 
 def patch(text: str) -> str | None:
     specs = targets_in(blank_comments(text))
-    if not specs or MARKER in text:
+    if not specs:
         return None
+
+    if MARKER in text:
+        captured = {
+            spec
+            for _, spec in re.findall(
+                r"\[\s*(['\"])([^'\"]+)\1\s*,\s*\{\s*\.\.\.__real\d+\s*\}\s*\]",
+                text,
+            )
+        }
+        missing = [spec for spec in specs if spec not in captured]
+        if not missing:
+            return None
+
+        indexes = [int(i) for i in re.findall(r"import \* as __real(\d+)", text)]
+        next_index = max(indexes, default=-1) + 1
+        imports, entries = [], []
+        for spec in missing:
+            alias = f"__real{next_index}"
+            next_index += 1
+            imports.append(f"import * as {alias} from '{spec}';")
+            entries.append(f"  ['{spec}', {{ ...{alias} }}],")
+
+        array_start = text.index("const __REAL_MODULES")
+        text = text[:array_start] + "\n".join(imports) + "\n" + text[array_start:]
+        array_start = text.index("const __REAL_MODULES")
+        array_end = text.index("\n];", array_start)
+        return text[:array_end] + "\n" + "\n".join(entries) + text[array_end:]
 
     text = ensure_after_all_imported(text)
 

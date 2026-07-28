@@ -11,7 +11,7 @@
 | `ProcessRegistry.ts` | Track spawned subprocess PIDs for zombie cleanup |
 | `BypassLane.ts` | Parallel REST consumer for observations (OpenAI-compatible), circuit breaker, competing consumer on same queue; C consumers/session via `CLAUDE_MEM_BYPASS_CONCURRENCY` |
 | `global-semaphore.ts` | `GlobalSemaphore` — live-limit counting semaphore capping concurrent bypass REST calls across sessions (`CLAUDE_MEM_BYPASS_MAX_CONSUMERS`) |
-| `SummaryLane.ts` | Global single consumer for `pending_messages.summarize` rows — drains observations, runs fresh SDK query, atomic store + Chroma sync + cursor context + SSE |
+| `SummaryLane.ts` | Global single consumer for `pending_messages.summarize` rows — drains observations, runs fresh SDK query, atomic store + Chroma sync + cursor context + SSE; once 3 retries are exhausted and the row dead-letters on the next failure, may write a prompt-scoped DB salvage labeled `[salvaged]` |
 | `SummaryLaneTelemetry.ts` | 4-layer telemetry for SummaryLane (counters / per-message timing / queue-depth alarm / hourly `SUMLANE_USAGE_SUMMARY`) |
 | `fresh-summarize.ts` | Fresh `query()` summarize path (no resume, no observer history) — bypasses observer-session role conditioning; all boundaries injected via `FreshSummarizeDeps` |
 | `fresh-summarize-store.ts` | Atomic store helper — re-reads `memory_session_id` inside a transaction before INSERT (FK race), turn-key dedup |
@@ -50,3 +50,5 @@
 **Pool Starvation Defense** (3-layer): `stale-detection.ts` (Layer 1), `pool-cooldown-utils.ts` (Layer 2), `backpressure.ts` (Layer 3). Applied in `SessionRoutes` (cooldown entry + ensureGeneratorRunning bypass), `SessionManager.queueObservation()` (backpressure gate), `worker-service.ts` (cooldown retry timer). Settings: 7 new `CLAUDE_MEM_*` keys validated in `SettingsRoutes`.
 
 **Session close & drain**: `deleteSession()` is immediate-finalize (`closeSession()` + `finalizeSession()`); the legacy drain was removed when `SummaryLane` took over the summarize lifecycle — pending `summarize` rows stay in `pending_messages` and are consumed async. The only drain now lives in `SummaryLane`: it polls every 500ms (`DRAIN_POLL_MS`) up to a 30s timeout (`DRAIN_TIMEOUT_MS`) for outstanding observation rows before running the fresh summarize (accept-loss-on-timeout).
+
+**Summary failure recovery**: The old observer-response Case 1/2/3 salvage branches remain removed. `SummaryLane.salvageAfterDeadLetter()` is a separate fallback that runs only after fresh summarize exhausts 3 retries and the next failure dead-letters the row; it uses observations from the failed prompt's DB window and marks the stored request `[salvaged]`. This preserves inspectable context after failure but does not count as a successful fresh summary.

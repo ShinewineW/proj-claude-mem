@@ -8,9 +8,11 @@ import { describe, it, expect, mock, beforeEach, afterEach, spyOn, afterAll } fr
 // stay confined to this file.
 import * as __real0 from '../../src/shared/paths.js';
 import * as __real1 from '../../src/shared/SettingsDefaultsManager.js';
+import * as __real2 from '../../src/services/worker/ProcessRegistry.js';
 const __REAL_MODULES: Array<[string, unknown]> = [
   ['../../src/shared/paths.js', { ...__real0 }],
   ['../../src/shared/SettingsDefaultsManager.js', { ...__real1 }],
+  ['../../src/services/worker/ProcessRegistry.js', { ...__real2 }],
 ];
 afterAll(() => {
   for (const [spec, real] of __REAL_MODULES) mock.module(spec, () => real);

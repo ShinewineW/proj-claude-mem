@@ -26,7 +26,7 @@ const __REAL_MODULES: Array<[string, unknown]> = [['../../src/shared/paths.js', 
 afterAll(() => { for (const [spec, real] of __REAL_MODULES) mock.module(spec, () => real); });
 mock.module('../../src/shared/paths.js', () => ({ /* partial stub */ }));
 ```
-Applied to 26 files by `scripts/confine-test-mocks.py` (idempotent, guarded by a `__CONFINED_MOCKS__` marker; re-run it after adding a mock of `paths`, `SettingsDefaultsManager`, `project-filter`, `project-allowlist`, `project-name`, or `project-db`). This is what took the suite from 2232/70 to 2302/0 — the 70 failures were 11 project-isolation files poisoned by partial stubs, not broken tests. Alternatives when restoration doesn't fit: source-inspection (`readFileSync` the `.ts`), or inline a faithful copy (see `process-registry-killed.test.ts`).
+Applied to 29 files by `scripts/confine-test-mocks.py` (idempotent, guarded by a `__CONFINED_MOCKS__` marker; re-run it after adding a mock of `paths`, `SettingsDefaultsManager`, `project-filter`, `project-allowlist`, `project-name`, `project-db`, or `ProcessRegistry`). This is what took the suite from 2232/70 to 2302/0 — the 70 failures were 11 project-isolation files poisoned by partial stubs, not broken tests. Alternatives when restoration doesn't fit: source-inspection (`readFileSync` the `.ts`), or inline a faithful copy (see `process-registry-killed.test.ts`).
 **Gotcha**: `mock.module('worker-utils.js')` partial-stub silently fall-through. When a test stubs only `ensureWorkerRunning`/`getWorkerPort`, any NEW exported function (e.g. `fetchWithTimeout`) added later is NOT in the mock — production code that calls it falls through to the real implementation, which then hits the real `globalThis.fetch` (or whatever the test wired). Tests pinning exact `fetchCalls.length` will break invisibly when production starts using the new export. Mitigation: filter `fetchCalls` by URL suffix instead of count, OR extend the mock when adding new exports. Hit by F6 (`/api/sessions/resolve-prompt-number` GET added an extra fetch and broke the L6 nested-repo dbPath pin).
 
 **Logger suppression**: `spyOn(logger, 'info').mockImplementation(() => {})` in `beforeEach`, restore in `afterEach`.
@@ -70,7 +70,7 @@ Key test directories: `tests/sqlite/` (DB), `tests/hooks/` (hook structure), `te
 ## Run Commands
 
 ```bash
-bun test ./tests/           # All tests (2186 pass, 0 fail; 236 files, 2026-07-28)
+bun test ./tests/           # Full gate; infrastructure tests reflect local plugin registration state
 bun test tests/sqlite/      # Database tests
 bun test tests/hooks/       # Hook structure tests
 ```
