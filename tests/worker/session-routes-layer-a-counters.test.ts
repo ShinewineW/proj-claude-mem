@@ -9,9 +9,22 @@
  * (15+ files); it pins SKIP_TOOLS/SKIP_TOOL_PATTERNS so the test does not
  * depend on the machine's real settings.json.
  */
-import { describe, it, expect, mock, spyOn, beforeEach, afterEach } from 'bun:test';
+import { describe, it, expect, mock, spyOn, beforeEach, afterEach, afterAll } from 'bun:test';
 
 let mockSettings: Record<string, string> = {};
+
+// __CONFINED_MOCKS__: bun's mock.module() is process-wide and mock.restore() does
+// NOT undo it, so a partial stub below would leak into every test file
+// loaded after this one (project-isolation suites fail that way). Capture
+// the real modules first and re-register them in afterAll so the stubs
+// stay confined to this file.
+import * as __real0 from '../../src/shared/SettingsDefaultsManager.js';
+const __REAL_MODULES: Array<[string, unknown]> = [
+  ['../../src/shared/SettingsDefaultsManager.js', { ...__real0 }],
+];
+afterAll(() => {
+  for (const [spec, real] of __REAL_MODULES) mock.module(spec, () => real);
+});
 
 mock.module('../../src/shared/SettingsDefaultsManager.js', () => ({
   SettingsDefaultsManager: {

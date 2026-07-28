@@ -1,9 +1,24 @@
-import { describe, test, expect, mock, beforeEach } from "bun:test";
+import { describe, test, expect, mock, beforeEach, afterAll } from 'bun:test';
 import { readFileSync } from "fs";
 
 // White-box fixture (same pattern as bypass-openai.test.ts): mock leaf deps
 // BEFORE importing BypassLane, drive concurrency via mutable mockSettings.
 let mockSettings: Record<string, string> = {};
+
+// __CONFINED_MOCKS__: bun's mock.module() is process-wide and mock.restore() does
+// NOT undo it, so a partial stub below would leak into every test file
+// loaded after this one (project-isolation suites fail that way). Capture
+// the real modules first and re-register them in afterAll so the stubs
+// stay confined to this file.
+import * as __real0 from '../../src/shared/paths.js';
+import * as __real1 from '../../src/shared/SettingsDefaultsManager.js';
+const __REAL_MODULES: Array<[string, unknown]> = [
+  ['../../src/shared/paths.js', { ...__real0 }],
+  ['../../src/shared/SettingsDefaultsManager.js', { ...__real1 }],
+];
+afterAll(() => {
+  for (const [spec, real] of __REAL_MODULES) mock.module(spec, () => real);
+});
 
 mock.module("../../src/shared/paths.js", () => ({
   DATA_DIR: "/tmp/test-claude-mem",

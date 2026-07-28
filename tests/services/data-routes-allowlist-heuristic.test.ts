@@ -12,7 +12,7 @@
  * Actual (bug): getSessionStore called with resolveProjectDbPath result (may differ)
  */
 
-import { describe, it, expect, mock, beforeEach } from 'bun:test';
+import { describe, it, expect, mock, beforeEach, afterAll } from 'bun:test';
 import { join } from 'path';
 
 // ---------------------------------------------------------------------------
@@ -30,6 +30,21 @@ const HEURISTIC_DB_PATH = '/projects/.claude/mem.db';
 // ---------------------------------------------------------------------------
 
 // Mock paths.js — resolveProjectDbPath returns WRONG path to expose the bug
+// __CONFINED_MOCKS__: bun's mock.module() is process-wide and mock.restore() does
+// NOT undo it, so a partial stub below would leak into every test file
+// loaded after this one (project-isolation suites fail that way). Capture
+// the real modules first and re-register them in afterAll so the stubs
+// stay confined to this file.
+import * as __real0 from '../../src/shared/paths.js';
+import * as __real1 from '../../src/shared/project-allowlist.js';
+const __REAL_MODULES: Array<[string, unknown]> = [
+  ['../../src/shared/paths.js', { ...__real0 }],
+  ['../../src/shared/project-allowlist.js', { ...__real1 }],
+];
+afterAll(() => {
+  for (const [spec, real] of __REAL_MODULES) mock.module(spec, () => real);
+});
+
 mock.module('../../src/shared/paths.js', () => ({
   DATA_DIR: '/tmp/test-claude-mem',
   CLAUDE_CONFIG_DIR: '/tmp/test-claude',

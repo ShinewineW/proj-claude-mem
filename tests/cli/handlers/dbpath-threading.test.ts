@@ -5,7 +5,7 @@
  * the dbPath parameter for per-project DB isolation.
  */
 
-import { describe, it, expect, beforeEach, afterEach, mock } from "bun:test";
+import { describe, it, expect, beforeEach, afterEach, mock, afterAll } from 'bun:test';
 
 // Track all fetch calls to verify dbPath inclusion
 let fetchCalls: Array<{ url: string; body: any }> = [];
@@ -48,6 +48,27 @@ function restoreFetch() {
 }
 
 // Mock dependencies
+// __CONFINED_MOCKS__: bun's mock.module() is process-wide and mock.restore() does
+// NOT undo it, so a partial stub below would leak into every test file
+// loaded after this one (project-isolation suites fail that way). Capture
+// the real modules first and re-register them in afterAll so the stubs
+// stay confined to this file.
+import * as __real0 from '../../../src/utils/project-name.js';
+import * as __real1 from '../../../src/shared/paths.js';
+import * as __real2 from '../../../src/shared/SettingsDefaultsManager.js';
+import * as __real3 from '../../../src/utils/project-filter.js';
+import * as __real4 from '../../../src/shared/project-allowlist.js';
+const __REAL_MODULES: Array<[string, unknown]> = [
+  ['../../../src/utils/project-name.js', { ...__real0 }],
+  ['../../../src/shared/paths.js', { ...__real1 }],
+  ['../../../src/shared/SettingsDefaultsManager.js', { ...__real2 }],
+  ['../../../src/utils/project-filter.js', { ...__real3 }],
+  ['../../../src/shared/project-allowlist.js', { ...__real4 }],
+];
+afterAll(() => {
+  for (const [spec, real] of __REAL_MODULES) mock.module(spec, () => real);
+});
+
 mock.module("../../../src/shared/worker-utils.js", () => ({
   ensureWorkerRunning: async () => true,
   getWorkerPort: () => 37777,

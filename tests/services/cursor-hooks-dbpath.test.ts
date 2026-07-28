@@ -6,13 +6,28 @@
  * database isolation for Cursor integration.
  */
 
-import { describe, it, expect, beforeEach, afterEach, mock, spyOn } from 'bun:test';
+import { describe, it, expect, beforeEach, afterEach, mock, spyOn, afterAll } from 'bun:test';
 
 // We need to mock modules before importing the module under test.
 // Mock resolveProjectDbPath to return a predictable path.
 const MOCK_DB_PATH = '/test/project/.claude/mem.db';
 
 // Mock the cursor-utils module
+// __CONFINED_MOCKS__: bun's mock.module() is process-wide and mock.restore() does
+// NOT undo it, so a partial stub below would leak into every test file
+// loaded after this one (project-isolation suites fail that way). Capture
+// the real modules first and re-register them in afterAll so the stubs
+// stay confined to this file.
+import * as __real0 from '../../src/shared/paths.js';
+import * as __real1 from '../../src/shared/SettingsDefaultsManager.js';
+const __REAL_MODULES: Array<[string, unknown]> = [
+  ['../../src/shared/paths.js', { ...__real0 }],
+  ['../../src/shared/SettingsDefaultsManager.js', { ...__real1 }],
+];
+afterAll(() => {
+  for (const [spec, real] of __REAL_MODULES) mock.module(spec, () => real);
+});
+
 mock.module('../../src/utils/cursor-utils.js', () => ({
   readCursorRegistry: () => ({
     'test-project': {

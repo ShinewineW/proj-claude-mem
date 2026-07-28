@@ -27,6 +27,21 @@ afterAll(() => { globalThis.fetch = originalFetch; });
 let restartWorkerResult = true;
 let restartWorkerCalled = false;
 
+// __CONFINED_MOCKS__: bun's mock.module() is process-wide and mock.restore() does
+// NOT undo it, so a partial stub below would leak into every test file
+// loaded after this one (project-isolation suites fail that way). Capture
+// the real modules first and re-register them in afterAll so the stubs
+// stay confined to this file.
+import * as __real0 from '../../../src/shared/SettingsDefaultsManager.js';
+import * as __real1 from '../../../src/utils/project-filter.js';
+const __REAL_MODULES: Array<[string, unknown]> = [
+  ['../../../src/shared/SettingsDefaultsManager.js', { ...__real0 }],
+  ['../../../src/utils/project-filter.js', { ...__real1 }],
+];
+afterAll(() => {
+  for (const [spec, real] of __REAL_MODULES) mock.module(spec, () => real);
+});
+
 mock.module('../../../src/shared/worker-utils.js', () => ({
   ensureWorkerRunning: mock(() => Promise.resolve(true)),
   getWorkerPort: mock(() => 37777),

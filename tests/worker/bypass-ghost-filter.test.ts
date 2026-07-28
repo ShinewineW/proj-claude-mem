@@ -3,9 +3,24 @@
  * Upstream: thedotmack/claude-mem@e39821298 (#1625) — adapted: filter inlined in
  * BypassLane (fork keeps ResponseProcessor's unfiltered context-overflow path).
  */
-import { describe, it, expect, mock } from 'bun:test';
+import { describe, it, expect, mock, afterAll } from 'bun:test';
 
 // Mock modules BEFORE any production imports (bun:test requirement)
+// __CONFINED_MOCKS__: bun's mock.module() is process-wide and mock.restore() does
+// NOT undo it, so a partial stub below would leak into every test file
+// loaded after this one (project-isolation suites fail that way). Capture
+// the real modules first and re-register them in afterAll so the stubs
+// stay confined to this file.
+import * as __real0 from '../../src/shared/paths.js';
+import * as __real1 from '../../src/shared/SettingsDefaultsManager.js';
+const __REAL_MODULES: Array<[string, unknown]> = [
+  ['../../src/shared/paths.js', { ...__real0 }],
+  ['../../src/shared/SettingsDefaultsManager.js', { ...__real1 }],
+];
+afterAll(() => {
+  for (const [spec, real] of __REAL_MODULES) mock.module(spec, () => real);
+});
+
 mock.module('../../src/shared/paths.js', () => ({
   DATA_DIR: '/tmp/test-claude-mem',
   DB_PATH: '/tmp/test-claude-mem/claude-mem.db',

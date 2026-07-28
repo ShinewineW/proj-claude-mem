@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, mock } from 'bun:test';
+import { describe, it, expect, beforeEach, mock, afterAll } from 'bun:test';
 
 // Singleton enforcement regression coverage for issue #2313 (fork adaptation).
 //
@@ -42,6 +42,21 @@ class FakeTransport {
     this.closed = true;
   }
 }
+
+// __CONFINED_MOCKS__: bun's mock.module() is process-wide and mock.restore() does
+// NOT undo it, so a partial stub below would leak into every test file
+// loaded after this one (project-isolation suites fail that way). Capture
+// the real modules first and re-register them in afterAll so the stubs
+// stay confined to this file.
+import * as __real0 from '../../../src/shared/SettingsDefaultsManager.js';
+import * as __real1 from '../../../src/shared/paths.js';
+const __REAL_MODULES: Array<[string, unknown]> = [
+  ['../../../src/shared/SettingsDefaultsManager.js', { ...__real0 }],
+  ['../../../src/shared/paths.js', { ...__real1 }],
+];
+afterAll(() => {
+  for (const [spec, real] of __REAL_MODULES) mock.module(spec, () => real);
+});
 
 mock.module('@modelcontextprotocol/sdk/client/stdio.js', () => ({
   StdioClientTransport: FakeTransport,

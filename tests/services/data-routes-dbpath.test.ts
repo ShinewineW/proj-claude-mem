@@ -5,7 +5,7 @@
  * without dbPath, falling back to global DB instead of per-project DB.
  */
 
-import { describe, it, expect, mock, beforeEach } from 'bun:test';
+import { describe, it, expect, mock, beforeEach, afterAll } from 'bun:test';
 
 // ---------------------------------------------------------------------------
 // Module-level mocks (must be before any import of production code)
@@ -13,6 +13,19 @@ import { describe, it, expect, mock, beforeEach } from 'bun:test';
 
 // Mock paths.js with ALL exports to prevent cross-test contamination
 // (bun:test mock.module is global and persists across test files)
+// __CONFINED_MOCKS__: bun's mock.module() is process-wide and mock.restore() does
+// NOT undo it, so a partial stub below would leak into every test file
+// loaded after this one (project-isolation suites fail that way). Capture
+// the real modules first and re-register them in afterAll so the stubs
+// stay confined to this file.
+import * as __real0 from '../../src/shared/paths.js';
+const __REAL_MODULES: Array<[string, unknown]> = [
+  ['../../src/shared/paths.js', { ...__real0 }],
+];
+afterAll(() => {
+  for (const [spec, real] of __REAL_MODULES) mock.module(spec, () => real);
+});
+
 mock.module('../../src/shared/paths.js', () => ({
   DATA_DIR: '/tmp/test-claude-mem',
   CLAUDE_CONFIG_DIR: '/tmp/test-claude',
