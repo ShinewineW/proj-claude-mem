@@ -8,7 +8,8 @@ Foundational modules for per-project isolation, configuration, and hook/worker c
 |------|---------|
 | `paths.ts` | `resolveProjectDbPath(cwd)`: env → worktree parent → git root → cwd → `<root>/.claude/mem.db` |
 | `project-db.ts` | `DbConnectionPool`: `Map<path, {store,search}>`, FIFO eviction at 10, auto `.gitignore` |
-| `project-allowlist.ts` | Opt-in allowlist + `resolveProjectContext()` (Priority 1: allowlist child-path matching via `findContainingProject()`, Priority 2: git-root heuristic fallback). Lazy env var reading. **Pattern rule**: allowlist-sourced roots must use `path.join(root, '.claude', 'mem.db')`, never `resolveProjectDbPath()`. |
+| `project-allowlist.ts` | Opt-in allowlist + `resolveProjectContext()` (Priority 1: allowlist child-path matching via `findContainingProject()`, Priority 2: git-root heuristic fallback). Lazy env var reading. **Pattern rule**: allowlist-sourced roots must use `path.join(root, '.claude', 'mem.db')`, never `resolveProjectDbPath()` — still the rule at the call site, though `canonical-project.ts` now backstops it at the write boundary. |
+| `workspace-marker.ts` | `hasWorkspaceMarker(dir)`: is `dir` a project/workspace root? A bare `.claude/` is NOT enough — a parent holding only `.claude/skills/` for sibling projects would otherwise capture every nested git repo, making the project NAME (parent) diverge from the allowlist-routed DB (child). Requires `CLAUDE.md`, `.claude/CLAUDE.md`, `.claude/settings*.json`, or an existing `.claude/mem.db`. Consumed by `paths.ts` (`resolveWorkspaceRoot`, `findWorkspaceAncestor`); lives in its own module so tests can reach it under the process-wide `mock.module('paths.js')` |
 | `chroma-utils.ts` | `getCollectionName(dbPath)`: deterministic `cm__<name>_<8char-hash>` |
 
 ## Configuration

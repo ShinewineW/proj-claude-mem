@@ -11,6 +11,7 @@
 | `migrations/runner.ts` | `MigrationRunner` — extracted from SessionStore, 25 migration steps (`runAllMigrations`, schema versions up to 33; legacy version-9999 sentinel migrated/dropped in step 25). |
 | `Import.ts` → `import/bulk.ts` | Bulk import: `importObservation()`, `importSessionSummary()`, `importSdkSession()`, `importUserPrompt()` with content_hash dedup. `Import.ts` is a re-export shim; logic lives in `import/bulk.ts`. |
 | `transactions.ts` | Shared transaction helpers. |
+| `canonical-project.ts` | `canonicalProject(db, supplied)` — write-boundary invariant: a row's `project` column is derived from `db.filename`, never from what the caller passed. Applied at every live insert (`createSDKSession`, `storeObservation(s)`, `insertSummaryDeduped`, and the two `transactions.ts` paths). Per-project DBs always use the derived name; the global/legacy DB and `:memory:` have no canonical name, so `supplied` passes through and the existing "project is required" guards still apply. Exists because fixing individual callers only removed one divergence — several resolvers (allowlist routing, cwd heuristics, request bodies) can disagree with the routed DB, and one disagreement plants a phantom project in `SELECT DISTINCT project` forever. |
 | `observations/`, `summaries/`, `sessions/`, `prompts/`, `timeline/` | Per-domain split modules (store/get/recent/types) re-exported by `Observations.ts`, `Summaries.ts`, `Sessions.ts`, `Prompts.ts`, `Timeline.ts`. |
 
 ## Key Tables
