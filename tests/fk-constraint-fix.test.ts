@@ -26,11 +26,14 @@ describe('FK Constraint Fix (Issue #846)', () => {
 
   afterEach(() => {
     store.close();
-    // Clean up test database
-    try {
-      require('fs').unlinkSync(testDbPath);
-    } catch (e) {
-      // Ignore cleanup errors
+    // Clean up test database. SessionStore opens in WAL mode, so each run also
+    // leaves -wal and -shm sidecars; removing only the .db leaked two per run.
+    for (const suffix of ['', '-wal', '-shm']) {
+      try {
+        require('fs').unlinkSync(testDbPath + suffix);
+      } catch (e) {
+        // Ignore cleanup errors
+      }
     }
   });
 

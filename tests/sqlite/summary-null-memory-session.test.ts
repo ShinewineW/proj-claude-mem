@@ -47,10 +47,14 @@ describe('summary store survives null memory_session_id', () => {
 
   afterEach(() => {
     store.close();
-    try {
-      require('fs').unlinkSync(testDbPath);
-    } catch {
-      // ignore
+    // SessionStore opens in WAL mode, so each run also leaves -wal and -shm
+    // sidecars next to the .db. Removing only the .db leaked two files per run.
+    for (const suffix of ['', '-wal', '-shm']) {
+      try {
+        require('fs').unlinkSync(testDbPath + suffix);
+      } catch {
+        // ignore
+      }
     }
   });
 
