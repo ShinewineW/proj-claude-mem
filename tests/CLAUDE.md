@@ -59,7 +59,10 @@ Key test directories: `tests/sqlite/` (DB), `tests/hooks/` (hook structure), `te
 ## Run Commands
 
 ```bash
-bun test                    # All tests (2163 pass, 0 fail; 235 files)
+bun test ./tests/           # All tests (2232 pass, 70 fail; 256 files, 2026-07-28)
+                            # The 70 failures are a PRE-EXISTING baseline, not zero. Compare against
+                            # this number when checking for regressions; if you need a clean baseline,
+                            # `git stash` your changes and re-run rather than assuming 0 fail.
 bun test tests/sqlite/      # Database tests
 bun test tests/hooks/       # Hook structure tests
 ```

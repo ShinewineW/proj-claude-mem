@@ -12,6 +12,7 @@ import type { ObservationInput } from './observations/types.js';
 import type { SummaryInput } from './summaries/types.js';
 import { computeObservationContentHash, findDuplicateObservation } from './observations/store.js';
 import { computeSummaryContentHash, findDuplicateSummary } from './summaries/store.js';
+import { canonicalProject } from './canonical-project.js';
 
 /**
  * Result from storeObservations / storeObservationsAndMarkComplete transaction
@@ -58,6 +59,7 @@ export function storeObservationsAndMarkComplete(
   overrideTimestampEpoch?: number,
   contentSessionId: string | null = null
 ): StoreAndMarkCompleteResult {
+  project = canonicalProject(db, project);
   if (!project || project.trim() === '') {
     throw new Error('storeObservationsAndMarkComplete: project parameter is required');
   }
@@ -186,6 +188,7 @@ export function storeObservations(
   overrideTimestampEpoch?: number,
   contentSessionId: string | null = null
 ): StoreObservationsResult {
+  project = canonicalProject(db, project);
   if (!project || project.trim() === '') {
     throw new Error('storeObservations: project parameter is required');
   }

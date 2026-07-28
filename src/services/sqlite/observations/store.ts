@@ -7,6 +7,7 @@ import { createHash } from 'crypto';
 import { Database } from 'bun:sqlite';
 import { logger } from '../../../utils/logger.js';
 import type { ObservationInput, StoreObservationResult } from './types.js';
+import { canonicalProject } from '../canonical-project.js';
 
 /** Deduplication window: observations with the same content hash within this window are skipped */
 const DEDUP_WINDOW_MS = 30_000;
@@ -62,6 +63,7 @@ export function storeObservation(
   const timestampIso = new Date(timestampEpoch).toISOString();
 
   // Reject empty project — all callers must pass explicit project
+  project = canonicalProject(db, project);
   if (!project || project.trim() === '') {
     throw new Error('storeObservation: project parameter is required');
   }

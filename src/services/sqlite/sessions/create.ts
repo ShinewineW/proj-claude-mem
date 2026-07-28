@@ -5,6 +5,7 @@
 
 import type { Database } from 'bun:sqlite';
 import { logger } from '../../../utils/logger.js';
+import { canonicalProject } from '../canonical-project.js';
 
 /**
  * Create a new SDK session (idempotent - returns existing session ID if already exists)
@@ -26,6 +27,9 @@ export function createSDKSession(
 ): number {
   const now = new Date();
   const nowEpoch = now.getTime();
+  // Write-boundary invariant: the name comes from the DB this row lands in,
+  // never from the caller. See canonical-project.ts.
+  project = canonicalProject(db, project);
 
   // Check for existing session
   const existing = db.prepare(`

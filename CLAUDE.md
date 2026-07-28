@@ -42,7 +42,7 @@ Claude-mem is a Claude Code plugin providing persistent memory across sessions. 
 
 ```bash
 bun run build-and-sync   # Build, deploy to cache + marketplace discovery, restart worker
-bun test ./tests/         # Run the fork's own tests (2190 pass, 0 fail; 241 files). Scope to ./tests/ — a bare `bun test` at root also scans the upstream clone in attn_sink/ (~52 unrelated failures).
+bun test ./tests/         # Run the fork's own tests (2232 pass, 70 fail; 256 files, 2026-07-28). The 70 failures are a pre-existing baseline (36 SettingsDefaultsManager, 9 Project Filter, plus DbConnectionPool / path-resolution / E2E) — treat that count as the regression gate, not zero. Scope to ./tests/ — a bare `bun test` at root also scans the upstream clone in attn_sink/ (~52 unrelated failures).
 ```
 
 ## Configuration

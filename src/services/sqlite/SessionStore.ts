@@ -12,6 +12,7 @@ import {
 } from '../../types/database.js';
 import type { PendingMessageStore } from './PendingMessageStore.js';
 import { computeObservationContentHash, findDuplicateObservation } from './observations/store.js';
+import { canonicalProject } from './canonical-project.js';
 import { parseFileList } from './observations/files.js';
 import { computeSummaryContentHash, findDuplicateSummary } from './summaries/store.js';
 import { assertValidLimit } from './query-utils.js';
@@ -643,6 +644,9 @@ export class SessionStore {
   createSDKSession(contentSessionId: string, project: string, userPrompt: string, customTitle?: string): number {
     const now = new Date();
     const nowEpoch = now.getTime();
+    // Write-boundary invariant: the name comes from the DB this row lands in,
+    // never from the caller. See canonical-project.ts.
+    project = canonicalProject(this.db, project);
 
     // Session reuse: Return existing session ID if already created for this contentSessionId.
     const existing = this.db.prepare(`
@@ -869,6 +873,7 @@ export class SessionStore {
     const timestampEpoch = overrideTimestampEpoch ?? Date.now();
     const timestampIso = new Date(timestampEpoch).toISOString();
 
+    project = canonicalProject(this.db, project);
     if (!project || project.trim() === '') {
       throw new Error('storeObservation: project parameter is required');
     }
@@ -938,6 +943,10 @@ export class SessionStore {
     if (!memorySessionId) {
       return { id: null, createdAtEpoch: timestampEpoch };
     }
+
+    // Single chokepoint for every summary insert — idempotent when the caller
+    // already normalized, and the only guard for storeSummary's direct path.
+    project = canonicalProject(this.db, project);
 
     const contentHash = computeSummaryContentHash(memorySessionId, summary.request, summary.investigated);
     const existing = findDuplicateSummary(this.db, contentHash, timestampEpoch);
@@ -1016,6 +1025,7 @@ export class SessionStore {
     overrideTimestampEpoch?: number,
     contentSessionId: string | null = null
   ): { observationIds: number[]; summaryId: number | null; createdAtEpoch: number } {
+    project = canonicalProject(this.db, project);
     if (!project || project.trim() === '') {
       throw new Error('storeObservations: project parameter is required');
     }
@@ -1120,6 +1130,7 @@ export class SessionStore {
     overrideTimestampEpoch?: number,
     contentSessionId: string | null = null
   ): { observationIds: number[]; summaryId: number | null; createdAtEpoch: number } {
+    project = canonicalProject(this.db, project);
     if (!project || project.trim() === '') {
       throw new Error('storeObservationsAndMarkComplete: project parameter is required');
     }

@@ -6,6 +6,7 @@ import { fileURLToPath } from 'url';
 import { SettingsDefaultsManager } from './SettingsDefaultsManager.js';
 import { logger } from '../utils/logger.js';
 import { detectWorktree } from '../utils/worktree.js';
+import { hasWorkspaceMarker } from './workspace-marker.js';
 
 // Get __dirname that works in both ESM (hooks) and CJS (worker) contexts
 function getDirname(): string {
@@ -192,7 +193,14 @@ function findGitRoot(startDir: string): string | null {
 }
 
 /**
- * Walk up from startDir looking for a directory with CLAUDE.md or .claude/.
+ * Does `dir` look like a Claude Code project/workspace root?
+ *
+ * Re-exported from workspace-marker.ts — see there for why a bare `.claude/`
+ * is not a sufficient marker.
+ */
+
+/**
+ * Walk up from startDir looking for a directory that carries a workspace marker.
  * Checks startDir itself first (it may be the workspace root), then ancestors.
  * Returns the nearest workspace root, or null if none found.
  * Stops at filesystem root. Skips home directory to avoid false matches from ~/.claude/.
@@ -204,7 +212,7 @@ function findWorkspaceAncestor(startDir: string, maxDepth: number = 5): string |
   while (depth < maxDepth) {
     // Skip home directory — ~/.claude/ is user config, not a workspace marker
     if (dir !== homeDir) {
-      if (existsSync(join(dir, 'CLAUDE.md')) || existsSync(join(dir, '.claude'))) {
+      if (hasWorkspaceMarker(dir)) {
         return dir;
       }
     }
@@ -217,7 +225,7 @@ function findWorkspaceAncestor(startDir: string, maxDepth: number = 5): string |
 }
 
 /**
- * Workspace parent heuristic: if gitRoot's parent has CLAUDE.md or .claude/,
+ * Workspace parent heuristic: if gitRoot's parent carries a workspace marker,
  * and the parent is NOT itself a git repo, treat the parent as the workspace root.
  *
  * This handles CC workspaces that contain a nested git repo
@@ -229,12 +237,11 @@ function resolveWorkspaceRoot(gitRoot: string): string {
   const parent = dirname(gitRoot);
   if (parent === gitRoot) return gitRoot;
 
-  const parentHasClaude =
-    existsSync(join(parent, 'CLAUDE.md')) || existsSync(join(parent, '.claude'));
+  const parentIsWorkspace = hasWorkspaceMarker(parent);
   const parentGitRoot = findGitRoot(parent);
   const parentIsGitRepo = parentGitRoot !== null && parentGitRoot === parent;
 
-  if (parentHasClaude && !parentIsGitRepo) {
+  if (parentIsWorkspace && !parentIsGitRepo) {
     return parent;
   }
   return gitRoot;
