@@ -53,7 +53,9 @@ AFTER=$(ls -d $TMPDIR/test-* $TMPDIR/claude-mem-* 2>/dev/null | wc -l)
 echo "Delta: $((AFTER - BEFORE))"  # Must be 0
 ```
 
-**String-pinned regression guards** [WARNING]: 部分测试（如 `tests/cli/handlers/task2-fallback-regression.test.ts`、`tests/shared/bypass-settings-deadcode.test.ts`）用 `readFileSync` + 字面量 count/regex 固定载荷代码的**字符串形态**防回归（例：`writeFallbackEntry(` 出现次数必须 ≥3，或某 const 不得被 `export`）。对目标源文件做 helper 提取 / dedupe 会破坏这些 guard — 修改前 grep `task2-fallback-regression|deadcode` 检查 pin，否则 Stage 5/5.5 cleanup 会引入误失败。
+**不要写字符串形态 pin** [MUST]: 曾有 19 个测试文件用 `readFileSync` 读 `.ts` 源码 + 字面量 count/regex 固定载荷代码的**字符串形态**（例：`writeFallbackEntry(` 出现次数必须 ≥3；SDKAgent.ts 不得含 `'buildSummaryPrompt'`）。这类断言会因 helper 提取 / dedupe / 无副作用重命名而误失败，行为真坏了却照样通过 —— 已于 2026-07-28 全部删除。要守的契约请写成调用产品代码的行为测试。
+
+例外（读的不是源码文本，保留）：`tests/infrastructure/*` 读 `hooks.json` / `package.json` / 构建产物目录，属于真实分发契约；`logger-usage-standards.test.ts` 与 `test-filesystem-hygiene.test.ts` 是本文件规定的强制门禁。
 
 **Audit test location**: `tests/audit/` 保留 file-to-prod Stage 3 产出的 property-based tests 作为长期回归覆盖（命名约定 `phaseN-<topic>.test.ts`）。
 
@@ -68,7 +70,7 @@ Key test directories: `tests/sqlite/` (DB), `tests/hooks/` (hook structure), `te
 ## Run Commands
 
 ```bash
-bun test ./tests/           # All tests (2302 pass, 0 fail; 256 files, 2026-07-28)
+bun test ./tests/           # All tests (2186 pass, 0 fail; 236 files, 2026-07-28)
 bun test tests/sqlite/      # Database tests
 bun test tests/hooks/       # Hook structure tests
 ```
