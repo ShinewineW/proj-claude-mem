@@ -13,9 +13,11 @@
  *       coexist for the same content_session_id.
  *
  *   P2: queueSummarize idempotency. Re-enqueueing the SAME
- *       (contentSessionId, promptNumber) pair must never produce a second
+ *       (contentSessionId, turnNumber) pair must never produce a second
  *       `pending` pending_messages row. `shouldDeduplicatePromptSummary`
- *       catches both already-summarized and already-queued.
+ *       catches both already-summarized and already-queued. Keyed on turn
+ *       IDENTITY since migration 34 — keying on prompt_number collapsed
+ *       consecutive redacted-placeholder turns onto one slot.
  *
  *   P3: Migration 31 dedup preserves ALL NULL prompt_number legacy rows.
  *       Only (content_session_id IS NOT NULL AND prompt_number IS NOT NULL)
@@ -154,35 +156,38 @@ function buildSessionManagerFixture() {
   return { mgr, sessionStore, pendingStore, sessionDbId, contentSessionId };
 }
 
-describe('P2: queueSummarize idempotency across random (promptNumber, re-queue count) inputs', () => {
-  it('never produces more than one pending summarize row per (contentSessionId, promptNumber)', () => {
+describe('P2: queueSummarize idempotency across random (turnNumber, re-queue count) inputs', () => {
+  it('never produces more than one pending summarize row per (contentSessionId, turnNumber)', () => {
     const { mgr, pendingStore, sessionDbId } = buildSessionManagerFixture();
 
     const now = Date.now();
     const trials = 30;
     for (let t = 0; t < trials; t++) {
-      const promptNumber = 1 + (t % 5); // 5 distinct turns reused 6 times each
-      // Each call is a candidate re-enqueue; only the first per promptNumber
-      // should create a row.
+      const turnNumber = 1 + (t % 5); // 5 distinct turns reused 6 times each
+      // Each call is a candidate re-enqueue; only the first per turnNumber
+      // should create a row. promptNumber is deliberately held constant to
+      // mirror a run of `<task-notification>` turns sharing one anchor.
       mgr.queueSummarize(sessionDbId, {
         lastAssistantMessage: `msg ${t}`,
-        promptNumber,
+        promptNumber: 1,
+        turnNumber,
         queuedAtEpoch: now + t,
       });
     }
 
-    // Group by prompt_number; no group should have > 1 pending row.
+    // Group by turn_number; no group should have > 1 pending row.
     const rows = pendingStore['db'].prepare(
-      `SELECT prompt_number, COUNT(*) AS c FROM pending_messages
+      `SELECT turn_number, COUNT(*) AS c FROM pending_messages
        WHERE message_type='summarize' AND status='pending'
-       GROUP BY prompt_number`,
-    ).all() as { prompt_number: number; c: number }[];
+       GROUP BY turn_number`,
+    ).all() as { turn_number: number; c: number }[];
 
     for (const row of rows) {
       expect(row.c).toBe(1);
     }
-    // 5 distinct prompt_numbers were used.
-    expect(rows.length).toBeLessThanOrEqual(5);
+    // All 5 distinct turns must have earned their own row despite sharing
+    // prompt_number — this is the 2026-07-28 regression.
+    expect(rows.length).toBe(5);
   });
 });
 

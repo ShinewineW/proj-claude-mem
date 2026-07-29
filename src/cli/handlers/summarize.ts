@@ -19,26 +19,38 @@ const SUMMARIZE_TIMEOUT_MS = getTimeout(HOOK_TIMEOUTS.DEFAULT);
 const RESOLVE_PROMPT_TIMEOUT_MS = 2000;
 
 /**
- * Ask the worker for the current `prompt_number` for this contentSessionId.
+ * Ask the worker for the current turn keys for this contentSessionId.
+ *
+ * Returns both halves of the split introduced by migration 34:
+ *   - `promptNumber` — attribution (latest REAL user prompt; may repeat)
+ *   - `turnNumber`   — identity (true turn counter; unique per turn)
+ *
  * Returns `null` when the worker can't resolve (no user_prompts row yet,
  * HTTP error, timeout). Callers must treat `null` as "write fallback without
- * prompt_number and let replay resolve at that time" to preserve the
- * durability contract (CodeX-P1).
+ * turn keys and let replay resolve at that time" to preserve the durability
+ * contract (CodeX-P1).
  */
 async function resolvePromptNumber(
   port: number,
   contentSessionId: string,
   dbPath: string,
-): Promise<number | null> {
+): Promise<{ promptNumber: number; turnNumber: number | null } | null> {
   try {
     const url = `http://127.0.0.1:${port}/api/sessions/resolve-prompt-number`
       + `?contentSessionId=${encodeURIComponent(contentSessionId)}`
       + `&dbPath=${encodeURIComponent(dbPath)}`;
     const res = await fetchWithTimeout(url, { method: 'GET' }, RESOLVE_PROMPT_TIMEOUT_MS);
     if (!res.ok) return null;
-    const body = await res.json() as { prompt_number?: unknown };
+    const body = await res.json() as { prompt_number?: unknown; turn_number?: unknown };
     const pn = body.prompt_number;
-    return typeof pn === 'number' && Number.isFinite(pn) && pn > 0 ? pn : null;
+    if (!(typeof pn === 'number' && Number.isFinite(pn) && pn > 0)) return null;
+    const tn = body.turn_number;
+    // Older workers don't return turn_number; leaving it null lets the route's
+    // server-side fallback resolve it rather than failing the whole request.
+    return {
+      promptNumber: pn,
+      turnNumber: typeof tn === 'number' && Number.isFinite(tn) && tn > 0 ? tn : null,
+    };
   } catch {
     return null;
   }
@@ -102,8 +114,8 @@ export const summarizeHandler: EventHandler = {
     // clients may still omit prompt_number and rely on SessionRoutes'
     // server-side fallback, but this hook path writes a fallback entry if
     // pre-resolution fails to avoid mis-binding the summary to a later turn.
-    const promptNumber = await resolvePromptNumber(port, sessionId, dbPath);
-    if (promptNumber === null) {
+    const resolvedTurn = await resolvePromptNumber(port, sessionId, dbPath);
+    if (resolvedTurn === null) {
       logger.warn('HOOK', 'Summarize prompt-number resolve failed, writing fallback', {
         sessionId,
         dbPath,
@@ -115,11 +127,13 @@ export const summarizeHandler: EventHandler = {
       });
       return { continue: true, suppressOutput: true, exitCode: HOOK_EXIT_CODES.SUCCESS };
     }
+    const { promptNumber, turnNumber } = resolvedTurn;
 
     logger.dataIn('HOOK', 'Stop: Requesting summary', {
       workerPort: port,
       hasLastAssistantMessage: !!lastAssistantMessage,
       promptNumber,
+      turnNumber,
     });
 
     // Send to worker - worker handles privacy check and database operations
@@ -128,6 +142,9 @@ export const summarizeHandler: EventHandler = {
         contentSessionId: sessionId,
         last_assistant_message: lastAssistantMessage,
         prompt_number: promptNumber,
+        // Omitted when the worker predates migration 34 — the route then
+        // resolves turn identity server-side.
+        ...(turnNumber !== null ? { turn_number: turnNumber } : {}),
         dbPath,
       };
       const response = await fetchWithTimeout(

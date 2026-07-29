@@ -1310,11 +1310,33 @@ export class WorkerService {
             deleteFallbackFile(filepath);
             continue;
           }
+          // Turn IDENTITY (migration 34), resolved against the same timestamp
+          // bound. Unlike attribution this INCLUDES redacted placeholders —
+          // that is exactly what makes it unique per turn, so a replayed
+          // summary does not collide with the summary of a neighbouring turn
+          // that shares the same real-prompt anchor.
+          let turnNumber: number | null =
+            (entry.payload.turn_number as number | null | undefined) ?? null;
+          if (typeof turnNumber !== 'number') {
+            try {
+              const store = this.dbManager.getSessionStore(entry.dbPath);
+              const row = store.db.prepare(`
+                SELECT MAX(prompt_number) AS mx FROM user_prompts
+                WHERE content_session_id = ?
+                  AND created_at_epoch <= ?
+              `).get(entry.sessionId, entry.timestamp) as { mx: number | null } | undefined;
+              turnNumber = row?.mx ?? null;
+            } catch (err) {
+              logger.warn('SYSTEM', 'Fallback summarize: turn-number resolve failed', { filepath }, err as Error);
+              turnNumber = null;
+            }
+          }
           this.sessionManager.queueSummarize(
             sessionDbId,
             {
               lastAssistantMessage: entry.payload.last_assistant_message as string | undefined,
               promptNumber,
+              turnNumber: turnNumber ?? promptNumber,
               queuedAtEpoch: entry.timestamp,
             },
             entry.dbPath,

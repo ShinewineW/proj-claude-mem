@@ -382,6 +382,7 @@ export class SummaryLane {
         summaryPayload,
         {
           promptNumber: promptNumber ?? undefined,
+          turnNumber: message.turn_number ?? undefined,
           discoveryTokens: 0,
           contentSessionId: sessionRow.content_session_id ?? null,
         },
@@ -569,6 +570,7 @@ export class SummaryLane {
     try {
       storeFreshSummaryForSession(sessionStore, sessionDbId, payload, {
         promptNumber: message.prompt_number ?? undefined,
+        turnNumber: message.turn_number ?? undefined,
         discoveryTokens: 0,
         contentSessionId: sessionRow.content_session_id ?? null,
       });

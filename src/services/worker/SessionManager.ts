@@ -441,6 +441,7 @@ export class SessionManager {
     input: {
       lastAssistantMessage?: string;
       promptNumber: number;
+      turnNumber: number;
       queuedAtEpoch: number;
     },
     dbPath?: string,
@@ -460,7 +461,7 @@ export class SessionManager {
 
     if (this.shouldDeduplicatePromptSummary({
       contentSessionId: session.contentSessionId,
-      promptNumber: input.promptNumber,
+      turnNumber: input.turnNumber,
       queuedAtEpoch: input.queuedAtEpoch,
       dbPath: session.dbPath,
     })) {
@@ -483,19 +484,26 @@ export class SessionManager {
       type: 'summarize',
       last_assistant_message: cappedMsg,
       prompt_number: input.promptNumber,
+      turn_number: input.turnNumber,
     });
 
     return { status: 'queued', obsCount: 0 };
   }
 
   /**
-   * Prompt-scoped dedupe: skip enqueue if this turn is already summarized OR
+   * Turn-scoped dedupe: skip enqueue if this turn is already summarized OR
    * has a pending/processing summarize row. Empty-turn skip is deferred to
    * SummaryLane's drain-then-check (spec §4.2.C).
+   *
+   * Keyed on `turn_number` (identity), NOT `prompt_number` (attribution).
+   * Keying on prompt_number collapsed every run of consecutive
+   * `<task-notification>` turns onto one anchor — the first summary claimed
+   * the slot and the rest were dropped without ever reaching the queue.
+   * See migration 34.
    */
   private shouldDeduplicatePromptSummary(input: {
     contentSessionId: string;
-    promptNumber: number;
+    turnNumber: number;
     queuedAtEpoch: number;
     dbPath?: string;
   }): boolean {
@@ -505,28 +513,26 @@ export class SessionManager {
         SELECT
           EXISTS(
             SELECT 1 FROM session_summaries
-            WHERE memory_session_id IN (
-              SELECT memory_session_id FROM sdk_sessions WHERE content_session_id = ?
-            ) AND prompt_number = ?
+            WHERE content_session_id = ? AND turn_number = ?
           ) AS already_summarized,
           EXISTS(
             SELECT 1 FROM pending_messages
             WHERE content_session_id = ?
               AND message_type = 'summarize'
-              AND prompt_number = ?
+              AND turn_number = ?
               AND status IN ('pending', 'processing')
           ) AS already_queued
       `).get(
         input.contentSessionId,
-        input.promptNumber,
+        input.turnNumber,
         input.contentSessionId,
-        input.promptNumber,
+        input.turnNumber,
       ) as { already_summarized: 0 | 1; already_queued: 0 | 1 };
       return check.already_summarized === 1 || check.already_queued === 1;
     } catch (err) {
       logger.debug('SESSION', 'shouldDeduplicatePromptSummary query failed (defaulting to not-dedupe)', {
         contentSessionId: input.contentSessionId,
-        promptNumber: input.promptNumber,
+        turnNumber: input.turnNumber,
       }, err as Error);
       return false;
     }
@@ -819,11 +825,23 @@ export class SessionManager {
           });
           continue;
         }
+        // Turn IDENTITY (migration 34): resolve the true turn counter so a
+        // proactive summarize on a redacted-placeholder turn gets its own
+        // slot instead of colliding with the attribution anchor's summary.
+        let turnNumber = session.lastPromptNumber;
+        try {
+          const store = this.dbManager.getSessionStore(session.dbPath);
+          const tn = store.getPromptNumberFromUserPrompts(session.contentSessionId);
+          if (tn > 0) turnNumber = tn;
+        } catch {
+          // Best-effort; fall back to the attribution anchor.
+        }
         const result = this.queueSummarize(
           session.sessionDbId,
           {
             lastAssistantMessage: undefined,
             promptNumber: session.lastPromptNumber,
+            turnNumber,
             queuedAtEpoch: Date.now(),
           },
           session.dbPath,

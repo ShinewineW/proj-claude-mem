@@ -680,8 +680,10 @@ export class SessionRoutes extends BaseRouteHandler {
     const sessionDbId = this.parseIntParam(req, res, 'sessionDbId');
     if (sessionDbId === null) return;
 
-    const { last_assistant_message, prompt_number, dbPath } = req.body;
+    const { last_assistant_message, prompt_number, turn_number, dbPath } = req.body;
     let resolvedPromptNumber: number | null = null;
+    let resolvedTurnNumber: number | null =
+      typeof turn_number === 'number' && Number.isFinite(turn_number) ? turn_number : null;
     if (typeof prompt_number === 'number' && Number.isFinite(prompt_number)) {
       resolvedPromptNumber = prompt_number;
     } else {
@@ -701,11 +703,30 @@ export class SessionRoutes extends BaseRouteHandler {
       res.status(400).json({ error: 'prompt_number missing and unresolvable for session' });
       return;
     }
+    // Turn IDENTITY (migration 34). Falls back to the true turn counter, and
+    // finally to the attribution anchor for callers on a session whose
+    // contentSessionId is unavailable — the pre-34 behaviour.
+    if (resolvedTurnNumber === null) {
+      try {
+        const session = this.sessionManager.getSession(sessionDbId, dbPath);
+        if (session?.contentSessionId) {
+          const store = this.dbManager.getSessionStore(dbPath);
+          resolvedTurnNumber = store.getPromptNumberFromUserPrompts(session.contentSessionId);
+        }
+      } catch {
+        // Best-effort; falls back to the attribution anchor below.
+      }
+    }
 
     const queuedAtEpoch = Date.now();
     const result = this.sessionManager.queueSummarize(
       sessionDbId,
-      { lastAssistantMessage: last_assistant_message, promptNumber: resolvedPromptNumber, queuedAtEpoch },
+      {
+        lastAssistantMessage: last_assistant_message,
+        promptNumber: resolvedPromptNumber,
+        turnNumber: resolvedTurnNumber ?? resolvedPromptNumber,
+        queuedAtEpoch,
+      },
       dbPath,
     );
 
@@ -920,7 +941,7 @@ export class SessionRoutes extends BaseRouteHandler {
    * Checks privacy, queues summarize request for SDK agent
    */
   private handleSummarizeByClaudeId = this.wrapHandler((req: Request, res: Response): void => {
-    const { contentSessionId, last_assistant_message, prompt_number, dbPath } = req.body;
+    const { contentSessionId, last_assistant_message, prompt_number, turn_number, dbPath } = req.body;
 
     if (!contentSessionId) {
       return this.badRequest(res, 'Missing contentSessionId');
@@ -942,6 +963,15 @@ export class SessionRoutes extends BaseRouteHandler {
       resolvedPromptNumber = store.getLatestRealPromptNumber(contentSessionId);
     }
 
+    // Turn IDENTITY (migration 34): the true turn counter, which unlike
+    // resolvedPromptNumber is unique per turn. A run of consecutive
+    // `<task-notification>` turns all share one attribution anchor but each
+    // gets its own turn_number, so each still earns a summary.
+    const resolvedTurnNumber =
+      typeof turn_number === 'number' && Number.isFinite(turn_number)
+        ? turn_number
+        : store.getPromptNumberFromUserPrompts(contentSessionId);
+
     // Use the resolved prompt_number as the privacy anchor for THIS turn.
     const userPrompt = PrivacyCheckValidator.checkUserPromptPrivacy(
       store,
@@ -961,6 +991,7 @@ export class SessionRoutes extends BaseRouteHandler {
       {
         lastAssistantMessage: last_assistant_message,
         promptNumber: resolvedPromptNumber,
+        turnNumber: resolvedTurnNumber,
         queuedAtEpoch,
       },
       dbPath,
@@ -1020,7 +1051,12 @@ export class SessionRoutes extends BaseRouteHandler {
       res.status(404).json({ error: 'No prompt recorded for contentSessionId yet' });
       return;
     }
-    res.json({ prompt_number: promptNumber });
+    // Turn IDENTITY rides along on the same round trip (migration 34): unique
+    // per turn, so consecutive redacted-placeholder turns each get a summary.
+    res.json({
+      prompt_number: promptNumber,
+      turn_number: store.getPromptNumberFromUserPrompts(contentSessionId),
+    });
   });
 
   /**
