@@ -933,7 +933,8 @@ export class SessionStore {
     discoveryTokens: number,
     timestampIso: string,
     timestampEpoch: number,
-    contentSessionId: string | null = null
+    contentSessionId: string | null = null,
+    turnNumber: number | null = null
   ): { id: number | null; createdAtEpoch: number } {
     // Defense-in-depth: a null/empty memory_session_id means the session was reset
     // (context-overflow nulls it in SDKAgent). Skip the insert instead of crashing
@@ -957,13 +958,13 @@ export class SessionStore {
     const result = this.db.prepare(`
       INSERT INTO session_summaries
       (memory_session_id, content_session_id, project, request, investigated, learned, completed,
-       next_steps, notes, prompt_number, discovery_tokens, created_at, created_at_epoch, content_hash)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       next_steps, notes, prompt_number, turn_number, discovery_tokens, created_at, created_at_epoch, content_hash)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       memorySessionId, contentSessionId, project,
       summary.request, summary.investigated, summary.learned, summary.completed,
       summary.next_steps, summary.notes,
-      promptNumber, discoveryTokens, timestampIso, timestampEpoch, contentHash
+      promptNumber, turnNumber, discoveryTokens, timestampIso, timestampEpoch, contentHash
     );
 
     return { id: Number(result.lastInsertRowid), createdAtEpoch: timestampEpoch };
@@ -976,11 +977,19 @@ export class SessionStore {
     promptNumber?: number,
     discoveryTokens: number = 0,
     overrideTimestampEpoch?: number,
-    contentSessionId: string | null = null
+    contentSessionId: string | null = null,
+    /**
+     * Turn IDENTITY (migration 34) — the true turn counter, unique per turn.
+     * Distinct from `promptNumber`, which is attribution and may repeat across
+     * consecutive redacted-placeholder turns. Only the fresh-summarize path
+     * supplies it; legacy callers leave it NULL and the partial unique index
+     * excludes them (content-hash dedupe still applies).
+     */
+    turnNumber?: number
   ): { id: number | null; createdAtEpoch: number } {
     const timestampEpoch = overrideTimestampEpoch ?? Date.now();
     const timestampIso = new Date(timestampEpoch).toISOString();
-    return this.insertSummaryDeduped(memorySessionId, project, summary, promptNumber || null, discoveryTokens, timestampIso, timestampEpoch, contentSessionId);
+    return this.insertSummaryDeduped(memorySessionId, project, summary, promptNumber || null, discoveryTokens, timestampIso, timestampEpoch, contentSessionId, turnNumber ?? null);
   }
 
   /**

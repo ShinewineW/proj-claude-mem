@@ -821,7 +821,7 @@ describe('Property 7: getQueueStats SQL correctness', () => {
           tool_response TEXT,
           cwd TEXT,
           last_assistant_message TEXT,
-          prompt_number INTEGER,
+          prompt_number INTEGER, turn_number INTEGER,
           status TEXT NOT NULL DEFAULT 'pending',
           retry_count INTEGER DEFAULT 0,
           created_at_epoch INTEGER NOT NULL,

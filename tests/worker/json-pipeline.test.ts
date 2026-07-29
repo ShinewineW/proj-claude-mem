@@ -38,6 +38,7 @@ describe("JSON serialization pipeline", () => {
         cwd TEXT,
         last_assistant_message TEXT,
         prompt_number INTEGER,
+        turn_number INTEGER,
         status TEXT DEFAULT 'pending',
         retry_count INTEGER DEFAULT 0,
         started_processing_at_epoch INTEGER,

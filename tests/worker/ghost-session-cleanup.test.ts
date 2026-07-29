@@ -101,7 +101,7 @@ function createTestDb(): Database {
       content_session_id TEXT NOT NULL,
       message_type TEXT NOT NULL CHECK(message_type IN ('observation', 'summarize')),
       tool_name TEXT, tool_input TEXT, tool_response TEXT, cwd TEXT,
-      last_user_message TEXT, last_assistant_message TEXT, prompt_number INTEGER,
+      last_user_message TEXT, last_assistant_message TEXT, prompt_number INTEGER, turn_number INTEGER,
       status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'processing', 'processed', 'failed')),
       retry_count INTEGER NOT NULL DEFAULT 0,
       created_at_epoch INTEGER NOT NULL,

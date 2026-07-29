@@ -18,7 +18,7 @@ describe('proactive summarize before reap', () => {
       session_db_id INTEGER REFERENCES sdk_sessions(id),
       content_session_id TEXT, message_type TEXT,
       tool_name TEXT, tool_input TEXT, tool_response TEXT,
-      cwd TEXT, last_assistant_message TEXT, prompt_number INTEGER,
+      cwd TEXT, last_assistant_message TEXT, prompt_number INTEGER, turn_number INTEGER,
       status TEXT DEFAULT 'pending', retry_count INTEGER DEFAULT 0,
       created_at_epoch INTEGER, started_processing_at_epoch INTEGER,
       completed_at_epoch INTEGER, failed_at_epoch INTEGER

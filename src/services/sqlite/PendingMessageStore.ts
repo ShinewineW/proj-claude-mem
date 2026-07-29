@@ -19,6 +19,12 @@ export interface PersistentPendingMessage {
   cwd: string | null;
   last_assistant_message: string | null;
   prompt_number: number | null;
+  /**
+   * Turn IDENTITY captured at enqueue time (migration 34). The turn counter
+   * advances while a summarize row waits in the queue, so SummaryLane cannot
+   * re-derive it at store time — it must ride along on the row.
+   */
+  turn_number: number | null;
   status: "pending" | "processing" | "processed" | "failed";
   retry_count: number;
   created_at_epoch: number;
@@ -68,8 +74,8 @@ export class PendingMessageStore {
         session_db_id, content_session_id, message_type,
         tool_name, tool_input, tool_response, cwd,
         last_assistant_message,
-        prompt_number, status, retry_count, created_at_epoch
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?)
+        prompt_number, turn_number, status, retry_count, created_at_epoch
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?)
     `);
 
     const result = stmt.run(
@@ -90,6 +96,7 @@ export class PendingMessageStore {
       message.cwd || null,
       message.last_assistant_message || null,
       message.prompt_number || null,
+      message.turn_number ?? null,
       now,
     );
 
@@ -915,6 +922,7 @@ export class PendingMessageStore {
       tool_input: persistent.tool_input || undefined,
       tool_response: persistent.tool_response || undefined,
       prompt_number: persistent.prompt_number || undefined,
+      turn_number: persistent.turn_number ?? undefined,
       cwd: persistent.cwd || undefined,
       last_assistant_message: persistent.last_assistant_message || undefined,
     };

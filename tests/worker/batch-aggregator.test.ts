@@ -32,7 +32,7 @@ describe("claimNextObservationBatch", () => {
         tool_response TEXT,
         cwd TEXT,
         last_assistant_message TEXT,
-        prompt_number INTEGER,
+        prompt_number INTEGER, turn_number INTEGER,
         status TEXT DEFAULT 'pending',
         retry_count INTEGER DEFAULT 0,
         started_processing_at_epoch INTEGER,

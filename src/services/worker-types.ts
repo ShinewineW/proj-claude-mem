@@ -87,6 +87,12 @@ export interface PendingMessage {
   tool_input?: any;
   tool_response?: any;
   prompt_number?: number;
+  /**
+   * Turn IDENTITY (migration 34) — true turn counter, unique per turn.
+   * Set on summarize rows; `prompt_number` stays attribution-only and may
+   * repeat across consecutive redacted-placeholder turns.
+   */
+  turn_number?: number;
   cwd?: string;
   last_assistant_message?: string;
 }
