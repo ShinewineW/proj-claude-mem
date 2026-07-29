@@ -14,7 +14,7 @@
  *
  *   P2: queueSummarize idempotency. Re-enqueueing the SAME
  *       (contentSessionId, turnNumber) pair must never produce a second
- *       `pending` pending_messages row. `shouldDeduplicatePromptSummary`
+ *       `pending` pending_messages row. `shouldDeduplicateTurnSummary`
  *       catches both already-summarized and already-queued. Keyed on turn
  *       IDENTITY since migration 34 — keying on prompt_number collapsed
  *       consecutive redacted-placeholder turns onto one slot.

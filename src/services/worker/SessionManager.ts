@@ -459,7 +459,7 @@ export class SessionManager {
       session.lastExitWasIdleTimeout = false;
     }
 
-    if (this.shouldDeduplicatePromptSummary({
+    if (this.shouldDeduplicateTurnSummary({
       contentSessionId: session.contentSessionId,
       turnNumber: input.turnNumber,
       queuedAtEpoch: input.queuedAtEpoch,
@@ -501,7 +501,7 @@ export class SessionManager {
    * the slot and the rest were dropped without ever reaching the queue.
    * See migration 34.
    */
-  private shouldDeduplicatePromptSummary(input: {
+  private shouldDeduplicateTurnSummary(input: {
     contentSessionId: string;
     turnNumber: number;
     queuedAtEpoch: number;
@@ -530,7 +530,7 @@ export class SessionManager {
       ) as { already_summarized: 0 | 1; already_queued: 0 | 1 };
       return check.already_summarized === 1 || check.already_queued === 1;
     } catch (err) {
-      logger.debug('SESSION', 'shouldDeduplicatePromptSummary query failed (defaulting to not-dedupe)', {
+      logger.debug('SESSION', 'shouldDeduplicateTurnSummary query failed (defaulting to not-dedupe)', {
         contentSessionId: input.contentSessionId,
         turnNumber: input.turnNumber,
       }, err as Error);

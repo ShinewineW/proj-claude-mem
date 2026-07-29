@@ -1304,7 +1304,7 @@ export class MigrationRunner {
    * NON-redacted prompt. Together those two rulings collapse every run of
    * consecutive `<task-notification>` turns onto one anchor: the first summary
    * claims the slot and every later turn in the run is dropped by the
-   * enqueue-time dedupe in `SessionManager.shouldDeduplicatePromptSummary`.
+   * enqueue-time dedupe in `SessionManager.shouldDeduplicateTurnSummary`.
    * Observed in production 2026-07-28: the 22 turns between 17:15 and 21:12
    * all resolved to prompt_number=1 and produced exactly one summary.
    *
