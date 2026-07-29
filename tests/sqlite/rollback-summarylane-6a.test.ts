@@ -86,14 +86,15 @@ describe('rollback-summarylane-6a.sql', () => {
     expect(cols.some(c => c.name === 'content_session_id')).toBe(false);
   });
 
-  it('drops the partial unique index idx_session_summaries_turn_unique', () => {
+  it('drops both turn indexes (migration 31 and the migration-34 replacement)', () => {
     const db = new Database(':memory:');
     new MigrationRunner(db).runAllMigrations();
-    // Sanity
+    // Sanity: after migration 34 the live index is the turn_number one; the
+    // migration-31 index was dropped when 34 superseded it.
     const indexesBefore = db.prepare(
       `SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='session_summaries'`,
     ).all() as { name: string }[];
-    expect(indexesBefore.some(i => i.name === 'idx_session_summaries_turn_unique')).toBe(true);
+    expect(indexesBefore.some(i => i.name === 'idx_session_summaries_turnnum_unique')).toBe(true);
 
     executeRollbackSql(db, loadRollbackSql());
 
@@ -101,16 +102,17 @@ describe('rollback-summarylane-6a.sql', () => {
       `SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='session_summaries'`,
     ).all() as { name: string }[];
     expect(indexesAfter.some(i => i.name === 'idx_session_summaries_turn_unique')).toBe(false);
+    expect(indexesAfter.some(i => i.name === 'idx_session_summaries_turnnum_unique')).toBe(false);
   });
 
-  it('removes schema_versions entries 27-31', () => {
+  it('removes schema_versions entries 27-31 and 34', () => {
     const db = new Database(':memory:');
     new MigrationRunner(db).runAllMigrations();
 
     executeRollbackSql(db, loadRollbackSql());
 
     const rows = db.prepare(
-      `SELECT version FROM schema_versions WHERE version IN (27, 28, 29, 30, 31)`,
+      `SELECT version FROM schema_versions WHERE version IN (27, 28, 29, 30, 31, 34)`,
     ).all() as { version: number }[];
     expect(rows.length).toBe(0);
   });

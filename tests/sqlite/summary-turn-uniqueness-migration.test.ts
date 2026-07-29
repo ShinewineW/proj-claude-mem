@@ -247,7 +247,7 @@ describe('migration 31: duplicate cleanup + partial unique index', () => {
     db.close();
   });
 
-  it('partial unique index rejects duplicate (content_session_id, prompt_number) inserts', () => {
+  it('lets prompt_number repeat once migration 34 supersedes the index', () => {
     const db = new Database(':memory:');
     new MigrationRunner(db).runAllMigrations();
 
@@ -257,21 +257,28 @@ describe('migration 31: duplicate cleanup + partial unique index', () => {
       VALUES ('c-uniq', 'm-uniq', 'test-project', '2026-01-01T00:00:00Z', 1767225600000, 'active')
     `);
 
-    // First insert succeeds
     db.run(`
       INSERT INTO session_summaries
-        (memory_session_id, content_session_id, project, request, prompt_number, created_at, created_at_epoch, content_hash)
-      VALUES ('m-uniq', 'c-uniq', 'test-project', 'first', 7, '2026-01-01T00:00:00Z', ${Date.now()}, 'h1')
+        (memory_session_id, content_session_id, project, request, prompt_number, turn_number, created_at, created_at_epoch, content_hash)
+      VALUES ('m-uniq', 'c-uniq', 'test-project', 'first', 7, 7, '2026-01-01T00:00:00Z', ${Date.now()}, 'h1')
     `);
 
-    // Second insert with same (content_session_id, prompt_number) must throw
+    // Migration 31 made this throw. Migration 34 moved uniqueness onto
+    // turn_number because prompt_number is attribution — consecutive
+    // `<task-notification>` turns legitimately share one anchor, and enforcing
+    // uniqueness there silently discarded every turn after the first.
     expect(() => {
       db.run(`
         INSERT INTO session_summaries
-          (memory_session_id, content_session_id, project, request, prompt_number, created_at, created_at_epoch, content_hash)
-        VALUES ('m-uniq', 'c-uniq', 'test-project', 'second', 7, '2026-01-01T00:00:00Z', ${Date.now() + 1}, 'h2')
+          (memory_session_id, content_session_id, project, request, prompt_number, turn_number, created_at, created_at_epoch, content_hash)
+        VALUES ('m-uniq', 'c-uniq', 'test-project', 'second', 7, 8, '2026-01-01T00:00:00Z', ${Date.now() + 1}, 'h2')
       `);
-    }).toThrow(/UNIQUE/);
+    }).not.toThrow();
+
+    const rows = db.query(
+      'SELECT turn_number FROM session_summaries WHERE content_session_id = ? ORDER BY turn_number'
+    ).all('c-uniq') as Array<{ turn_number: number }>;
+    expect(rows.map(r => r.turn_number)).toEqual([7, 8]);
 
     db.close();
   });

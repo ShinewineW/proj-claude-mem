@@ -45,6 +45,7 @@ export class MigrationRunner {
       ['addSummaryTurnUniqueIndex', () => this.addSummaryTurnUniqueIndex()],
       ['addUserPromptIsRedactedColumn', () => this.addUserPromptIsRedactedColumn()],
       ['rebindMisattributedRedactedAnchors', () => this.rebindMisattributedRedactedAnchors()],
+      ['addSummaryTurnNumberColumn', () => this.addSummaryTurnNumberColumn()],
     ];
 
     for (const [name, fn] of steps) {
@@ -1293,5 +1294,72 @@ export class MigrationRunner {
     })();
 
     this.db.prepare('INSERT OR IGNORE INTO schema_versions (version, applied_at) VALUES (?, ?)').run(33, new Date().toISOString());
+  }
+
+  /**
+   * Split summary turn IDENTITY from turn ATTRIBUTION (migration 34).
+   *
+   * Migration 31 made `(content_session_id, prompt_number)` the uniqueness key
+   * ("one summary per turn"); migration 33 defined a turn as the latest
+   * NON-redacted prompt. Together those two rulings collapse every run of
+   * consecutive `<task-notification>` turns onto one anchor: the first summary
+   * claims the slot and every later turn in the run is dropped by the
+   * enqueue-time dedupe in `SessionManager.shouldDeduplicatePromptSummary`.
+   * Observed in production 2026-07-28: the 22 turns between 17:15 and 21:12
+   * all resolved to prompt_number=1 and produced exactly one summary.
+   *
+   * The two concepts become separate columns:
+   *   - `turn_number`   IDENTITY    — true turn counter (COUNT(*) over
+   *       user_prompts, redacted rows included). Unique per turn, so every
+   *       turn gets its own slot. This is what dedupe and the index key on.
+   *   - `prompt_number` ATTRIBUTION — unchanged semantics: latest real user
+   *       prompt. The viewer groups/displays by it and it may now legitimately
+   *       repeat across turns, so its unique index is dropped.
+   *
+   * Backfill copies prompt_number → turn_number. Safe by construction: the
+   * migration-31 index guarantees (content_session_id, prompt_number) is
+   * already unique over non-NULL rows, so the copy cannot collide under the
+   * new index.
+   *
+   * `pending_messages` gets the column too — the turn must be captured at
+   * enqueue time (the counter advances while a summarize row sits in queue),
+   * so SummaryLane cannot re-derive it at store time.
+   */
+  private addSummaryTurnNumberColumn(): void {
+    const applied = this.db.prepare('SELECT version FROM schema_versions WHERE version = ?').get(34) as SchemaVersion | undefined;
+    if (applied) return;
+
+    const summaryCols = this.db.query('PRAGMA table_info(session_summaries)').all() as Array<{ name: string }>;
+    if (!summaryCols.some(c => c.name === 'turn_number')) {
+      this.db.run('ALTER TABLE session_summaries ADD COLUMN turn_number INTEGER');
+    }
+
+    const pendingCols = this.db.query('PRAGMA table_info(pending_messages)').all() as Array<{ name: string }>;
+    if (!pendingCols.some(c => c.name === 'turn_number')) {
+      this.db.run('ALTER TABLE pending_messages ADD COLUMN turn_number INTEGER');
+    }
+
+    this.db.transaction(() => {
+      const backfill = this.db.run(`
+        UPDATE session_summaries
+        SET turn_number = prompt_number
+        WHERE turn_number IS NULL AND prompt_number IS NOT NULL
+      `);
+
+      // prompt_number is now attribution-only and may repeat across turns.
+      this.db.run('DROP INDEX IF EXISTS idx_session_summaries_turn_unique');
+
+      this.db.run(`
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_session_summaries_turnnum_unique
+        ON session_summaries(content_session_id, turn_number)
+        WHERE content_session_id IS NOT NULL AND turn_number IS NOT NULL
+      `);
+
+      logger.info('DB', 'Split summary turn identity from attribution', {
+        backfilledTurnNumbers: backfill.changes,
+      });
+    })();
+
+    this.db.prepare('INSERT OR IGNORE INTO schema_versions (version, applied_at) VALUES (?, ?)').run(34, new Date().toISOString());
   }
 }

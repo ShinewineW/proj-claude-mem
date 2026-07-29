@@ -174,7 +174,7 @@ describe('migration 33: rebindMisattributedRedactedAnchors', () => {
     db.close();
   });
 
-  it('skips summary rebind when target slot already holds another summary (unique-on-turn collision)', () => {
+  it('rebinds a misattributed summary even when the target anchor already holds one', () => {
     const db = buildDb();
     const sess = 'c-collide';
     createSDKSession(db, sess, 'test', 'first');
@@ -189,17 +189,23 @@ describe('migration 33: rebindMisattributedRedactedAnchors', () => {
     const misattributedSumId = insertSummary(db, sess, 'm-collide', 2, 'phase B done');
 
     arm33Rebind(db);
-    new MigrationRunner(db).runAllMigrations(); // must NOT throw on unique-index collision
+    new MigrationRunner(db).runAllMigrations(); // must NOT throw
 
-    // Real summary stays put.
+    // Both now sit on the real anchor. Pre-migration-34 the unique index on
+    // (content_session_id, prompt_number) forced the second one to stay
+    // stranded on the placeholder; now prompt_number is attribution-only and
+    // may repeat, so the rebind lands and BOTH summaries survive.
     expect(getSummaryPromptNumber(db, realSumId)).toBe(1);
-    // Misattributed one stays on the redacted pn so its content survives;
-    // viewer filters the placeholder row out independently.
-    expect(getSummaryPromptNumber(db, misattributedSumId)).toBe(2);
+    expect(getSummaryPromptNumber(db, misattributedSumId)).toBe(1);
+
+    const surviving = db.prepare(
+      'SELECT COUNT(*) AS c FROM session_summaries WHERE content_session_id = ?'
+    ).get(sess) as { c: number };
+    expect(surviving.c).toBe(2);
     db.close();
   });
 
-  it('skips one of two misattributed summaries resolving to the same anchor (no pre-existing real summary)', () => {
+  it('rebinds both misattributed summaries that resolve to the same anchor', () => {
     const db = buildDb();
     const sess = 'c-double';
     createSDKSession(db, sess, 'test', 'first');
@@ -210,22 +216,18 @@ describe('migration 33: rebindMisattributedRedactedAnchors', () => {
     saveUserPrompt(db, sess, 2, '', true);
     saveUserPrompt(db, sess, 3, '', true);
 
-    // Two summaries, each misattributed to a distinct redacted placeholder.
-    // Legal under migration-31's unique index (pn 2 != pn 3), but both resolve
-    // to real pn=1 — they cannot both rebind. A hand-rolled NOT EXISTS guard
-    // evaluates against pre-update state, lets both through, and aborts the
-    // whole migration on a UNIQUE violation. UPDATE OR IGNORE must skip one.
+    // Two summaries, each misattributed to a distinct redacted placeholder,
+    // both resolving to real pn=1. This is exactly the production shape from
+    // 2026-07-28: consecutive `<task-notification>` turns doing separate work.
     const sumA = insertSummary(db, sess, 'm-double', 2, 'phase A');
     const sumB = insertSummary(db, sess, 'm-double', 3, 'phase B');
 
     arm33Rebind(db);
-    new MigrationRunner(db).runAllMigrations(); // must NOT throw on intra-statement collision
+    new MigrationRunner(db).runAllMigrations(); // must NOT throw
 
-    // Exactly one rebinds to the real anchor; the other is preserved on its
-    // placeholder pn (content survives, viewer filters the placeholder out).
-    const pns = [getSummaryPromptNumber(db, sumA), getSummaryPromptNumber(db, sumB)];
-    expect(pns.filter(pn => pn === 1).length).toBe(1);
-    expect(pns.filter(pn => pn === 2 || pn === 3).length).toBe(1);
+    // Both rebind and both survive — the work of each turn is preserved.
+    expect(getSummaryPromptNumber(db, sumA)).toBe(1);
+    expect(getSummaryPromptNumber(db, sumB)).toBe(1);
     db.close();
   });
 

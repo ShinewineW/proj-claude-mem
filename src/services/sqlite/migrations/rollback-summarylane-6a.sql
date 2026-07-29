@@ -15,6 +15,13 @@
 
 BEGIN TRANSACTION;
 
+-- 0. Undo migration 34 first. It layers the turn-identity split on top of
+--    this chunk, and its index references content_session_id — SQLite refuses
+--    the DROP COLUMN in step 3 while an index still names that column.
+DROP INDEX IF EXISTS idx_session_summaries_turnnum_unique;
+ALTER TABLE session_summaries DROP COLUMN turn_number;
+ALTER TABLE pending_messages DROP COLUMN turn_number;
+
 -- 1. Drop the partial unique index (migration 31).
 DROP INDEX IF EXISTS idx_session_summaries_turn_unique;
 
@@ -47,13 +54,15 @@ ALTER TABLE session_summaries DROP COLUMN content_session_id;
 --    (added in migration 28).
 ALTER TABLE observations DROP COLUMN content_session_id;
 
--- 5. Remove schema_versions entries for the five Chunk 6a migrations.
+-- 5. Remove schema_versions entries for the five Chunk 6a migrations,
+--    plus 34 (turn-identity split) which step 0 undid.
 --    27: pre-migration snapshot
 --    28: observations.content_session_id ADD COLUMN
 --    29: session_summaries.content_session_id ADD COLUMN
 --    30: backfill content_session_id from sdk_sessions
 --    31: historical dedup + partial unique index
-DELETE FROM schema_versions WHERE version IN (27, 28, 29, 30, 31);
+--    34: turn_number identity column + index swap
+DELETE FROM schema_versions WHERE version IN (27, 28, 29, 30, 31, 34);
 
 COMMIT;
 
