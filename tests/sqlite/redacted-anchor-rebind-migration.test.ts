@@ -24,13 +24,21 @@ function buildDb(): Database {
 
 /**
  * Migrations are gated on `schema_versions`, so a freshly-built DB has
- * migration 33 marked applied (as a no-op) before any rows exist. To exercise
- * the rebind logic in tests we delete that row, seed the misattributed state,
- * then re-run migrations so 33 executes against real data — the same shape
- * that production hits when an existing DB rolls forward.
+ * migrations 33 and 34 marked applied before any rows exist. To exercise the
+ * real upgrade order, restore the pre-34 schema/index and remove both markers.
+ * The next run must execute migration 33 while prompt_number is still unique,
+ * followed by migration 34's identity split and collision repair.
  */
 function arm33Rebind(db: Database): void {
-  db.prepare('DELETE FROM schema_versions WHERE version = 33').run();
+  db.run('DROP INDEX IF EXISTS idx_session_summaries_turnnum_unique');
+  db.run('ALTER TABLE session_summaries DROP COLUMN turn_number');
+  db.run('ALTER TABLE pending_messages DROP COLUMN turn_number');
+  db.run(`
+    CREATE UNIQUE INDEX idx_session_summaries_turn_unique
+    ON session_summaries(content_session_id, prompt_number)
+    WHERE content_session_id IS NOT NULL AND prompt_number IS NOT NULL
+  `);
+  db.prepare('DELETE FROM schema_versions WHERE version IN (33, 34)').run();
 }
 
 function insertObservation(
@@ -191,10 +199,9 @@ describe('migration 33: rebindMisattributedRedactedAnchors', () => {
     arm33Rebind(db);
     new MigrationRunner(db).runAllMigrations(); // must NOT throw
 
-    // Both now sit on the real anchor. Pre-migration-34 the unique index on
-    // (content_session_id, prompt_number) forced the second one to stay
-    // stranded on the placeholder; now prompt_number is attribution-only and
-    // may repeat, so the rebind lands and BOTH summaries survive.
+    // Migration 33 initially leaves the second summary stranded because the
+    // old prompt-number index is still active. Migration 34 must preserve its
+    // original turn identity, remove that index, then finish the rebind.
     expect(getSummaryPromptNumber(db, realSumId)).toBe(1);
     expect(getSummaryPromptNumber(db, misattributedSumId)).toBe(1);
 

@@ -6,10 +6,10 @@
  * satisfy them. They are the shape-level guarantees that the 8-chunk
  * SummaryLane refactor promises:
  *
- *   P1: Turn-key uniqueness. After migration 31, the partial unique index
- *       `idx_session_summaries_turn_unique` rejects any second INSERT of
- *       (content_session_id, prompt_number) where both are non-null.
- *       Legacy NULL-prompt_number rows are NOT constrained — multiple can
+ *   P1: Turn-key uniqueness. After migration 34, the partial unique index
+ *       `idx_session_summaries_turnnum_unique` rejects any second INSERT of
+ *       (content_session_id, turn_number) where both are non-null.
+ *       Legacy NULL-turn_number rows are NOT constrained — multiple can
  *       coexist for the same content_session_id.
  *
  *   P2: queueSummarize idempotency. Re-enqueueing the SAME
@@ -47,7 +47,7 @@ function randomContentSessionId(i: number): string {
   return `cs-${i}-${Math.floor(Math.random() * 1_000_000)}`;
 }
 
-function randomPromptNumber(): number {
+function randomTurnNumber(): number {
   return 1 + Math.floor(Math.random() * 50);
 }
 
@@ -55,7 +55,7 @@ function randomPromptNumber(): number {
 // P1 — Turn-key uniqueness invariant
 // ----------------------------------------------------------------------------
 
-describe('P1: turn-key uniqueness (content_session_id, prompt_number)', () => {
+describe('P1: turn-key uniqueness (content_session_id, turn_number)', () => {
   it('rejects duplicate inserts with both columns non-null across 50 random pairs', () => {
     const db = freshDb();
     db.prepare(`
@@ -68,43 +68,33 @@ describe('P1: turn-key uniqueness (content_session_id, prompt_number)', () => {
     const insert = db.prepare(`
       INSERT INTO session_summaries
         (memory_session_id, content_session_id, project, request, investigated,
-         learned, completed, next_steps, notes, prompt_number, discovery_tokens,
-         created_at, created_at_epoch, content_hash)
-      VALUES ('mem-shared', ?, 'proj', 'r', 'i', 'l', 'c', 'n', null, ?, 0, ?, ?, ?)
+         learned, completed, next_steps, notes, prompt_number, turn_number,
+         discovery_tokens, created_at, created_at_epoch, content_hash)
+      VALUES ('mem-shared', ?, 'proj', 'r', 'i', 'l', 'c', 'n', null,
+              1, ?, 0, ?, ?, ?)
     `);
-
-    const seenPairs = new Set<string>();
-    let duplicateRejections = 0;
-    let acceptedFirsts = 0;
 
     for (let trial = 0; trial < 50; trial++) {
       const cs = randomContentSessionId(trial);
-      const pn = randomPromptNumber();
-      const key = `${cs}::${pn}`;
-      const hashBase = `${cs}-${pn}-${trial}`;
+      const turnNumber = randomTurnNumber();
+      const hashBase = `${cs}-${turnNumber}-${trial}`;
 
       const nowIso = new Date(Date.now() + trial).toISOString();
       const nowEpoch = Date.now() + trial;
 
-      if (!seenPairs.has(key)) {
-        // First insert must always succeed.
-        insert.run(cs, pn, nowIso, nowEpoch, `${hashBase}-first`);
-        seenPairs.add(key);
-        acceptedFirsts++;
-      } else {
-        // Second insert MUST throw the UNIQUE constraint.
-        expect(() => insert.run(cs, pn, nowIso, nowEpoch, `${hashBase}-dup`)).toThrow();
-        duplicateRejections++;
-      }
+      insert.run(cs, turnNumber, nowIso, nowEpoch, `${hashBase}-first`);
+      expect(() =>
+        insert.run(cs, turnNumber, nowIso, nowEpoch, `${hashBase}-duplicate`)
+      ).toThrow();
     }
 
-    // Sanity — we did insert at least a few firsts.
-    expect(acceptedFirsts).toBeGreaterThan(0);
-    // Result of 50 trials: acceptedFirsts + duplicateRejections === 50
-    expect(acceptedFirsts + duplicateRejections).toBe(50);
+    const count = db.prepare(
+      `SELECT COUNT(*) AS c FROM session_summaries`,
+    ).get() as { c: number };
+    expect(count.c).toBe(50);
   });
 
-  it('allows unlimited rows when prompt_number IS NULL (partial index excludes them)', () => {
+  it('allows unlimited rows when turn_number IS NULL (partial index excludes them)', () => {
     const db = freshDb();
     db.prepare(`
       INSERT INTO sdk_sessions
@@ -116,20 +106,20 @@ describe('P1: turn-key uniqueness (content_session_id, prompt_number)', () => {
     const insert = db.prepare(`
       INSERT INTO session_summaries
         (memory_session_id, content_session_id, project, request, investigated,
-         learned, completed, next_steps, notes, prompt_number, discovery_tokens,
-         created_at, created_at_epoch, content_hash)
+         learned, completed, next_steps, notes, prompt_number, turn_number,
+         discovery_tokens, created_at, created_at_epoch, content_hash)
       VALUES ('mem-legacy', 'cs-legacy', 'proj', 'r', 'i', 'l', 'c', 'n', null,
-              NULL, 0, ?, ?, ?)
+              1, NULL, 0, ?, ?, ?)
     `);
 
-    // 10 NULL-prompt rows with unique content hashes — all must succeed.
+    // 10 NULL-turn rows with unique content hashes — all must succeed.
     for (let i = 0; i < 10; i++) {
       const now = Date.now() + i;
       insert.run(new Date(now).toISOString(), now, `legacy-hash-${i}-${Math.random()}`);
     }
 
     const count = db.prepare(
-      `SELECT COUNT(*) AS c FROM session_summaries WHERE content_session_id = 'cs-legacy' AND prompt_number IS NULL`,
+      `SELECT COUNT(*) AS c FROM session_summaries WHERE content_session_id = 'cs-legacy' AND turn_number IS NULL`,
     ).get() as { c: number };
     expect(count.c).toBe(10);
   });

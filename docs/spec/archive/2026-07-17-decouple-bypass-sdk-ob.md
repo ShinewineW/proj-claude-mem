@@ -24,7 +24,7 @@
 1. **竞争消费者,非负载均衡**(`BypassLane.ts:11-13`):SDK observer 与 bypass 抢同一张 `pending_messages` 队列的 observation 行,原子 `UPDATE ... status='processing'` 先落地者赢。SDK 批认领(`claimNextObservationBatch`,一次最多 `BATCH_MAX_SIZE`=5),bypass 单认领(`claimNextObservation`),故现状 SDK ~84% / bypass ~16%。
 2. **bypass 的播种依赖**(要解除的核心):`BypassLane.consumeLoop` 的 gate(`BypassLane.ts:570-573`,判断在 `:570`)在 `session.memorySessionId` 上 —— 为 null 就退避,不认领。legacy 下该 id 由 SDK 从 `system:init` 播种。
 3. **致命点:内存会话默认丢弃 DB 锚**(`SessionManager.ts:248-253`,Issue #817):`initializeSession` 恒把内存 `memorySessionId` 置 `null`(防 stale SDK-id resume 崩溃),**不从 DB 加载**。若不修此处,即便 DB 有 `cm-` 锚,内存也是 null,bypass 的 gate 永久阻塞。**本计划 Task 4 专门修它**——只加载 `cm-` 锚(稳定、永不 resume,不受 #817 影响),SDK-id 锚仍置 null。
-4. **summary 不受影响**:summary 走 fresh query(`fresh-summarize.ts:11-13,150-151`,无 resume、无 observer 历史),按 `content_session_id + prompt_number` 取观测(`SummaryLane.ts:616-618`),不依赖 resume,也不靠 `memory_session_id` 检索。
+4. **summary 不受影响**:summary 走 fresh query(`fresh-summarize.ts:11-13,150-151`,无 resume、无 observer 历史),按 `content_session_id + prompt_number` 取归属范围内的观测,不依赖 resume,也不靠 `memory_session_id` 检索。后续 migration 34 已将唯一 turn 身份拆为 `content_session_id + turn_number`;`prompt_number` 仅保留归属语义。
 5. **FK 有 `ON UPDATE CASCADE`**(`migrations/runner.ts:108,131`)。稳定的 `cm-` 锚永不 mutate → 该级联在新模式下永不触发,顺带消除 legacy 那个 ~200ms FK-race 窗口。
 6. **flag 只读一次(非创建式读取,评审 R11-2 deep)**:`CLAUDE_MEM_OBSERVER_RESUME` 仅在 `createSDKSession`(会话建行)经 `mintInitialAnchor()` 读一次;其余所有缝(SessionManager 加载、SDKAgent 两个守卫、三处清锚站点守卫)全是 `isWorkerAnchor()` 驱动,不读 flag。该读取是 `observer-anchor.ts` 内**自包含、非创建式**的:优先级 **env var > settings.json(只读,flat 或 legacy `{env:{…}}`)> 硬编码默认 `false`**,**不经 `SettingsDefaultsManager.loadFromFile`**。原因:`loadFromFile` 在文件缺失时 `writeFileSync`+`chmodSync` 创建、legacy 迁移时改写 —— 建行侧调用它会在 clean/CI 环境写真实 `~/.claude-mem`(**15 个在进程内用 `store.createSDKSession` 的既有测试**都会触发),且它被 15+ 测试 `mock.module`(泄漏 stub 可能污染建行读取)。自包含读取避开这两者,也不再有 `loadFromFile` 的 5s TTL 陈旧窗口(建行是每会话一次、非热循环,下一新会话即读到新值)。
 7. **数值旋钮独立于总闸**:pool(`MAX_CONCURRENT_AGENTS`)、C(`BYPASS_CONCURRENCY`)、batch(`BATCH_MAX_SIZE`)、G(`BYPASS_MAX_CONSUMERS`)是既有独立设置,新模式的"比例"靠调它们实现(Task 6 机器 settings.json),不进总闸语义。
@@ -1461,7 +1461,7 @@ Expected: 0 或极低 —— 每一条都是被永久丢弃的观测;持续增�
 ## 竞争消费者行为说明(范围缺口补全)
 
 - **bypass 失败的天然回落**:bypass 处理失败(如 deepseek 解析失败)走 `BypassLane.ts:622` `markFailed` → 行归还队列(`notifyMessageAvailable`),**更强的 SDK 或另一 bypass 消费者可再认领**——这是竞争消费者天然的兜底。但受 `markFailed` 的 `maxRetries` 上限约束:反复失败超限即 `'failed'`(丢弃)。故占比越高、失败率越高时,丢弃绝对量越大(见 M2 判据)。
-- **Chroma / search 不受锚变更影响**:观测改挂 `cm-` 锚只影响 FK 归属;`ChromaSync` 按项目同步、`SearchManager` 按 `content_session_id`/内容检索,均不以 `memory_session_id` 为破坏性键。summary 亦按 `content_session_id + prompt_number` 取观测(关键架构事实 #4),无回归。
+- **Chroma / search 不受锚变更影响**:观测改挂 `cm-` 锚只影响 FK 归属;`ChromaSync` 按项目同步、`SearchManager` 按 `content_session_id`/内容检索,均不以 `memory_session_id` 为破坏性键。summary 按 `content_session_id + prompt_number` 取归属范围内的观测,并在后续 migration 34 中按 `content_session_id + turn_number` 保证 turn 唯一性(关键架构事实 #4),无回归。
 
 ## 未决 / 显式不做(YAGNI)
 

@@ -124,6 +124,11 @@ bun run build-and-sync
 - 若个人工作流需要恢复旧版 SDK resume，在 `~/.claude-mem/settings.json` 手工设置 `"CLAUDE_MEM_OBSERVER_RESUME": "true"`，或在启动 worker 前导出同名环境变量，然后重启 worker。该开关刻意不在 Viewer 中提供，也不能通过 `POST /api/settings` 修改。
 - 回滚同样只影响之后新建的 session；已存在的 `cm-` anchor 保持稳定，不会被清空或转换。
 
+#### Summary turn identity 升级与回滚
+
+- migration 34 将 summary 的唯一身份拆为 `(content_session_id, turn_number)`；`prompt_number` 仅表示最近的非 redacted 用户 prompt，可由多个 turn 共享。升级时会自动修复旧 summary 归属，并按入队时间恢复尚未处理的 summarize 队列。
+- 手工回滚 SummaryLane migrations 27–31/34 前必须停止 worker 并备份项目内的 `.claude/mem.db`，然后执行 `src/services/sqlite/migrations/rollback-summarylane-6a.sql`。该脚本同时支持 migration 34 应用前后的数据库，并保留迁移前 snapshot 表供核验。
+
 ### Worker API / MCP / Viewer
 
 所有运行期入口都经 worker 服务（`http://127.0.0.1:37777`，`bun run worker:start|stop|restart|status`）：

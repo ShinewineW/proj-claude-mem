@@ -39,6 +39,18 @@ function seedSession(store: SessionStore, contentSessionId: string): number {
   return sessionDbId;
 }
 
+function restorePre34Schema(db: Database): void {
+  db.run('DROP INDEX IF EXISTS idx_session_summaries_turnnum_unique');
+  db.run('ALTER TABLE session_summaries DROP COLUMN turn_number');
+  db.run('ALTER TABLE pending_messages DROP COLUMN turn_number');
+  db.run(`
+    CREATE UNIQUE INDEX idx_session_summaries_turn_unique
+    ON session_summaries(content_session_id, prompt_number)
+    WHERE content_session_id IS NOT NULL AND prompt_number IS NOT NULL
+  `);
+  db.prepare('DELETE FROM schema_versions WHERE version = 34').run();
+}
+
 describe('migration 34: schema shape', () => {
   it('adds turn_number to session_summaries and pending_messages', () => {
     const db = new Database(':memory:');
@@ -107,6 +119,97 @@ describe('migration 34: backfill', () => {
       .query('SELECT turn_number FROM session_summaries WHERE content_session_id = ?')
       .get('cs-legacy') as { turn_number: number | null };
     expect(row.turn_number).toBe(7);
+
+    db.close();
+  });
+
+  it('recovers a legacy summarize queue turn from its enqueue timestamp', () => {
+    const db = new Database(':memory:');
+    new MigrationRunner(db).runAllMigrations();
+
+    db.prepare(
+      `INSERT INTO sdk_sessions
+         (content_session_id, memory_session_id, project, user_prompt,
+          started_at, started_at_epoch, status)
+       VALUES ('cs-pending', 'm-pending', 'p', '', '', 0, 'active')`
+    ).run();
+    const insertPrompt = db.prepare(`
+      INSERT INTO user_prompts
+        (content_session_id, prompt_number, prompt_text,
+         created_at, created_at_epoch, is_redacted)
+      VALUES ('cs-pending', ?, ?, '', ?, ?)
+    `);
+    insertPrompt.run(1, 'real prompt', 1_000, 0);
+    insertPrompt.run(2, '', 2_000, 1);
+    insertPrompt.run(3, 'future prompt', 3_000, 0);
+    db.prepare(`
+      INSERT INTO pending_messages
+        (session_db_id, content_session_id, message_type, prompt_number,
+         turn_number, status, retry_count, created_at_epoch)
+      VALUES (
+        (SELECT id FROM sdk_sessions WHERE content_session_id = 'cs-pending'),
+        'cs-pending', 'summarize', 1, NULL, 'pending', 0, 2500
+      )
+    `).run();
+
+    restorePre34Schema(db);
+    new MigrationRunner(db).runAllMigrations();
+
+    const row = db.query(`
+      SELECT prompt_number, turn_number
+      FROM pending_messages
+      WHERE content_session_id = 'cs-pending'
+    `).get() as { prompt_number: number; turn_number: number | null };
+    expect(row).toEqual({ prompt_number: 1, turn_number: 2 });
+
+    db.close();
+  });
+
+  it('finishes migration-33 rebinds that the old unique index had skipped', () => {
+    const db = new Database(':memory:');
+    new MigrationRunner(db).runAllMigrations();
+
+    db.prepare(
+      `INSERT INTO sdk_sessions
+         (content_session_id, memory_session_id, project, user_prompt,
+          started_at, started_at_epoch, status)
+       VALUES ('cs-stranded', 'm-stranded', 'p', '', '', 0, 'active')`
+    ).run();
+    db.prepare(`
+      INSERT INTO user_prompts
+        (content_session_id, prompt_number, prompt_text,
+         created_at, created_at_epoch, is_redacted)
+      VALUES
+        ('cs-stranded', 1, 'real', '', 1000, 0),
+        ('cs-stranded', 2, '', '', 2000, 1)
+    `).run();
+    const insertSummary = db.prepare(`
+      INSERT INTO session_summaries
+        (memory_session_id, content_session_id, project, request,
+         prompt_number, turn_number, created_at, created_at_epoch)
+      VALUES ('m-stranded', 'cs-stranded', 'p', ?, ?, ?, '', ?)
+    `);
+    insertSummary.run('real turn', 1, 1, 1_000);
+    insertSummary.run('stranded redacted turn', 2, 2, 2_000);
+
+    // Migration 33 is already marked applied, matching a live pre-34 DB.
+    restorePre34Schema(db);
+    new MigrationRunner(db).runAllMigrations();
+
+    const rows = db.query(`
+      SELECT request, prompt_number, turn_number
+      FROM session_summaries
+      WHERE content_session_id = 'cs-stranded'
+      ORDER BY turn_number
+    `).all() as Array<{
+      request: string;
+      prompt_number: number;
+      turn_number: number;
+    }>;
+    expect(rows).toEqual([
+      { request: 'real turn', prompt_number: 1, turn_number: 1 },
+      { request: 'stranded redacted turn', prompt_number: 1, turn_number: 2 },
+    ]);
 
     db.close();
   });

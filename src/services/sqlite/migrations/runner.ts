@@ -1240,19 +1240,13 @@ export class MigrationRunner {
           ) IS NOT NULL
       `);
 
-      // Summaries: migration 31 enforces a partial unique index on
-      // `(content_session_id, prompt_number) WHERE … IS NOT NULL` (one summary
-      // per turn), so two distinct summaries can never share an anchor. A
-      // misattributed summary that would rebind onto an occupied slot must be
-      // left where it is. `UPDATE OR IGNORE` skips exactly those rows and rebinds
-      // the rest — covering BOTH collision shapes: (a) rebinding onto a slot that
-      // already holds a real summary, and (b) two misattributed summaries on
-      // separate redacted placeholders that resolve to the same real anchor.
-      // A hand-rolled `NOT EXISTS` guard only catches (a): SQLite evaluates the
-      // UPDATE's WHERE against pre-update state, so in case (b) both rows pass
-      // the guard and the second rewrite aborts the whole migration on a UNIQUE
-      // violation. Skipped rows keep their placeholder pn — content survives and
-      // the viewer filters the placeholder row out independently.
+      // Summaries: at this historical migration point, migration 31 still
+      // enforces a partial unique index on (content_session_id, prompt_number).
+      // A misattributed summary that would rebind onto an occupied attribution
+      // anchor must therefore be left where it is. UPDATE OR IGNORE skips those
+      // rows and rebinds the rest without aborting the migration. Migration 34
+      // later preserves the original prompt_number as turn_number, removes this
+      // old index, and revisits skipped attribution rebinds.
       const sumResult = this.db.run(`
         UPDATE OR IGNORE session_summaries AS s
         SET prompt_number = (
@@ -1316,14 +1310,19 @@ export class MigrationRunner {
    *       prompt. The viewer groups/displays by it and it may now legitimately
    *       repeat across turns, so its unique index is dropped.
    *
-   * Backfill copies prompt_number → turn_number. Safe by construction: the
-   * migration-31 index guarantees (content_session_id, prompt_number) is
-   * already unique over non-NULL rows, so the copy cannot collide under the
-   * new index.
+   * Summary backfill copies prompt_number → turn_number BEFORE prompt
+   * attribution is repaired. Safe by construction: the migration-31 index
+   * guarantees (content_session_id, prompt_number) is already unique over
+   * non-NULL rows, so the copy cannot collide under the new index. Once the
+   * old index is gone, migration-33 rows that were left on redacted anchors
+   * because of a collision can be rebound without losing their original turn
+   * identity.
    *
    * `pending_messages` gets the column too — the turn must be captured at
    * enqueue time (the counter advances while a summarize row sits in queue),
-   * so SummaryLane cannot re-derive it at store time.
+   * so SummaryLane cannot re-derive it at store time. Legacy summarize rows
+   * are backfilled from user_prompts as of their enqueue timestamp, falling
+   * back to prompt_number only when no historical prompt row is available.
    */
   private addSummaryTurnNumberColumn(): void {
     const applied = this.db.prepare('SELECT version FROM schema_versions WHERE version = ?').get(34) as SchemaVersion | undefined;
@@ -1340,14 +1339,59 @@ export class MigrationRunner {
     }
 
     this.db.transaction(() => {
-      const backfill = this.db.run(`
+      const summaryBackfill = this.db.run(`
         UPDATE session_summaries
         SET turn_number = prompt_number
         WHERE turn_number IS NULL AND prompt_number IS NOT NULL
       `);
 
+      const pendingBackfill = this.db.run(`
+        UPDATE pending_messages AS pm
+        SET turn_number = COALESCE(
+          (
+            SELECT MAX(up.prompt_number)
+            FROM user_prompts up
+            WHERE up.content_session_id = pm.content_session_id
+              AND up.created_at_epoch <= pm.created_at_epoch
+          ),
+          pm.prompt_number
+        )
+        WHERE pm.message_type = 'summarize'
+          AND pm.turn_number IS NULL
+      `);
+
       // prompt_number is now attribution-only and may repeat across turns.
       this.db.run('DROP INDEX IF EXISTS idx_session_summaries_turn_unique');
+
+      // Migration 33 ran while prompt_number was still unique. Its
+      // UPDATE OR IGNORE intentionally preserved summaries that would have
+      // collided with an occupied real-prompt anchor. With identity now held
+      // in turn_number, revisit those rows after dropping the old index.
+      const rebind = this.db.run(`
+        UPDATE session_summaries AS s
+        SET prompt_number = (
+          SELECT MAX(up2.prompt_number)
+          FROM user_prompts up2
+          WHERE up2.content_session_id = s.content_session_id
+            AND up2.is_redacted = 0
+            AND up2.prompt_number <= s.prompt_number
+        )
+        WHERE s.content_session_id IS NOT NULL
+          AND s.prompt_number IS NOT NULL
+          AND EXISTS (
+            SELECT 1 FROM user_prompts up
+            WHERE up.content_session_id = s.content_session_id
+              AND up.prompt_number = s.prompt_number
+              AND up.is_redacted = 1
+          )
+          AND (
+            SELECT MAX(up2.prompt_number)
+            FROM user_prompts up2
+            WHERE up2.content_session_id = s.content_session_id
+              AND up2.is_redacted = 0
+              AND up2.prompt_number <= s.prompt_number
+          ) IS NOT NULL
+      `);
 
       this.db.run(`
         CREATE UNIQUE INDEX IF NOT EXISTS idx_session_summaries_turnnum_unique
@@ -1356,7 +1400,9 @@ export class MigrationRunner {
       `);
 
       logger.info('DB', 'Split summary turn identity from attribution', {
-        backfilledTurnNumbers: backfill.changes,
+        backfilledSummaryTurnNumbers: summaryBackfill.changes,
+        backfilledPendingTurnNumbers: pendingBackfill.changes,
+        reboundSummaryAttributions: rebind.changes,
       });
     })();
 

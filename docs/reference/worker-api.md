@@ -51,6 +51,8 @@ curl "http://127.0.0.1:37777/api/search?query=worker&limit=5&dbPath=$PWD/.claude
 - `POST /api/settings` — 更新设置（写 `~/.claude-mem/settings.json`，owner-only 0600）
 - `POST /api/logs/clear` · `POST /api/pending-queue/process`
 
+`POST /api/sessions/summarize` 的 body 至少包含 `contentSessionId`，并可携带 `last_assistant_message`、`prompt_number`、`turn_number` 与 `dbPath`。`turn_number` 是唯一 turn 身份；`prompt_number` 是最近的非 redacted prompt 归属，允许多个 turn 共享。旧调用方缺少这两个编号时，worker 会从 `user_prompts` 解析；fallback replay 会以 fallback 文件自身的时间戳为上界恢复二者。
+
 ### SSE 流
 - `GET /stream` · `GET /sessions/:sessionDbId/status` — 实时 observation / 会话状态推送（Viewer 使用）
 

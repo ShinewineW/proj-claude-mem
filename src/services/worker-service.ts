@@ -30,6 +30,7 @@ import {
   isProjectStillValid,
   type GeneratorAction,
 } from './worker/generator-action.js';
+import { replayFallbackEntriesForWorker } from './worker/fallback-replay.js';
 
 // Windows: avoid repeated spawn popups when startup fails (issue #921)
 const WINDOWS_SPAWN_COOLDOWN_MS = 2 * 60 * 1000;
@@ -1231,127 +1232,16 @@ export class WorkerService {
    * Looks up existing sessions by contentSessionId; discards entries for
    * sessions that no longer exist (stale data from old sessions).
    */
-  private async replayFallbackEntries(): Promise<number> {
-    const { readFallbackEntries, deleteFallbackFile, cleanupStaleFallbacks, getDefaultFallbackDir } = await import('../shared/fallback-queue.js');
-    const fallbackDir = getDefaultFallbackDir();
-
-    const staleRemoved = cleanupStaleFallbacks(fallbackDir);
-    if (staleRemoved > 0) {
-      logger.info('SYSTEM', `Cleaned up ${staleRemoved} stale fallback files`);
-    }
-
-    const entries = readFallbackEntries(fallbackDir);
-    let replayed = 0;
-
-    for (const { entry, filepath } of entries) {
-      try {
-        const store = this.dbManager.getSessionStore(entry.dbPath);
-        // TODO: Extract to SessionStore.getSessionByContentId() to avoid raw db access
-        const existing = store.db.prepare(
-          'SELECT id FROM sdk_sessions WHERE content_session_id = ?'
-        ).get(entry.sessionId) as { id: number } | undefined;
-
-        if (!existing) {
-          logger.debug('SYSTEM', 'Fallback entry references non-existent session, discarding', { filepath });
-          deleteFallbackFile(filepath);
-          continue;
-        }
-
-        const sessionDbId = existing.id;
-
-        if (entry.type === 'observation') {
-          const toolName = entry.payload.tool_name as string | undefined;
-          if (!toolName) {
-            logger.warn('SYSTEM', 'Fallback entry missing tool_name, skipping', { filepath });
-            deleteFallbackFile(filepath);
-            continue;
-          }
-          const enqueued = this.sessionManager.queueObservation(sessionDbId, {
-            tool_name: toolName,
-            tool_input: entry.payload.tool_input,
-            tool_response: entry.payload.tool_response,
-            cwd: entry.cwd,
-            prompt_number: (entry.payload.prompt_number as number) ?? 0
-          }, entry.dbPath);
-          if (!enqueued) {
-            logger.info('FALLBACK', 'Replayed observation dropped by backpressure', { sessionDbId });
-          }
-        } else if (entry.type === 'summarize') {
-          // Fallback entries written when worker was down do not carry
-          // prompt_number (the hook cannot resolve it without the worker).
-          // Replay resolves at this point using the fallback's own timestamp
-          // as an upper bound on `created_at_epoch` so we bind the summary to
-          // the turn that was actually in-flight when the fallback fired.
-          let promptNumber: number | null | undefined =
-            entry.payload.prompt_number as number | null | undefined;
-          if (typeof promptNumber !== 'number') {
-            try {
-              const store = this.dbManager.getSessionStore(entry.dbPath);
-              // Resolve to the latest REAL prompt (is_redacted=0) at or before
-              // the fallback timestamp. Including redacted placeholders here
-              // would mis-bind the replayed summary to a system-noise turn —
-              // the same bug fixed at the live-attribution sites in migration 33.
-              const row = store.db.prepare(`
-                SELECT MAX(prompt_number) AS mx FROM user_prompts
-                WHERE content_session_id = ?
-                  AND created_at_epoch <= ?
-                  AND is_redacted = 0
-              `).get(entry.sessionId, entry.timestamp) as { mx: number | null } | undefined;
-              promptNumber = row?.mx ?? null;
-            } catch (err) {
-              logger.warn('SYSTEM', 'Fallback summarize: resolve-at-replay failed', { filepath }, err as Error);
-              promptNumber = null;
-            }
-          }
-          if (typeof promptNumber !== 'number') {
-            logger.warn('SYSTEM', 'Fallback summarize entry has no resolvable prompt_number, dropping', {
-              filepath, sessionId: entry.sessionId,
-            });
-            deleteFallbackFile(filepath);
-            continue;
-          }
-          // Turn IDENTITY (migration 34), resolved against the same timestamp
-          // bound. Unlike attribution this INCLUDES redacted placeholders —
-          // that is exactly what makes it unique per turn, so a replayed
-          // summary does not collide with the summary of a neighbouring turn
-          // that shares the same real-prompt anchor.
-          let turnNumber: number | null =
-            (entry.payload.turn_number as number | null | undefined) ?? null;
-          if (typeof turnNumber !== 'number') {
-            try {
-              const store = this.dbManager.getSessionStore(entry.dbPath);
-              const row = store.db.prepare(`
-                SELECT MAX(prompt_number) AS mx FROM user_prompts
-                WHERE content_session_id = ?
-                  AND created_at_epoch <= ?
-              `).get(entry.sessionId, entry.timestamp) as { mx: number | null } | undefined;
-              turnNumber = row?.mx ?? null;
-            } catch (err) {
-              logger.warn('SYSTEM', 'Fallback summarize: turn-number resolve failed', { filepath }, err as Error);
-              turnNumber = null;
-            }
-          }
-          this.sessionManager.queueSummarize(
-            sessionDbId,
-            {
-              lastAssistantMessage: entry.payload.last_assistant_message as string | undefined,
-              promptNumber,
-              turnNumber: turnNumber ?? promptNumber,
-              queuedAtEpoch: entry.timestamp,
-            },
-            entry.dbPath,
-          );
-        }
-
-        deleteFallbackFile(filepath);
-        replayed++;
-      } catch (replayError) {
-        logger.warn('SYSTEM', 'Failed to replay fallback entry, deleting', { filepath }, replayError as Error);
-        deleteFallbackFile(filepath);
-      }
-    }
-
-    return replayed;
+  private async replayFallbackEntries(
+    fallbackDirOverride?: string,
+    fallbackQueueOverride?: typeof import('../shared/fallback-queue.js'),
+  ): Promise<number> {
+    return replayFallbackEntriesForWorker({
+      dbManager: this.dbManager,
+      sessionManager: this.sessionManager,
+      fallbackDir: fallbackDirOverride,
+      fallbackQueue: fallbackQueueOverride,
+    });
   }
 
   /**

@@ -429,7 +429,7 @@ export class SessionManager {
    * Enqueue a summarize request for the SummaryLane consumer.
    *
    * Persists a `type='summarize'` row into `pending_messages` keyed by
-   * `(content_session_id, prompt_number)`. SummaryLane runs a fresh SDK
+   * `(content_session_id, turn_number)`. SummaryLane runs a fresh SDK
    * subprocess per turn, so callers do NOT invoke the subprocess here; the
    * lane owns that lifecycle.
    *

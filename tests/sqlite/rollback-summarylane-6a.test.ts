@@ -3,11 +3,12 @@
  *
  * These tests exercise the rollback-summarylane-6a.sql script end-to-end against
  * an in-memory DB that has already run all migrations. The rollback must:
- *   1. DROP the partial unique index (idx_session_summaries_turn_unique)
+ *   1. DROP both summary turn indexes
  *   2. Restore rows destroyed by the dedup in migration 31
- *   3. DROP content_session_id columns from observations + session_summaries
- *   4. Remove 27-31 entries from schema_versions
- *   5. NOT drop the snapshot tables (operator-owned cleanup per spec §9)
+ *   3. Restore the pre-34 pending_messages schema without losing queued rows
+ *   4. DROP content_session_id columns from observations + session_summaries
+ *   5. Remove 27-31 and 34 entries from schema_versions
+ *   6. NOT drop the snapshot tables (operator-owned cleanup per spec §9)
  */
 
 import { describe, it, expect } from 'bun:test';
@@ -58,6 +59,18 @@ function executeRollbackSql(db: Database, sql: string): void {
   }
 }
 
+function restorePre34Schema(db: Database): void {
+  db.run('DROP INDEX IF EXISTS idx_session_summaries_turnnum_unique');
+  db.run('ALTER TABLE session_summaries DROP COLUMN turn_number');
+  db.run('ALTER TABLE pending_messages DROP COLUMN turn_number');
+  db.run(`
+    CREATE UNIQUE INDEX idx_session_summaries_turn_unique
+    ON session_summaries(content_session_id, prompt_number)
+    WHERE content_session_id IS NOT NULL AND prompt_number IS NOT NULL
+  `);
+  db.prepare('DELETE FROM schema_versions WHERE version = 34').run();
+}
+
 describe('rollback-summarylane-6a.sql', () => {
   it('script file exists at the expected path', () => {
     expect(existsSync(ROLLBACK_SCRIPT_PATH)).toBe(true);
@@ -84,6 +97,39 @@ describe('rollback-summarylane-6a.sql', () => {
 
     const cols = db.prepare(`PRAGMA table_info(session_summaries)`).all() as { name: string }[];
     expect(cols.some(c => c.name === 'content_session_id')).toBe(false);
+  });
+
+  it('removes turn_number from both migration-34 tables', () => {
+    const db = new Database(':memory:');
+    new MigrationRunner(db).runAllMigrations();
+
+    executeRollbackSql(db, loadRollbackSql());
+
+    const summaryCols = db.prepare(
+      `PRAGMA table_info(session_summaries)`,
+    ).all() as { name: string }[];
+    const pendingCols = db.prepare(
+      `PRAGMA table_info(pending_messages)`,
+    ).all() as { name: string }[];
+    expect(summaryCols.some(c => c.name === 'turn_number')).toBe(false);
+    expect(pendingCols.some(c => c.name === 'turn_number')).toBe(false);
+  });
+
+  it('also succeeds on a pre-34 database', () => {
+    const db = new Database(':memory:');
+    new MigrationRunner(db).runAllMigrations();
+    restorePre34Schema(db);
+
+    expect(() => executeRollbackSql(db, loadRollbackSql())).not.toThrow();
+
+    const summaryCols = db.prepare(
+      `PRAGMA table_info(session_summaries)`,
+    ).all() as { name: string }[];
+    const pendingCols = db.prepare(
+      `PRAGMA table_info(pending_messages)`,
+    ).all() as { name: string }[];
+    expect(summaryCols.some(c => c.name === 'content_session_id')).toBe(false);
+    expect(pendingCols.some(c => c.name === 'turn_number')).toBe(false);
   });
 
   it('drops both turn indexes (migration 31 and the migration-34 replacement)', () => {
@@ -163,6 +209,43 @@ describe('rollback-summarylane-6a.sql', () => {
     const ids = restored.map(r => r.id);
     expect(ids).toContain(newerId);
     expect(ids).toContain(olderId);
+  });
+
+  it('preserves queued messages while removing turn_number', () => {
+    const db = new Database(':memory:');
+    new MigrationRunner(db).runAllMigrations();
+    db.prepare(`
+      INSERT INTO sdk_sessions
+        (content_session_id, memory_session_id, project, user_prompt, status,
+         started_at, started_at_epoch)
+      VALUES ('cs-pending', 'mem-pending', 'proj', 'p', 'active', '', 0)
+    `).run();
+    const session = db.prepare(
+      `SELECT id FROM sdk_sessions WHERE content_session_id = 'cs-pending'`,
+    ).get() as { id: number };
+    db.prepare(`
+      INSERT INTO pending_messages
+        (session_db_id, content_session_id, message_type, prompt_number,
+         turn_number, status, retry_count, created_at_epoch)
+      VALUES (?, 'cs-pending', 'summarize', 4, 7, 'pending', 1, 1234)
+    `).run(session.id);
+
+    executeRollbackSql(db, loadRollbackSql());
+
+    const row = db.prepare(`
+      SELECT content_session_id, message_type, prompt_number, status,
+             retry_count, created_at_epoch
+      FROM pending_messages
+      WHERE session_db_id = ?
+    `).get(session.id);
+    expect(row).toEqual({
+      content_session_id: 'cs-pending',
+      message_type: 'summarize',
+      prompt_number: 4,
+      status: 'pending',
+      retry_count: 1,
+      created_at_epoch: 1234,
+    });
   });
 
   it('retains the snapshot tables after rollback (operator-owned cleanup)', () => {
